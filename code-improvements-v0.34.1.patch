@@ -1,0 +1,4556 @@
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/.github/workflows/ci.yml fixed/yagura-v0.34.1/.github/workflows/ci.yml
+--- a/yagura-v0.34.1/.github/workflows/ci.yml	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/.github/workflows/ci.yml	2026-06-03 04:28:21.456130192 +0000
+@@ -35,6 +35,16 @@
+           go-version-file: go.mod
+           cache: true
+ 
++      - name: gofmt check
++        run: |
++          out=$(gofmt -s -l .)
++          if [ -n "$out" ]; then
++            echo "ERROR: the following files are not gofmt -s formatted:"
++            echo "$out"
++            exit 1
++          fi
++          echo "✓ gofmt -s clean"
++
+       - name: go vet
+         run: go vet ./...
+ 
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/ARCHITECTURE.md fixed/yagura-v0.34.1/ARCHITECTURE.md
+--- a/yagura-v0.34.1/ARCHITECTURE.md	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/ARCHITECTURE.md	2026-06-03 04:28:48.624131148 +0000
+@@ -88,7 +88,7 @@
+ 
+ ### internal/mcp
+ JSON-RPC 2.0 server over HTTP. Implements `initialize`, `tools/list`,
+-`tools/call`. Five default tools registered at startup. Optional audit sink
++`tools/call`. 46 default tools registered at startup. Optional audit sink
+ injected via `SetAudit()`.
+ 
+ ### internal/audit
+@@ -129,7 +129,7 @@
+   └► tail file to restore last hash and seq
+ 
+ mcp.New(token, logger).SetAudit(auditLog)
+-  └► returns *Server with 5 tools registered
++  └► returns *Server with 46 tools registered
+ 
+ dashboard.New(reg, logger)
+   └► returns *Handler with template parsed once
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/CLAUDE.md fixed/yagura-v0.34.1/CLAUDE.md
+--- a/yagura-v0.34.1/CLAUDE.md	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/CLAUDE.md	2026-06-03 04:28:42.404130929 +0000
+@@ -21,12 +21,12 @@
+ - マルチエージェント orchestrator(MCP server 一品)
+ - code generation tool(yagura は audit/orchestrate のみ)
+ 
+-## Map — 31 internal packages
++## Map — 39 internal packages
+ 
+ ### Core orchestration
+ - `internal/registry` — 23+ projects の inventory CRUD
+ - `internal/project` — Project struct + validation
+-- `internal/mcp` — MCP server + 38 tool definitions
++- `internal/mcp` — MCP server + 46 tool definitions
+ - `internal/audit` — JSONL audit log + replay
+ - `internal/config` — env / flag 設定
+ 
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/Dockerfile fixed/yagura-v0.34.1/Dockerfile
+--- a/yagura-v0.34.1/Dockerfile	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/Dockerfile	2026-06-03 04:25:36.780124397 +0000
+@@ -64,8 +64,9 @@
+ ENV YAGURA_STATE_DIR=/home/nonroot/.yagura/state \
+     YAGURA_ADDR=0.0.0.0:8090
+ 
+-# Liveness check uses the binary itself (no curl/wget available in distroless)
++# Liveness check probes the running daemon's /healthz via the binary itself
++# (no curl/wget available in distroless). Falls back to YAGURA_ADDR.
+ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+-  CMD ["/usr/local/bin/yagura", "version"]
++  CMD ["/usr/local/bin/yagura", "healthcheck"]
+ 
+ ENTRYPOINT ["/usr/local/bin/yagura"]
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/README.md fixed/yagura-v0.34.1/README.md
+--- a/yagura-v0.34.1/README.md	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/README.md	2026-06-03 04:28:40.524130863 +0000
+@@ -10,7 +10,7 @@
+ 
+ **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
+ 
+-Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
++Status: **v0.34.1** — 46 MCP tools, 39 internal packages, 29 consecutive reproducible releases.
+ 
+ ---
+ 
+@@ -220,7 +220,7 @@
+ ```
+ .
+ ├── cmd/yagura/              # Entry point (single binary)
+-├── internal/                # 38 packages, none exported
++├── internal/                # 39 packages, none exported
+ │   ├── mcp/                 # MCP server, tool registration
+ │   ├── registry/            # Project registry (JSON file per project)
+ │   ├── scanner/             # Background sensor loop (24 h)
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/cmd/yagura/httpapi.go fixed/yagura-v0.34.1/cmd/yagura/httpapi.go
+--- a/yagura-v0.34.1/cmd/yagura/httpapi.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/cmd/yagura/httpapi.go	2026-06-03 04:29:00.364131561 +0000
+@@ -4,9 +4,9 @@
+ // CI/CD パイプライン(curl / GitHub Actions / Jenkins)から直接呼ぶには
+ // JSON-RPC 構文が冗長すぎる。CI 統合のため以下を提供:
+ //
+-//   GET  /sbom                 — CycloneDX 1.5 BOM(yagura 自身)
+-//   POST /gha-audit            — workflow YAML を受けて 7 ルール audit
+-//   POST /pin-drift            — workflow YAML を受けて pin drift 検出
++//	GET  /sbom                 — CycloneDX 1.5 BOM(yagura 自身)
++//	POST /gha-audit            — workflow YAML を受けて 7 ルール audit
++//	POST /pin-drift            — workflow YAML を受けて pin drift 検出
+ //
+ // 認証は既存 MCPToken(Authorization: Bearer ...)を流用。token 未設定なら
+ // no-auth(localhost 用途想定)。
+@@ -96,18 +96,20 @@
+ // handleSBOM: GET /sbom?summary_only=1
+ //
+ // クエリパラメータ:
+-//   summary_only=1  — Bom 全体ではなく Summary のみ返却(軽量)
++//
++//	summary_only=1  — Bom 全体ではなく Summary のみ返却(軽量)
+ func (d *httpAPIDeps) handleSBOM(w http.ResponseWriter, r *http.Request) {
+ 	if r.Method != http.MethodGet {
+-		methodNotAllowed(w)
++		methodNotAllowed(w, http.MethodGet)
+ 		return
+ 	}
+ 	bom, err := d.Sbom.Generate(d.MainModulePath, d.MainVersion)
+ 	if err != nil {
+-		writeJSONError(w, http.StatusInternalServerError, err.Error())
++		// 内部実装の詳細をクライアントに漏らさない(generic message)。
++		writeJSONError(w, http.StatusInternalServerError, "failed to generate SBOM")
+ 		return
+ 	}
+-	if r.URL.Query().Get("summary_only") != "" {
++	if queryTrue(r, "summary_only") {
+ 		writeJSON(w, http.StatusOK, bom.Summarize())
+ 		return
+ 	}
+@@ -117,12 +119,13 @@
+ // handleGhaAudit: POST /gha-audit
+ //
+ // Request body:
+-//   {"files": {"path/x.yml": "<yaml content>"}, "summary_only": false}
++//
++//	{"files": {"path/x.yml": "<yaml content>"}, "summary_only": false}
+ //
+ // Response: {"results": {...}, "summary": {...}}
+ func (d *httpAPIDeps) handleGhaAudit(w http.ResponseWriter, r *http.Request) {
+ 	if r.Method != http.MethodPost {
+-		methodNotAllowed(w)
++		methodNotAllowed(w, http.MethodPost)
+ 		return
+ 	}
+ 	body, err := readJSON(r)
+@@ -148,7 +151,8 @@
+ // handlePinDrift: POST /pin-drift
+ //
+ // Request body:
+-//   {"files": {"path/x.yml": "..."}, "concurrency": 4, "summary_only": false}
++//
++//	{"files": {"path/x.yml": "..."}, "concurrency": 4, "summary_only": false}
+ //
+ // Response: {"results": [...], "summary": {...}}
+ //
+@@ -159,7 +163,7 @@
+ // pindrift.ResultEvent (index, total_count, result)。
+ func (d *httpAPIDeps) handlePinDrift(w http.ResponseWriter, r *http.Request) {
+ 	if r.Method != http.MethodPost {
+-		methodNotAllowed(w)
++		methodNotAllowed(w, http.MethodPost)
+ 		return
+ 	}
+ 	body, err := readJSON(r)
+@@ -191,6 +195,12 @@
+ 	if conc == 0 {
+ 		conc = 4
+ 	}
++	// 過大な並列度で goroutine / 外部 API 負荷が爆発しないよう上限を設ける。
++	// 負値(= serial)はそのまま許可する。
++	const maxConcurrency = 64
++	if conc > maxConcurrency {
++		conc = maxConcurrency
++	}
+ 
+ 	// v0.12.0: SSE streaming mode
+ 	if r.URL.Query().Get("stream") == "1" && conc >= 0 {
+@@ -216,12 +226,14 @@
+ 
+ // writeSSEPinDrift は CheckPinsStream の出力を SSE で送信する。
+ // 各 event:
+-//   event: result
+-//   data: {"index":N,"total_count":M,"result":{...}}
++//
++//	event: result
++//	data: {"index":N,"total_count":M,"result":{...}}
+ //
+ // 最後に done event を送信する:
+-//   event: done
+-//   data: {"summary":{...}}
++//
++//	event: done
++//	data: {"summary":{...}}
+ func writeSSEPinDrift(w http.ResponseWriter, ctx context.Context, checker PinDriftStreamer, pins []pindrift.Pin, concurrency int) {
+ 	w.Header().Set("Content-Type", "text/event-stream")
+ 	w.Header().Set("Cache-Control", "no-cache")
+@@ -237,15 +249,20 @@
+ 	ch := checker.CheckPinsStream(ctx, pins, concurrency)
+ 	allResults := make([]pindrift.Result, len(pins))
+ 	for ev := range ch {
+-		data, _ := json.Marshal(ev)
++		// 集計は marshal 成否に関わらず先に確定させる(欠損防止)。
++		if ev.Index >= 0 && ev.Index < len(allResults) {
++			allResults[ev.Index] = ev.Result
++		}
++		data, err := json.Marshal(ev)
++		if err != nil {
++			// marshal 不能な event は空 data を送らずスキップ(クライアント混乱回避)。
++			continue
++		}
+ 		// SSE 仕様: "event: name\ndata: <data>\n\n"
+ 		_, _ = w.Write([]byte("event: result\ndata: "))
+ 		_, _ = w.Write(data)
+ 		_, _ = w.Write([]byte("\n\n"))
+ 		flusher.Flush()
+-		if ev.Index >= 0 && ev.Index < len(allResults) {
+-			allResults[ev.Index] = ev.Result
+-		}
+ 	}
+ 	// 完了通知
+ 	summary := pindrift.Summarize(allResults)
+@@ -312,8 +329,19 @@
+ 	writeJSON(w, status, map[string]string{"error": msg})
+ }
+ 
+-// methodNotAllowed は 405 を返す。
+-func methodNotAllowed(w http.ResponseWriter) {
+-	w.Header().Set("Allow", "GET, POST")
++// methodNotAllowed は 405 を返す。allow には endpoint が許可する method を渡す
++// (例: "GET" や "POST")。複数なら "GET, POST" のようにカンマ区切り。
++func methodNotAllowed(w http.ResponseWriter, allow string) {
++	w.Header().Set("Allow", allow)
+ 	http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+ }
++
++// queryTrue は query param が truthy("1"/"true"/"yes"/"on")かどうかを返す。
++// "0"/"false" 等や未指定は false。
++func queryTrue(r *http.Request, key string) bool {
++	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key))) {
++	case "1", "true", "yes", "on":
++		return true
++	}
++	return false
++}
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/cmd/yagura/httpapi_test.go fixed/yagura-v0.34.1/cmd/yagura/httpapi_test.go
+--- a/yagura-v0.34.1/cmd/yagura/httpapi_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/cmd/yagura/httpapi_test.go	2026-06-03 04:26:58.568127275 +0000
+@@ -2,13 +2,13 @@
+ 
+ import (
+ 	"bytes"
++	"context"
+ 	"encoding/json"
++	"errors"
+ 	"io"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"strings"
+-	"context"
+-	"errors"
+ 	"testing"
+ 
+ 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+@@ -31,7 +31,6 @@
+ 	return mux
+ }
+ 
+-
+ // ─── GET /sbom ───────────────────────────────────────────────
+ 
+ func TestHTTP_GETSBOM_NoAuth(t *testing.T) {
+@@ -82,11 +81,31 @@
+ 	mux := newTestHTTPMux(t, "")
+ 	srv := httptest.NewServer(mux)
+ 	defer srv.Close()
+-	resp, _ := http.Post(srv.URL+"/sbom", "application/json", strings.NewReader("{}"))
++	resp, err := http.Post(srv.URL+"/sbom", "application/json", strings.NewReader("{}"))
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp.Body.Close()
+ 	if resp.StatusCode != http.StatusMethodNotAllowed {
+ 		t.Errorf("expected 405, got %d", resp.StatusCode)
+ 	}
++	// GET 専用 endpoint なので Allow は GET のみ(POST は含まない)。
++	if got := resp.Header.Get("Allow"); got != http.MethodGet {
++		t.Errorf("expected Allow: GET, got %q", got)
++	}
++}
++
++func TestQueryTrue(t *testing.T) {
++	cases := map[string]bool{
++		"1": true, "true": true, "yes": true, "on": true, "TRUE": true,
++		"0": false, "false": false, "": false, "nope": false,
++	}
++	for v, want := range cases {
++		r := httptest.NewRequest(http.MethodGet, "/x?flag="+v, nil)
++		if got := queryTrue(r, "flag"); got != want {
++			t.Errorf("queryTrue(flag=%q) = %v, want %v", v, got, want)
++		}
++	}
+ }
+ 
+ // ─── Auth ────────────────────────────────────────────────────
+@@ -97,7 +116,10 @@
+ 	defer srv.Close()
+ 
+ 	// no auth → 401
+-	resp, _ := http.Get(srv.URL + "/sbom")
++	resp, err := http.Get(srv.URL + "/sbom")
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp.Body.Close()
+ 	if resp.StatusCode != http.StatusUnauthorized {
+ 		t.Errorf("expected 401, got %d", resp.StatusCode)
+@@ -106,7 +128,10 @@
+ 	// wrong token → 401
+ 	req, _ := http.NewRequest("GET", srv.URL+"/sbom", nil)
+ 	req.Header.Set("Authorization", "Bearer wrong-token")
+-	resp2, _ := http.DefaultClient.Do(req)
++	resp2, err := http.DefaultClient.Do(req)
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp2.Body.Close()
+ 	if resp2.StatusCode != http.StatusUnauthorized {
+ 		t.Errorf("expected 401, got %d", resp2.StatusCode)
+@@ -115,7 +140,10 @@
+ 	// correct token → 200
+ 	req3, _ := http.NewRequest("GET", srv.URL+"/sbom", nil)
+ 	req3.Header.Set("Authorization", "Bearer secret-token")
+-	resp3, _ := http.DefaultClient.Do(req3)
++	resp3, err := http.DefaultClient.Do(req3)
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp3.Body.Close()
+ 	if resp3.StatusCode != http.StatusOK {
+ 		t.Errorf("expected 200, got %d", resp3.StatusCode)
+@@ -163,7 +191,10 @@
+ 	mux := newTestHTTPMux(t, "")
+ 	srv := httptest.NewServer(mux)
+ 	defer srv.Close()
+-	resp, _ := http.Post(srv.URL+"/gha-audit", "application/json", strings.NewReader(`{"files":{}}`))
++	resp, err := http.Post(srv.URL+"/gha-audit", "application/json", strings.NewReader(`{"files":{}}`))
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp.Body.Close()
+ 	if resp.StatusCode != http.StatusBadRequest {
+ 		t.Errorf("expected 400, got %d", resp.StatusCode)
+@@ -174,7 +205,10 @@
+ 	mux := newTestHTTPMux(t, "")
+ 	srv := httptest.NewServer(mux)
+ 	defer srv.Close()
+-	resp, _ := http.Post(srv.URL+"/gha-audit", "text/plain", strings.NewReader(`{"files":{}}`))
++	resp, err := http.Post(srv.URL+"/gha-audit", "text/plain", strings.NewReader(`{"files":{}}`))
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp.Body.Close()
+ 	if resp.StatusCode != http.StatusBadRequest {
+ 		t.Errorf("expected 400 for wrong content-type, got %d", resp.StatusCode)
+@@ -211,7 +245,10 @@
+ 	mux := newTestHTTPMux(t, "")
+ 	srv := httptest.NewServer(mux)
+ 	defer srv.Close()
+-	resp, _ := http.Get(srv.URL + "/pin-drift")
++	resp, err := http.Get(srv.URL + "/pin-drift")
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp.Body.Close()
+ 	if resp.StatusCode != http.StatusMethodNotAllowed {
+ 		t.Errorf("expected 405, got %d", resp.StatusCode)
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/cmd/yagura/main.go fixed/yagura-v0.34.1/cmd/yagura/main.go
+--- a/yagura-v0.34.1/cmd/yagura/main.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/cmd/yagura/main.go	2026-06-03 04:25:33.180124271 +0000
+@@ -10,6 +10,7 @@
+ //  7. MCP server + 5 tools 登録
+ //  8. Dashboard handler
+ //  9. HTTP server(/healthz /readyz /metrics /mcp /dashboard /debug/pprof)
++//
+ // 10. SIGTERM 受信で graceful shutdown
+ package main
+ 
+@@ -19,39 +20,40 @@
+ 	"errors"
+ 	"fmt"
+ 	"io"
++	"net"
+ 	"net/http"
+ 	"net/http/pprof"
+ 	"os"
+-	"path/filepath"
+ 	"os/signal"
++	"path/filepath"
+ 	"runtime"
+ 	"strings"
+ 	"sync/atomic"
+ 	"time"
+ 
++	"github.com/shizukutanaka/yagura/internal/agentlauncher"
+ 	"github.com/shizukutanaka/yagura/internal/alertfix"
+ 	"github.com/shizukutanaka/yagura/internal/audit"
+ 	"github.com/shizukutanaka/yagura/internal/config"
+ 	"github.com/shizukutanaka/yagura/internal/dashboard"
+-	"github.com/shizukutanaka/yagura/internal/hookreceiver"
++	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+ 	"github.com/shizukutanaka/yagura/internal/github"
++	"github.com/shizukutanaka/yagura/internal/handoff"
++	"github.com/shizukutanaka/yagura/internal/hookreceiver"
++	"github.com/shizukutanaka/yagura/internal/httplimit"
+ 	"github.com/shizukutanaka/yagura/internal/logging"
+ 	"github.com/shizukutanaka/yagura/internal/mcp"
+-	"github.com/shizukutanaka/yagura/internal/promexport"
+ 	"github.com/shizukutanaka/yagura/internal/metrics"
+ 	"github.com/shizukutanaka/yagura/internal/osv"
++	"github.com/shizukutanaka/yagura/internal/pindrift"
++	"github.com/shizukutanaka/yagura/internal/promexport"
++	"github.com/shizukutanaka/yagura/internal/quotamonitor"
+ 	"github.com/shizukutanaka/yagura/internal/registry"
++	"github.com/shizukutanaka/yagura/internal/sbom"
+ 	"github.com/shizukutanaka/yagura/internal/scanner"
+ 	"github.com/shizukutanaka/yagura/internal/scorecard"
+ 	"github.com/shizukutanaka/yagura/internal/secrets"
+ 	"github.com/shizukutanaka/yagura/internal/secretscan"
+-	"github.com/shizukutanaka/yagura/internal/agentlauncher"
+-	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+-	"github.com/shizukutanaka/yagura/internal/handoff"
+-	"github.com/shizukutanaka/yagura/internal/httplimit"
+-	"github.com/shizukutanaka/yagura/internal/pindrift"
+-	"github.com/shizukutanaka/yagura/internal/quotamonitor"
+-	"github.com/shizukutanaka/yagura/internal/sbom"
+ 	"github.com/shizukutanaka/yagura/internal/workspace"
+ )
+ 
+@@ -107,6 +109,12 @@
+ 				return 1
+ 			}
+ 			return 0
++		case "healthcheck":
++			if err := runHealthcheck(stdout); err != nil {
++				fmt.Fprintf(stderr, "yagura healthcheck: %v\n", err)
++				return 1
++			}
++			return 0
+ 		}
+ 	}
+ 	if err := run(); err != nil {
+@@ -121,6 +129,7 @@
+ Usage:
+   yagura                       Start daemon (default)
+   yagura verify                Verify integrity of audit log hash chain
++  yagura healthcheck           Probe the local daemon's /healthz endpoint
+   yagura version               Print version and exit
+   yagura help                  Print this message
+   yagura secret list           List stored secret names
+@@ -135,10 +144,11 @@
+ // runSecret は `yagura secret <subcommand>` を処理する。
+ //
+ // Subcommands:
+-//   set <name>    — stdin から plaintext を読込み、暗号化保存
+-//   get <name>    — 復号して stdout に出力
+-//   list          — 名前一覧を改行区切りで出力
+-//   delete <name> — 削除
++//
++//	set <name>    — stdin から plaintext を読込み、暗号化保存
++//	get <name>    — 復号して stdout に出力
++//	list          — 名前一覧を改行区切りで出力
++//	delete <name> — 削除
+ //
+ // パスフレーズは環境変数 YAGURA_SECRET_PASSPHRASE で渡す(CLI スクリプト向け)。
+ // インタラクティブ tty 入力は echo OFF が無依存で困難なため未対応(将来作業)。
+@@ -228,6 +238,37 @@
+ 	return b
+ }
+ 
++// runHealthcheck は稼働中の daemon の /healthz を叩いて liveness を確認する。
++// distroless image には curl/wget が無いため、Docker の HEALTHCHECK から
++// `yagura healthcheck` として利用できる。接続先は YAGURA_ADDR に従い、
++// wildcard bind(0.0.0.0 / ::)は loopback に読み替える。
++func runHealthcheck(stdout io.Writer) error {
++	addr := os.Getenv("YAGURA_ADDR")
++	if addr == "" {
++		addr = "127.0.0.1:8090"
++	}
++	host, port, err := net.SplitHostPort(addr)
++	if err != nil {
++		return fmt.Errorf("invalid YAGURA_ADDR %q: %w", addr, err)
++	}
++	switch host {
++	case "", "0.0.0.0", "::":
++		host = "127.0.0.1"
++	}
++	url := "http://" + net.JoinHostPort(host, port) + "/healthz"
++	client := &http.Client{Timeout: 3 * time.Second}
++	resp, err := client.Get(url)
++	if err != nil {
++		return err
++	}
++	defer func() { _ = resp.Body.Close() }()
++	if resp.StatusCode != http.StatusOK {
++		return fmt.Errorf("unhealthy: status %d", resp.StatusCode)
++	}
++	fmt.Fprintln(stdout, "ok")
++	return nil
++}
++
+ // verifyAudit は config を読まずに YAGURA_STATE_DIR 直下の audit/ を検証する。
+ // 検証中に daemon が動いていても safe(read-only)。
+ //
+@@ -610,15 +651,15 @@
+ 	// 接続前に server capabilities を発見可能にする
+ 	mux.HandleFunc("/.well-known/mcp", func(w http.ResponseWriter, _ *http.Request) {
+ 		meta := map[string]any{
+-			"name":     "yagura",
+-			"version":  version,
+-			"protocol": "mcp/2025-11",
++			"name":      "yagura",
++			"version":   version,
++			"protocol":  "mcp/2025-11",
+ 			"transport": []string{"http"},
+ 			"endpoints": map[string]string{
+-				"mcp":              "/mcp",
++				"mcp":               "/mcp",
+ 				"hooks_claude_code": "/hooks/claude-code",
+-				"metrics":          "/metrics",
+-				"dashboard":        "/dashboard",
++				"metrics":           "/metrics",
++				"dashboard":         "/dashboard",
+ 			},
+ 			"capabilities": map[string]any{
+ 				"tools":               len(mcpServer.ToolNames()),
+@@ -637,18 +678,18 @@
+ 	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
+ 	// v0.12.0: per-route rate limiting で DoS / PAT 枯渇を防止
+ 	sbomLimiter := httplimit.New(httplimit.Options{
+-		Capacity:        10,   // burst 10
+-		RefillPerMinute: 60,   // 1/sec sustained
++		Capacity:        10, // burst 10
++		RefillPerMinute: 60, // 1/sec sustained
+ 		KeyFn:           httplimit.TokenKey,
+ 	})
+ 	ghaAuditLimiter := httplimit.New(httplimit.Options{
+-		Capacity:        5,    // CPU-bound, smaller burst
+-		RefillPerMinute: 30,   // 1 per 2 sec
++		Capacity:        5,  // CPU-bound, smaller burst
++		RefillPerMinute: 30, // 1 per 2 sec
+ 		KeyFn:           httplimit.TokenKey,
+ 	})
+ 	pinDriftLimiter := httplimit.New(httplimit.Options{
+-		Capacity:        3,    // GitHub PAT 保護のため最も厳しく
+-		RefillPerMinute: 6,    // 1 per 10 sec sustained
++		Capacity:        3, // GitHub PAT 保護のため最も厳しく
++		RefillPerMinute: 6, // 1 per 10 sec sustained
+ 		KeyFn:           httplimit.TokenKey,
+ 	})
+ 	// 定期 GC で idle bucket を回収(メモリ leak 防止)
+@@ -761,8 +802,8 @@
+ 	lastAt   *metrics.Gauge
+ }
+ 
+-func (a *scannerMetricsAdapter) IncScanned()                       { a.scanned.Inc() }
+-func (a *scannerMetricsAdapter) IncFailed()                        { a.failed.Inc() }
++func (a *scannerMetricsAdapter) IncScanned() { a.scanned.Inc() }
++func (a *scannerMetricsAdapter) IncFailed()  { a.failed.Inc() }
+ func (a *scannerMetricsAdapter) SetLastScanDuration(d time.Duration) {
+ 	a.duration.Set(d.Milliseconds())
+ }
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/cmd/yagura/main_test.go fixed/yagura-v0.34.1/cmd/yagura/main_test.go
+--- a/yagura-v0.34.1/cmd/yagura/main_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/cmd/yagura/main_test.go	2026-06-03 04:26:51.108127013 +0000
+@@ -3,6 +3,8 @@
+ import (
+ 	"bytes"
+ 	"io"
++	"net/http"
++	"net/http/httptest"
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
+@@ -27,6 +29,37 @@
+ 	}
+ }
+ 
++func TestDispatch_Healthcheck_OK(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path == "/healthz" {
++			w.WriteHeader(http.StatusOK)
++			return
++		}
++		w.WriteHeader(http.StatusNotFound)
++	}))
++	defer srv.Close()
++
++	t.Setenv("YAGURA_ADDR", strings.TrimPrefix(srv.URL, "http://"))
++	var out, errBuf bytes.Buffer
++	code := dispatch([]string{"healthcheck"}, &out, &errBuf)
++	if code != 0 {
++		t.Fatalf("expected 0, got %d (stderr: %q)", code, errBuf.String())
++	}
++	if !strings.Contains(out.String(), "ok") {
++		t.Errorf("expected ok in stdout, got: %q", out.String())
++	}
++}
++
++func TestDispatch_Healthcheck_Down(t *testing.T) {
++	// 127.0.0.1:1 はほぼ確実に接続不可。
++	t.Setenv("YAGURA_ADDR", "127.0.0.1:1")
++	var out, errBuf bytes.Buffer
++	code := dispatch([]string{"healthcheck"}, &out, &errBuf)
++	if code != 1 {
++		t.Errorf("expected 1 for unreachable daemon, got %d", code)
++	}
++}
++
+ func TestDispatch_VersionAliases(t *testing.T) {
+ 	for _, alias := range []string{"-v", "--version"} {
+ 		t.Run(alias, func(t *testing.T) {
+@@ -361,12 +394,12 @@
+ 
+ func TestBytesTrimTrailingNewline(t *testing.T) {
+ 	tests := map[string]string{
+-		"hello":      "hello",
+-		"hello\n":    "hello",
+-		"hello\r\n":  "hello",
+-		"hello\n\n":  "hello",
+-		"\n":         "",
+-		"":           "",
++		"hello":     "hello",
++		"hello\n":   "hello",
++		"hello\r\n": "hello",
++		"hello\n\n": "hello",
++		"\n":        "",
++		"":          "",
+ 	}
+ 	for in, want := range tests {
+ 		got := string(bytesTrimTrailingNewline([]byte(in)))
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/cmd/yagura/recovery_test.go fixed/yagura-v0.34.1/cmd/yagura/recovery_test.go
+--- a/yagura-v0.34.1/cmd/yagura/recovery_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/cmd/yagura/recovery_test.go	2026-06-03 04:24:21.736121757 +0000
+@@ -17,12 +17,12 @@
+ )
+ 
+ // TestRecovery_AfterSIGKILL は次のシナリオをテストする:
+-//   1. daemon を子プロセスで起動
+-//   2. プロジェクトを 1 つ登録(disk へ永続化)
+-//   3. daemon を SIGKILL で強制終了(graceful shutdown を回避)
+-//   4. 同じ state dir で再起動
+-//   5. yagura_list で先に登録したプロジェクトが残っていることを確認
+-//   6. yagura verify で audit log の hash chain が無事なことを確認
++//  1. daemon を子プロセスで起動
++//  2. プロジェクトを 1 つ登録(disk へ永続化)
++//  3. daemon を SIGKILL で強制終了(graceful shutdown を回避)
++//  4. 同じ state dir で再起動
++//  5. yagura_list で先に登録したプロジェクトが残っていることを確認
++//  6. yagura verify で audit log の hash chain が無事なことを確認
+ //
+ // SIGKILL は OS-level な強制終了で、daemon は cleanup hook を実行できない。
+ // ファイル書込み中に殺された場合のデータ損失リスクがあるため、registry の
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/agentlauncher/launcher.go fixed/yagura-v0.34.1/internal/agentlauncher/launcher.go
+--- a/yagura-v0.34.1/internal/agentlauncher/launcher.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/agentlauncher/launcher.go	2026-06-03 04:24:21.720121756 +0000
+@@ -2,9 +2,10 @@
+ // for cross-agent handoff (v0.13.0).
+ //
+ // 動機:
+-//   quotamonitor が "Claude Code 使い切った" と判断したら、yagura は
+-//   Windsurf を起動して context を Cascade に渡す必要がある。
+-//   逆方向(Windsurf → Claude Code)も同様。
++//
++//	quotamonitor が "Claude Code 使い切った" と判断したら、yagura は
++//	Windsurf を起動して context を Cascade に渡す必要がある。
++//	逆方向(Windsurf → Claude Code)も同様。
+ //
+ // 仕組み(OS-agnostic):
+ //   - macOS:  `open <deeplink>` or `open -a Windsurf <path>`
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/agentlauncher/launcher_test.go fixed/yagura-v0.34.1/internal/agentlauncher/launcher_test.go
+--- a/yagura-v0.34.1/internal/agentlauncher/launcher_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/agentlauncher/launcher_test.go	2026-06-03 04:24:21.720121756 +0000
+@@ -9,10 +9,10 @@
+ 
+ // mockSpawner はテスト用 Spawner。
+ type mockSpawner struct {
+-	called   bool
+-	cmd      string
+-	args     []string
+-	err      error
++	called bool
++	cmd    string
++	args   []string
++	err    error
+ }
+ 
+ func (m *mockSpawner) Start(ctx context.Context, cmd string, args ...string) error {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/agentmd/agentmd.go fixed/yagura-v0.34.1/internal/agentmd/agentmd.go
+--- a/yagura-v0.34.1/internal/agentmd/agentmd.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/agentmd/agentmd.go	2026-06-03 04:24:21.736121757 +0000
+@@ -3,17 +3,18 @@
+ // Cursor / Factory).
+ //
+ // Motivation (v0.32.0):
+-//   Martin Fowler's Harness Engineering taxonomy (2026-04) categorises harness
+-//   components as Computational × Inferential × Guide × Sensor. yagura v0.31
+-//   had 8 sensors but 0 guides (feedback-heavy, feedforward-blind).
+-//
+-//   AGENTS.md is the canonical Inferential Guide: a ~100-line table-of-contents
+-//   injected into Claude Code / Codex / Cursor / Factory at session start. It
+-//   tells the agent which conventions apply BEFORE acting.
+-//
+-//   yagura already knows portfolio-grade facts about each project (Plan.md
+-//   sections, language, depends_on, harness G7.x rules, scanner state). The
+-//   missing piece was producing a ready-to-use AGENTS.md from those facts.
++//
++//	Martin Fowler's Harness Engineering taxonomy (2026-04) categorises harness
++//	components as Computational × Inferential × Guide × Sensor. yagura v0.31
++//	had 8 sensors but 0 guides (feedback-heavy, feedforward-blind).
++//
++//	AGENTS.md is the canonical Inferential Guide: a ~100-line table-of-contents
++//	injected into Claude Code / Codex / Cursor / Factory at session start. It
++//	tells the agent which conventions apply BEFORE acting.
++//
++//	yagura already knows portfolio-grade facts about each project (Plan.md
++//	sections, language, depends_on, harness G7.x rules, scanner state). The
++//	missing piece was producing a ready-to-use AGENTS.md from those facts.
+ //
+ // Design (ADR-0001 zero-dep):
+ //   - Template assembly (stdlib text only, no external templating lib)
+@@ -24,9 +25,10 @@
+ //     AGENTS.md)
+ //
+ // Reference:
+-//   https://openai.com/index/harness-engineering/
+-//   https://martinfowler.com/articles/harness-engineering.html
+-//   https://agents.md/
++//
++//	https://openai.com/index/harness-engineering/
++//	https://martinfowler.com/articles/harness-engineering.html
++//	https://agents.md/
+ package agentmd
+ 
+ import (
+@@ -43,19 +45,19 @@
+ type ProjectFacts struct {
+ 	Slug         string
+ 	DisplayName  string
+-	Repository   string  // owner/repo
+-	Language     string  // primary language tag
+-	Stage        string  // alpha / beta / production
++	Repository   string // owner/repo
++	Language     string // primary language tag
++	Stage        string // alpha / beta / production
+ 	LocalPath    string
+ 	Tags         []string
+-	Description  string  // from Plan.md 目的 section if present
+-	Scope        string  // from Plan.md スコープ
++	Description  string // from Plan.md 目的 section if present
++	Scope        string // from Plan.md スコープ
+ 	Phases       []string
+ 	DoD          []string
+ 	DependsOn    []string
+ 	HasCI        bool
+ 	HasTests     bool
+-	CIStatus     string  // passing / failing / unknown
++	CIStatus     string // passing / failing / unknown
+ 	OpenIssues   int
+ 	OpenPRs      int
+ 	VulnCritical int
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/aiverify/aiverify.go fixed/yagura-v0.34.1/internal/aiverify/aiverify.go
+--- a/yagura-v0.34.1/internal/aiverify/aiverify.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/aiverify/aiverify.go	2026-06-03 04:24:21.716121756 +0000
+@@ -1,17 +1,18 @@
+ // Package aiverify は AI 生成コードの risk pattern を検出する。
+ //
+ // 動機 (v0.25.0):
+-//   m's harness G0.7 INVARIANT「AI出力検証義務」への直接対応。
+ //
+-//   2026 の deep research で集まった統計:
+-//     - Veracode (100+ LLMs, 80 tasks): 45% of AI-generated code ships OWASP Top-10
+-//     - Apiiro Fortune 50: 10x security findings, 322% privilege-escalation paths, 40% secrets exposure
+-//     - CodeRabbit: 1.7× issue multiplier for AI code
+-//     - Georgia Tech Vibe Security Radar: 74 CVEs traceable to AI tools (2026/03)
+-//     - METR RCT (2025/07): AI tooling slowed experienced devs by 19% (despite predicting 24% speedup)
++//	m's harness G0.7 INVARIANT「AI出力検証義務」への直接対応。
+ //
+-//   yagura の他 quality_check (一般 lint), secretscan (secrets), gha_audit (CI 設定)
+-//   と相補的に、"AI-generated 高 risk 箇所" を特定する。
++//	2026 の deep research で集まった統計:
++//	  - Veracode (100+ LLMs, 80 tasks): 45% of AI-generated code ships OWASP Top-10
++//	  - Apiiro Fortune 50: 10x security findings, 322% privilege-escalation paths, 40% secrets exposure
++//	  - CodeRabbit: 1.7× issue multiplier for AI code
++//	  - Georgia Tech Vibe Security Radar: 74 CVEs traceable to AI tools (2026/03)
++//	  - METR RCT (2025/07): AI tooling slowed experienced devs by 19% (despite predicting 24% speedup)
++//
++//	yagura の他 quality_check (一般 lint), secretscan (secrets), gha_audit (CI 設定)
++//	と相補的に、"AI-generated 高 risk 箇所" を特定する。
+ //
+ // 設計判断 (ADR-0001 ゼロ依存):
+ //   - regex base の pattern detector (stdlib のみ)
+@@ -85,14 +86,14 @@
+ 
+ // Result は全 scan の集計。
+ type Result struct {
+-	FilesScanned int             `json:"files_scanned"`
+-	TotalLines   int             `json:"total_lines"`
+-	AIGenLines   int             `json:"ai_gen_lines"`
+-	Findings     []Finding       `json:"findings"`
+-	RiskScore    int             `json:"risk_score"` // 0-100
++	FilesScanned int               `json:"files_scanned"`
++	TotalLines   int               `json:"total_lines"`
++	AIGenLines   int               `json:"ai_gen_lines"`
++	Findings     []Finding         `json:"findings"`
++	RiskScore    int               `json:"risk_score"` // 0-100
+ 	BySeverity   map[RiskLevel]int `json:"by_severity"`
+ 	ByCategory   map[Category]int  `json:"by_category"`
+-	HasCritical  bool            `json:"has_critical"`
++	HasCritical  bool              `json:"has_critical"`
+ 	// v0.26.0: AI marker を持つが対応 test がない files (testcoverage 統合時)
+ 	AIGenWithoutTests []string `json:"ai_gen_without_tests,omitempty"`
+ 	// dedupe cache 統計 (ScanFilesCached 使用時のみ非ゼロ)
+@@ -103,12 +104,13 @@
+ // aiMarkerRe は AI 生成 marker を検出する。case-insensitive。
+ //
+ // 検出例:
+-//   // AI generated
+-//   # AI generated (reviewed)
+-//   // Generated by Claude
+-//   /* @ai-generated */
+-//   // Copilot suggestion
+-//   // GPT-4 generated
++//
++//	// AI generated
++//	# AI generated (reviewed)
++//	// Generated by Claude
++//	/* @ai-generated */
++//	// Copilot suggestion
++//	// GPT-4 generated
+ var aiMarkerRe = regexp.MustCompile(`(?i)(?:^|[^a-zA-Z0-9_])(ai[ -]?generated|generated by (?:claude|copilot|gpt|chatgpt|cursor)|gpt[\d.-]*\s*generated|@ai-generated|copilot[ -]?suggestion|chatgpt|llm[ -]?generated)`)
+ 
+ // aiZoneRadius は marker の前後何行を "AI-generated zone" とみなすか。
+@@ -137,114 +139,114 @@
+ 		{ID: "auth-md5-password",
+ 			Pattern:  must(`(?i)md5\s*\([^)]*(password|passwd|pwd|secret)`),
+ 			Category: CategoryAuth, Risk: RiskCritical,
+-			Message:  "MD5 used for password/secret hashing (use bcrypt/argon2 instead)"},
++			Message: "MD5 used for password/secret hashing (use bcrypt/argon2 instead)"},
+ 		{ID: "auth-sha1-password",
+ 			Pattern:  must(`(?i)sha1\s*\([^)]*(password|passwd|pwd|secret)`),
+ 			Category: CategoryAuth, Risk: RiskCritical,
+-			Message:  "SHA1 used for password/secret hashing (use bcrypt/argon2 instead)"},
++			Message: "SHA1 used for password/secret hashing (use bcrypt/argon2 instead)"},
+ 		{ID: "auth-jwt-hs256-hardcoded",
+ 			Pattern:  must(`(?i)jwt[\.\s][^(\n]*sign[^(\n]*\([^,]+,\s*['"][^'"]{4,}['"]`),
+ 			Category: CategoryAuth, Risk: RiskCritical,
+-			Message:  "Hardcoded JWT signing secret"},
++			Message: "Hardcoded JWT signing secret"},
+ 		{ID: "auth-jwt-hs256-algo",
+ 			Pattern:  must(`(?i)["']HS(256|384|512)["']`),
+ 			Category: CategoryAuth, Risk: RiskHigh,
+-			Message:  "HS256/384/512 symmetric JWT (prefer RS256/ES256 for distributed services)"},
++			Message: "HS256/384/512 symmetric JWT (prefer RS256/ES256 for distributed services)"},
+ 		{ID: "auth-cookie-insecure",
+ 			Pattern:  must(`(?i)secure\s*[:=]\s*false`),
+ 			Category: CategoryAuth, Risk: RiskHigh,
+-			Message:  "Cookie/session with secure=false"},
++			Message: "Cookie/session with secure=false"},
+ 
+ 		// ─── Billing: HIGH ─────────────────────────────────────
+ 		{ID: "billing-float-currency",
+ 			Pattern:  must(`(?i)(parseFloat|Number|float\.parse|float\()\s*\([^)]*(amount|price|cost|total|fee|charge)`),
+ 			Category: CategoryBilling, Risk: RiskHigh,
+-			Message:  "Float used for currency (use Decimal/cents-as-int instead)"},
++			Message: "Float used for currency (use Decimal/cents-as-int instead)"},
+ 		{ID: "billing-stripe-uncaught",
+ 			Pattern:  must(`(?i)stripe\.[\w]+\.(create|charge|capture|refund)\s*\(`),
+ 			Category: CategoryBilling, Risk: RiskMedium,
+-			Message:  "Stripe API call — ensure idempotency_key + try/catch with retry"},
++			Message: "Stripe API call — ensure idempotency_key + try/catch with retry"},
+ 
+ 		// ─── Data: CRITICAL ────────────────────────────────────
+ 		{ID: "data-delete-no-where",
+ 			Pattern:  must(`(?i)DELETE\s+FROM\s+\w+\s*(;|"|'|$)`),
+ 			Category: CategoryData, Risk: RiskCritical,
+-			Message:  "DELETE without WHERE clause (data wipe risk)"},
++			Message: "DELETE without WHERE clause (data wipe risk)"},
+ 		{ID: "data-update-no-where",
+ 			Pattern:  must(`(?i)UPDATE\s+\w+\s+SET\s+[^;]+?\s*(;|"|'|$)`),
+ 			Category: CategoryData, Risk: RiskCritical,
+-			Message:  "UPDATE possibly without WHERE clause"},
++			Message: "UPDATE possibly without WHERE clause"},
+ 		{ID: "data-drop-table",
+ 			Pattern:  must(`(?i)DROP\s+(TABLE|DATABASE|SCHEMA)\b`),
+ 			Category: CategoryData, Risk: RiskCritical,
+-			Message:  "DROP TABLE/DATABASE/SCHEMA (irreversible)"},
++			Message: "DROP TABLE/DATABASE/SCHEMA (irreversible)"},
+ 		{ID: "data-truncate",
+ 			Pattern:  must(`(?i)TRUNCATE\s+TABLE`),
+ 			Category: CategoryData, Risk: RiskCritical,
+-			Message:  "TRUNCATE TABLE (irreversible)"},
++			Message: "TRUNCATE TABLE (irreversible)"},
+ 
+ 		// ─── External API: MEDIUM ──────────────────────────────
+ 		{ID: "ext-fetch-no-timeout",
+ 			Pattern:  must(`(?:^|[^.])fetch\s*\(\s*["'][^"']+["']\s*\)`),
+ 			Category: CategoryExternal, Risk: RiskMedium,
+-			Message:  "fetch() without options object (no timeout/abort signal)"},
++			Message: "fetch() without options object (no timeout/abort signal)"},
+ 		{ID: "ext-http-get-go",
+ 			Pattern:  must(`http\.Get\s*\(`),
+ 			Category: CategoryExternal, Risk: RiskMedium,
+-			Message:  "http.Get without context — use http.NewRequestWithContext + client.Do for timeout",
++			Message:   "http.Get without context — use http.NewRequestWithContext + client.Do for timeout",
+ 			Languages: []string{"go"}},
+ 		{ID: "ext-requests-no-timeout",
+ 			Pattern:  must(`(?i)requests\.\w+\s*\([^)]*\)`),
+ 			Category: CategoryExternal, Risk: RiskMedium,
+-			Message:  "requests call — ensure timeout= parameter is set",
++			Message:   "requests call — ensure timeout= parameter is set",
+ 			Languages: []string{"python", "py"}},
+ 
+ 		// ─── Crypto: CRITICAL/HIGH ─────────────────────────────
+ 		{ID: "crypto-math-rand-security",
+ 			Pattern:  must(`(?i)(math/rand|Math\.random|math\.random|random\.random).*?(token|secret|key|password|nonce|salt|session)`),
+ 			Category: CategoryCrypto, Risk: RiskCritical,
+-			Message:  "Non-crypto RNG used for security-sensitive value (use crypto/rand or secrets module)"},
++			Message: "Non-crypto RNG used for security-sensitive value (use crypto/rand or secrets module)"},
+ 		{ID: "crypto-weak-cipher-des",
+ 			Pattern:  must(`(?i)(?:\b|New|new)(DES|RC4|3DES|TripleDES)\b`),
+ 			Category: CategoryCrypto, Risk: RiskCritical,
+-			Message:  "Weak/broken cipher (DES/RC4/3DES) — use AES-256-GCM"},
++			Message: "Weak/broken cipher (DES/RC4/3DES) — use AES-256-GCM"},
+ 		{ID: "crypto-ecb-mode",
+ 			Pattern:  must(`(?i)["']\w*ECB\w*["']|\bMODE_ECB\b|CipherMode\.ECB`),
+ 			Category: CategoryCrypto, Risk: RiskHigh,
+-			Message:  "ECB cipher mode (semantically insecure — use GCM/CBC with IV)"},
++			Message: "ECB cipher mode (semantically insecure — use GCM/CBC with IV)"},
+ 
+ 		// ─── Secret leak: CRITICAL ─────────────────────────────
+ 		// secretscan と重複するが、AI generated 文脈で特に重視。
+ 		{ID: "secret-stripe-live",
+ 			Pattern:  must(`["'](sk|rk|pk)_live_[A-Za-z0-9]{24,}["']`),
+ 			Category: CategorySecret, Risk: RiskCritical,
+-			Message:  "Stripe LIVE secret/restricted key hardcoded"},
++			Message: "Stripe LIVE secret/restricted key hardcoded"},
+ 		{ID: "secret-stripe-test",
+ 			Pattern:  must(`["'](sk|rk|pk)_test_[A-Za-z0-9]{24,}["']`),
+ 			Category: CategorySecret, Risk: RiskHigh,
+-			Message:  "Stripe TEST key hardcoded (rotate before public commit)"},
++			Message: "Stripe TEST key hardcoded (rotate before public commit)"},
+ 		{ID: "secret-github-pat",
+ 			Pattern:  must(`["']ghp_[A-Za-z0-9]{36,}["']`),
+ 			Category: CategorySecret, Risk: RiskCritical,
+-			Message:  "GitHub Personal Access Token hardcoded"},
++			Message: "GitHub Personal Access Token hardcoded"},
+ 		{ID: "secret-aws-akid",
+ 			Pattern:  must(`["']AKIA[0-9A-Z]{16}["']`),
+ 			Category: CategorySecret, Risk: RiskCritical,
+-			Message:  "AWS Access Key ID hardcoded"},
++			Message: "AWS Access Key ID hardcoded"},
+ 		{ID: "secret-openai-key",
+ 			Pattern:  must(`["']sk-[A-Za-z0-9]{32,}["']`),
+ 			Category: CategorySecret, Risk: RiskCritical,
+-			Message:  "OpenAI API key hardcoded"},
++			Message: "OpenAI API key hardcoded"},
+ 		{ID: "secret-anthropic-key",
+ 			Pattern:  must(`["']sk-ant-[A-Za-z0-9_-]{32,}["']`),
+ 			Category: CategorySecret, Risk: RiskCritical,
+-			Message:  "Anthropic API key hardcoded"},
++			Message: "Anthropic API key hardcoded"},
+ 
+ 		// ─── AI marker (informational, never blocking) ─────────
+ 		{ID: "ai-marker-detected",
+ 			Pattern:  aiMarkerRe,
+ 			Category: CategoryAIMark, Risk: RiskLow,
+-			Message:  "AI-generated marker detected (validate per harness G0.7)"},
++			Message: "AI-generated marker detected (validate per harness G0.7)"},
+ 	}
+ }
+ 
+@@ -433,10 +435,11 @@
+ // computeRiskScore は findings から 0-100 の risk score を算出する。
+ //
+ // 重み付け (一般 SCA より AI generated を厳しめに):
+-//   CRITICAL × 25
+-//   HIGH     × 10
+-//   MEDIUM   × 3
+-//   LOW      × 1
++//
++//	CRITICAL × 25
++//	HIGH     × 10
++//	MEDIUM   × 3
++//	LOW      × 1
+ //
+ // AI-generated zone 内の finding は **2x multiplier** を適用。
+ // CodeRabbit / Veracode が報告する 1.7-1.75× の issue rate を切り上げ。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/alertfix/alertfix.go fixed/yagura-v0.34.1/internal/alertfix/alertfix.go
+--- a/yagura-v0.34.1/internal/alertfix/alertfix.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/alertfix/alertfix.go	2026-06-03 04:24:21.720121756 +0000
+@@ -2,19 +2,20 @@
+ // rule-based な next-action recommendation を生成する。
+ //
+ // 動機 (v0.27.0):
+-//   cortex (aircloset 2026/05) の 4 flywheel:
+-//     ① Code (生成)       — Claude Code/Windsurf が担当
+-//     ② Review (検証)     — yagura ai_verify + test_audit (v0.25-26)
+-//     ③ Release (公開)    — yagura release_radar (v0.24)
+-//     ④ Alert-Fix (再投入) — yagura alertfix (v0.27) ★
+-//
+-//   yagura は既に sensor data (VulnCritical, CIStatus, ScorecardScore, Plan.md)
+-//   を持つが、これらを actionable な next-action として agent に提示する hub が
+-//   欠けていた。本 package がそのハブ。
+-//
+-//   重要原則 (m's harness G0.7 と整合): LLM を呼ばず rule-based。これにより
+-//   determinism + reproducibility + zero-dep ADR-0001 を維持しつつ、agent が
+-//   即実行可能な suggested_tool + args を出す。
++//
++//	cortex (aircloset 2026/05) の 4 flywheel:
++//	  ① Code (生成)       — Claude Code/Windsurf が担当
++//	  ② Review (検証)     — yagura ai_verify + test_audit (v0.25-26)
++//	  ③ Release (公開)    — yagura release_radar (v0.24)
++//	  ④ Alert-Fix (再投入) — yagura alertfix (v0.27) ★
++//
++//	yagura は既に sensor data (VulnCritical, CIStatus, ScorecardScore, Plan.md)
++//	を持つが、これらを actionable な next-action として agent に提示する hub が
++//	欠けていた。本 package がそのハブ。
++//
++//	重要原則 (m's harness G0.7 と整合): LLM を呼ばず rule-based。これにより
++//	determinism + reproducibility + zero-dep ADR-0001 を維持しつつ、agent が
++//	即実行可能な suggested_tool + args を出す。
+ //
+ // 設計判断 (ADR-0001 ゼロ依存):
+ //   - struct + 純関数
+@@ -69,48 +70,48 @@
+ 	SuggestedArgs  map[string]any `json:"suggested_args,omitempty"`
+ 	DetectedAt     time.Time      `json:"detected_at,omitempty"`
+ 	// 数値 metric を flat に置く(LLM が判断材料にする)
+-	MetricInt    int    `json:"metric_int,omitempty"`
+-	MetricFloat  float64 `json:"metric_float,omitempty"`
++	MetricInt   int     `json:"metric_int,omitempty"`
++	MetricFloat float64 `json:"metric_float,omitempty"`
+ }
+ 
+ // Report は alert 集計。
+ type Report struct {
+-	Alerts       []Alert            `json:"alerts"`
+-	Total        int                `json:"total"`
+-	BySeverity   map[Severity]int   `json:"by_severity"`
+-	BySource     map[Source]int     `json:"by_source"`
+-	ByProject    map[string]int     `json:"by_project,omitempty"`
+-	ProjectsScanned int             `json:"projects_scanned"`
+-	GeneratedAt  time.Time          `json:"generated_at"`
+-	HasCritical  bool               `json:"has_critical"`
++	Alerts          []Alert          `json:"alerts"`
++	Total           int              `json:"total"`
++	BySeverity      map[Severity]int `json:"by_severity"`
++	BySource        map[Source]int   `json:"by_source"`
++	ByProject       map[string]int   `json:"by_project,omitempty"`
++	ProjectsScanned int              `json:"projects_scanned"`
++	GeneratedAt     time.Time        `json:"generated_at"`
++	HasCritical     bool             `json:"has_critical"`
+ }
+ 
+ // ProjectSnapshot は alertfix への入力 (registry.Project から抽出した sensor 値)。
+ //
+ // registry を直接 import しないことで test しやすく + 循環 import 回避。
+ type ProjectSnapshot struct {
+-	Slug              string
+-	Repository        string
+-	VulnCritical      int
+-	VulnHigh          int
+-	CIStatus          string  // "passing"/"failing"/"unknown"
+-	ScorecardScore    float64 // 0.0-10.0
+-	OpenIssues        int
+-	OpenPRs           int
+-	LatestActivity    time.Time
++	Slug           string
++	Repository     string
++	VulnCritical   int
++	VulnHigh       int
++	CIStatus       string  // "passing"/"failing"/"unknown"
++	ScorecardScore float64 // 0.0-10.0
++	OpenIssues     int
++	OpenPRs        int
++	LatestActivity time.Time
+ 	// optional: plantracker 等から渡せる
+-	PlanIsHealthy     bool
+-	PlanProgressPct   int
+-	PlanIssues        []string
+-	HasPlanMd         bool
++	PlanIsHealthy   bool
++	PlanProgressPct int
++	PlanIssues      []string
++	HasPlanMd       bool
+ }
+ 
+ // Thresholds は alert 発火条件(調整可能)。
+ type Thresholds struct {
+-	StaleDays          int     // 最終 activity から N 日経過で stale
+-	ScorecardMin       float64 // この値未満で alert
+-	OpenIssuesHigh     int     // この値以上で alert
+-	NowFn              func() time.Time
++	StaleDays      int     // 最終 activity から N 日経過で stale
++	ScorecardMin   float64 // この値未満で alert
++	OpenIssuesHigh int     // この値以上で alert
++	NowFn          func() time.Time
+ }
+ 
+ // DefaultThresholds は m's portfolio 想定で tuning した推奨値。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/alertfix/alertfix_test.go fixed/yagura-v0.34.1/internal/alertfix/alertfix_test.go
+--- a/yagura-v0.34.1/internal/alertfix/alertfix_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/alertfix/alertfix_test.go	2026-06-03 04:24:21.720121756 +0000
+@@ -20,12 +20,12 @@
+ 
+ func TestEvaluate_NoAlertsForHealthy(t *testing.T) {
+ 	snap := ProjectSnapshot{
+-		Slug:            "clean",
+-		CIStatus:        "passing",
+-		ScorecardScore:  9.0,
+-		PlanIsHealthy:   true,
+-		HasPlanMd:       true,
+-		LatestActivity:  fixedNow().Add(-1 * 24 * time.Hour),
++		Slug:           "clean",
++		CIStatus:       "passing",
++		ScorecardScore: 9.0,
++		PlanIsHealthy:  true,
++		HasPlanMd:      true,
++		LatestActivity: fixedNow().Add(-1 * 24 * time.Hour),
+ 	}
+ 	as := Evaluate(snap, thresholds())
+ 	if len(as) != 0 {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/alertfix/state.go fixed/yagura-v0.34.1/internal/alertfix/state.go
+--- a/yagura-v0.34.1/internal/alertfix/state.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/alertfix/state.go	2026-06-03 04:24:21.700121756 +0000
+@@ -1,13 +1,14 @@
+ // alertfix lifecycle persistence (v0.30).
+ //
+ // 動機:
+-//   v0.27 で alert_fix を実装した時点では state を持たず、毎回 evaluate して
+-//   全 alert を出していた。これでは:
+-//     1. 同じ alert が永遠に発火 — agent loop が無限ループ的に同じ提案を受け取る
+-//     2. resolve / snooze 不可能 — 「あとで対応」ができない
+-//     3. cortex flywheel ④ Alert-Fix の閉ループに到達しない
+ //
+-//   本 file は JSONL 永続化 + 3 action (resolve / snooze / reopen) を追加。
++//	v0.27 で alert_fix を実装した時点では state を持たず、毎回 evaluate して
++//	全 alert を出していた。これでは:
++//	  1. 同じ alert が永遠に発火 — agent loop が無限ループ的に同じ提案を受け取る
++//	  2. resolve / snooze 不可能 — 「あとで対応」ができない
++//	  3. cortex flywheel ④ Alert-Fix の閉ループに到達しない
++//
++//	本 file は JSONL 永続化 + 3 action (resolve / snooze / reopen) を追加。
+ //
+ // 設計判断:
+ //   - audit.log と同じく O_APPEND な JSONL — 1 entry が atomic、corrupt-line
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/audit/sink.go fixed/yagura-v0.34.1/internal/audit/sink.go
+--- a/yagura-v0.34.1/internal/audit/sink.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/audit/sink.go	2026-06-03 04:24:21.704121756 +0000
+@@ -2,9 +2,9 @@
+ //
+ // 各パッケージ(scanner / mcp / main 等)は *Logger を直接 import せず、
+ // この Sink interface を受け取る。これにより:
+-//   1. 依存方向が常に「core → audit」となり循環参照しない
+-//   2. テスト時は no-op sink を渡せる
+-//   3. 将来 audit 先を git/Sigstore に拡張するときに呼出側を変えなくて済む
++//  1. 依存方向が常に「core → audit」となり循環参照しない
++//  2. テスト時は no-op sink を渡せる
++//  3. 将来 audit 先を git/Sigstore に拡張するときに呼出側を変えなくて済む
+ package audit
+ 
+ // Sink は audit log の書込先を抽象化する。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/config/config.go fixed/yagura-v0.34.1/internal/config/config.go
+--- a/yagura-v0.34.1/internal/config/config.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/config/config.go	2026-06-03 04:24:49.344122728 +0000
+@@ -70,11 +70,11 @@
+ // 複数エラーは errors.Join でまとめて返す。
+ func Load() (*Config, error) {
+ 	c := &Config{
+-		Addr:        envOr("YAGURA_ADDR", "127.0.0.1:8090"),
+-		LogLevel:    envOr("YAGURA_LOG_LEVEL", "info"),
+-		GitHubBase:  envOr("YAGURA_GITHUB_BASE", "https://api.github.com"),
+-		MCPToken:    os.Getenv("YAGURA_MCP_TOKEN"),
+-		EnablePprof: envBool("YAGURA_ENABLE_PPROF"),
++		Addr:          envOr("YAGURA_ADDR", "127.0.0.1:8090"),
++		LogLevel:      envOr("YAGURA_LOG_LEVEL", "info"),
++		GitHubBase:    envOr("YAGURA_GITHUB_BASE", "https://api.github.com"),
++		MCPToken:      os.Getenv("YAGURA_MCP_TOKEN"),
++		EnablePprof:   envBool("YAGURA_ENABLE_PPROF"),
+ 		AuditKeepDays: envInt("YAGURA_AUDIT_KEEP_DAYS", 90),
+ 	}
+ 
+@@ -178,6 +178,12 @@
+ 			"YAGURA_GITHUB_BASE must start with http:// or https://, got %q", c.GitHubBase))
+ 	}
+ 
++	// AuditKeepDays: 負値は保持日数として無意味(誤設定の早期検出)
++	if c.AuditKeepDays < 0 {
++		errs = append(errs, fmt.Errorf(
++			"YAGURA_AUDIT_KEEP_DAYS must be >= 0, got %d", c.AuditKeepDays))
++	}
++
+ 	// 外部公開時のセキュリティ警告(error ではないが return で含めて呼出側で判断可能に)
+ 	// 外部 IP に bind + MCP token なし → 危険な組み合わせ
+ 	if isPublicBind(c.Addr) && c.MCPToken == "" {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/config/config_test.go fixed/yagura-v0.34.1/internal/config/config_test.go
+--- a/yagura-v0.34.1/internal/config/config_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/config/config_test.go	2026-06-03 04:26:36.348126494 +0000
+@@ -110,6 +110,16 @@
+ 	}
+ }
+ 
++func TestLoad_NegativeAuditKeepDays(t *testing.T) {
++	clearAll(t)
++	t.Setenv("YAGURA_GITHUB_TOKEN", "ghp_x")
++	t.Setenv("YAGURA_AUDIT_KEEP_DAYS", "-1")
++	_, err := Load()
++	if err == nil || !strings.Contains(err.Error(), "YAGURA_AUDIT_KEEP_DAYS") {
++		t.Errorf("expected negative audit-keep-days error, got %v", err)
++	}
++}
++
+ func TestValidateAddr(t *testing.T) {
+ 	cases := []struct {
+ 		input string
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/dashboard/dashboard.go fixed/yagura-v0.34.1/internal/dashboard/dashboard.go
+--- a/yagura-v0.34.1/internal/dashboard/dashboard.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/dashboard/dashboard.go	2026-06-03 04:24:21.716121756 +0000
+@@ -55,14 +55,14 @@
+ 		logger = slog.Default()
+ 	}
+ 	tmpl, err := template.New("dashboard").Funcs(template.FuncMap{
+-		"stageColor":      stageColor,
+-		"ciColor":         ciColor,
+-		"staleClass":      staleClassByTime,
+-		"priorityClass":   priorityClass,
+-		"daysSince":       daysSince,
+-		"truncate":        truncate,
+-		"fmtTime":         fmtTime,
+-		"securityCell":    securityCell,
++		"stageColor":    stageColor,
++		"ciColor":       ciColor,
++		"staleClass":    staleClassByTime,
++		"priorityClass": priorityClass,
++		"daysSince":     daysSince,
++		"truncate":      truncate,
++		"fmtTime":       fmtTime,
++		"securityCell":  securityCell,
+ 	}).Parse(htmlTemplate)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("parse template: %w", err)
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/dedupe/dedupe.go fixed/yagura-v0.34.1/internal/dedupe/dedupe.go
+--- a/yagura-v0.34.1/internal/dedupe/dedupe.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/dedupe/dedupe.go	2026-06-03 04:24:21.712121756 +0000
+@@ -1,13 +1,14 @@
+ // Package dedupe は content-addressed cache + tool result cache を提供する。
+ //
+ // 動機 (v0.23.0):
+-//   AI agent (Claude Code 等) が短期間に同じ tool を同じ引数で呼ぶ、
+-//   または同じ source content を scan する重複が観察される。
+-//   cortex (aircloset 2026/05) でも "AI が迷う頻度を構造的に減らす" として
+-//   Product Graph で同じ問いを 1 回で答える設計を採用している。
+ //
+-//   yagura はもう一歩踏み込んで、tool 呼出 + content scan の deterministic な
+-//   結果を content hash でキャッシュし、重複呼出を即時に応答する。
++//	AI agent (Claude Code 等) が短期間に同じ tool を同じ引数で呼ぶ、
++//	または同じ source content を scan する重複が観察される。
++//	cortex (aircloset 2026/05) でも "AI が迷う頻度を構造的に減らす" として
++//	Product Graph で同じ問いを 1 回で答える設計を採用している。
++//
++//	yagura はもう一歩踏み込んで、tool 呼出 + content scan の deterministic な
++//	結果を content hash でキャッシュし、重複呼出を即時に応答する。
+ //
+ // 設計判断 (ADR-0001 ゼロ依存準拠):
+ //   - sync.Map ではなく explicit lock の RWMutex map[string]*entry
+@@ -198,8 +199,8 @@
+ 	Misses      uint64  `json:"misses"`
+ 	Evictions   uint64  `json:"evictions"`
+ 	Expirations uint64  `json:"expirations"`
+-	BytesSaved  uint64  `json:"bytes_saved"`  // hit で返した cumulative bytes(節約推定)
+-	HitRate     float64 `json:"hit_rate"`     // hits / (hits + misses)
++	BytesSaved  uint64  `json:"bytes_saved"` // hit で返した cumulative bytes(節約推定)
++	HitRate     float64 `json:"hit_rate"`    // hits / (hits + misses)
+ 	CurrentSize int     `json:"current_size"`
+ 	MaxSize     int     `json:"max_size"`
+ 	TTLSeconds  int64   `json:"ttl_seconds"`
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/dedupe/dedupe_test.go fixed/yagura-v0.34.1/internal/dedupe/dedupe_test.go
+--- a/yagura-v0.34.1/internal/dedupe/dedupe_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/dedupe/dedupe_test.go	2026-06-03 04:24:21.708121756 +0000
+@@ -74,7 +74,7 @@
+ 	c.Set("b", []byte("2"))
+ 	c.Set("c", []byte("3"))
+ 
+-	_, _ = c.Get("a") // a を front に移動
++	_, _ = c.Get("a")       // a を front に移動
+ 	c.Set("d", []byte("4")) // b が evict されるはず(LRU)
+ 
+ 	if _, ok := c.Get("a"); !ok {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/featurelist/featurelist.go fixed/yagura-v0.34.1/internal/featurelist/featurelist.go
+--- a/yagura-v0.34.1/internal/featurelist/featurelist.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/featurelist/featurelist.go	2026-06-03 04:24:21.720121756 +0000
+@@ -2,16 +2,17 @@
+ // that Anthropic's long-running harness pattern uses.
+ //
+ // Motivation (v0.32.0):
+-//   Anthropic's "Effective harnesses for long-running agents" (2026) describes
+-//   a 2-agent pattern where an Initializer agent produces a feature-list.json
+-//   that the recurring Coding agent works through one feature at a time. The
+-//   key insight: agents reliably claim premature completion unless the work
+-//   is enumerated up front with explicit acceptance criteria.
+-//
+-//   m's harness G1.P already requires every project to have a Plan.md with
+-//   purpose/scope/phases/DoD. yagura already parses these (plantracker pkg).
+-//   What was missing: a converter from this human-authored format to the
+-//   machine-actionable feature-list.json the Anthropic pattern needs.
++//
++//	Anthropic's "Effective harnesses for long-running agents" (2026) describes
++//	a 2-agent pattern where an Initializer agent produces a feature-list.json
++//	that the recurring Coding agent works through one feature at a time. The
++//	key insight: agents reliably claim premature completion unless the work
++//	is enumerated up front with explicit acceptance criteria.
++//
++//	m's harness G1.P already requires every project to have a Plan.md with
++//	purpose/scope/phases/DoD. yagura already parses these (plantracker pkg).
++//	What was missing: a converter from this human-authored format to the
++//	machine-actionable feature-list.json the Anthropic pattern needs.
+ //
+ // Design (ADR-0001 zero-dep):
+ //   - Pure converter: plantracker.PlanState → []Feature → JSON
+@@ -21,8 +22,9 @@
+ //   - Phases become a top-level grouping, preserving Plan.md ordering
+ //
+ // Reference:
+-//   https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
+-//   https://github.com/anthropics/cwc-long-running-agents
++//
++//	https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
++//	https://github.com/anthropics/cwc-long-running-agents
+ package featurelist
+ 
+ import (
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go fixed/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go
+--- a/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go	2026-06-03 04:24:21.712121756 +0000
+@@ -233,11 +233,11 @@
+ type refType int
+ 
+ const (
+-	refUnknown refType = iota
+-	refSHA              // 40-char hex (immutable)
+-	refMutableTag       // semver tag (v1, v1.2, v1.2.3) etc.
+-	refBranch           // main, master, dev, HEAD etc. (highly mutable)
+-	refLocal            // ./actions/foo (same repo, no SHA needed)
++	refUnknown    refType = iota
++	refSHA                // 40-char hex (immutable)
++	refMutableTag         // semver tag (v1, v1.2, v1.2.3) etc.
++	refBranch             // main, master, dev, HEAD etc. (highly mutable)
++	refLocal              // ./actions/foo (same repo, no SHA needed)
+ )
+ 
+ var reSHA40 = regexp.MustCompile(`^[0-9a-f]{40}$`)
+@@ -324,8 +324,8 @@
+ //  2. 直前 50 行以内に "run:" / "- run:" があり、そのインデントより
+ //     深い位置にいる場合(複数行 run: |)→ true
+ //     例:
+-//       - run: |
+-//           echo "${{ github.event.pull_request.title }}"
++//     - run: |
++//     echo "${{ github.event.pull_request.title }}"
+ //
+ // 注: 完全に正確ではない(YAML 構造によっては false positive あり)が、
+ // template injection は run: 内が圧倒的に多いので実用充分。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/ghaaudit/ghaaudit_test.go fixed/yagura-v0.34.1/internal/ghaaudit/ghaaudit_test.go
+--- a/yagura-v0.34.1/internal/ghaaudit/ghaaudit_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/ghaaudit/ghaaudit_test.go	2026-06-03 04:24:21.708121756 +0000
+@@ -36,12 +36,12 @@
+ 
+ func TestExtractRef(t *testing.T) {
+ 	cases := map[string]string{
+-		"actions/checkout@v4":                              "v4",
+-		"actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683": "11bd71901bbe5b1630ceea73d27597364c9af683",
++		"actions/checkout@v4": "v4",
++		"actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683":           "11bd71901bbe5b1630ceea73d27597364c9af683",
+ 		"slsa-framework/slsa-github-generator/.github/workflows/x.yml@v2.0.0": "v2.0.0",
+-		"no-at-sign":   "",
+-		"trailing@":    "",
+-		"":             "",
++		"no-at-sign": "",
++		"trailing@":  "",
++		"":           "",
+ 	}
+ 	for in, want := range cases {
+ 		if got := extractRef(in); got != want {
+@@ -410,13 +410,13 @@
+ 
+ func TestIndentOf(t *testing.T) {
+ 	cases := map[string]int{
+-		"":          0,
+-		"foo":       0,
+-		"  foo":     2,
+-		"    foo":   4,
+-		"\tfoo":     4, // tab = 4 spaces
+-		"\t  foo":   6,
+-		"      ":    6,
++		"":        0,
++		"foo":     0,
++		"  foo":   2,
++		"    foo": 4,
++		"\tfoo":   4, // tab = 4 spaces
++		"\t  foo": 6,
++		"      ":  6,
+ 	}
+ 	for in, want := range cases {
+ 		if got := indentOf(in); got != want {
+@@ -429,12 +429,12 @@
+ 
+ func TestInRunBlock_VariousPositions(t *testing.T) {
+ 	lines := []string{
+-		"jobs:",        // 1
+-		"  build:",     // 2
+-		"    steps:",   // 3
+-		"      - run: |", // 4 (run: 開始)
+-		"          echo hello",  // 5 (in run)
+-		"          echo world",  // 6 (in run)
++		"jobs:",                             // 1
++		"  build:",                          // 2
++		"    steps:",                        // 3
++		"      - run: |",                    // 4 (run: 開始)
++		"          echo hello",              // 5 (in run)
++		"          echo world",              // 6 (in run)
+ 		"      - uses: actions/checkout@v4", // 7 (not in run)
+ 	}
+ 	if !inRunBlock(lines, 5) {
+@@ -474,10 +474,10 @@
+ func TestReTriggerKey_Match(t *testing.T) {
+ 	re := reTriggerKey("pull_request_target")
+ 	cases := map[string]bool{
+-		"  pull_request_target:":         true,
+-		"  pull_request_target: ":        true,
+-		"pull_request_target:":           true,
+-		"# pull_request_target:":         false,
++		"  pull_request_target:":          true,
++		"  pull_request_target: ":         true,
++		"pull_request_target:":            true,
++		"# pull_request_target:":          false,
+ 		"other_event_pull_request_target": false,
+ 	}
+ 	for in, want := range cases {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/github/client.go fixed/yagura-v0.34.1/internal/github/client.go
+--- a/yagura-v0.34.1/internal/github/client.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/github/client.go	2026-06-03 04:24:21.708121756 +0000
+@@ -263,7 +263,7 @@
+ // CommitInfo は GitHub API /repos/{owner}/{repo}/commits/{sha} の最小サブセット。
+ // pin drift 検証 (S1.6) に必要なフィールドのみ。
+ type CommitInfo struct {
+-	SHA    string `json:"sha"`    // 40-char hex(検証用)
++	SHA    string `json:"sha"` // 40-char hex(検証用)
+ 	Commit struct {
+ 		Committer struct {
+ 			Date string `json:"date"` // RFC3339
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/github/tokens_test.go fixed/yagura-v0.34.1/internal/github/tokens_test.go
+--- a/yagura-v0.34.1/internal/github/tokens_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/github/tokens_test.go	2026-06-03 04:24:21.708121756 +0000
+@@ -59,13 +59,13 @@
+ 	s.AddOwnerToken("shizukutanaka", "shizuku-token")
+ 
+ 	cases := map[string]string{
+-		"/repos/shizukutanaka/yagura":              "shizuku-token",
+-		"/repos/Shizukutanaka/yagura/pulls":        "shizuku-token", // case-insensitive
+-		"/repos/other-user/repo":                   "default",
+-		"/repos/other-user/repo/commits/abc":       "default",
+-		"/user":                                    "default", // not a repo path
+-		"/orgs/myorg":                              "default",
+-		"":                                         "default",
++		"/repos/shizukutanaka/yagura":        "shizuku-token",
++		"/repos/Shizukutanaka/yagura/pulls":  "shizuku-token", // case-insensitive
++		"/repos/other-user/repo":             "default",
++		"/repos/other-user/repo/commits/abc": "default",
++		"/user":                              "default", // not a repo path
++		"/orgs/myorg":                        "default",
++		"":                                   "default",
+ 	}
+ 	for path, want := range cases {
+ 		if got := s.TokenForPath(path); got != want {
+@@ -88,13 +88,13 @@
+ 
+ func TestExtractOwnerFromPath(t *testing.T) {
+ 	cases := map[string]string{
+-		"/repos/foo/bar":              "foo",
+-		"/repos/foo/bar/commits":      "foo",
+-		"/repos/foo/bar/git/refs":     "foo",
+-		"/user":                       "",
+-		"/orgs/myorg":                 "",
+-		"":                            "",
+-		"/repos/":                     "",
++		"/repos/foo/bar":          "foo",
++		"/repos/foo/bar/commits":  "foo",
++		"/repos/foo/bar/git/refs": "foo",
++		"/user":                   "",
++		"/orgs/myorg":             "",
++		"":                        "",
++		"/repos/":                 "",
+ 	}
+ 	for path, want := range cases {
+ 		if got := extractOwnerFromPath(path); got != want {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/handoff/handoff.go fixed/yagura-v0.34.1/internal/handoff/handoff.go
+--- a/yagura-v0.34.1/internal/handoff/handoff.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/handoff/handoff.go	2026-06-03 04:24:21.712121756 +0000
+@@ -1,9 +1,10 @@
+ // Package handoff persists session context for cross-agent handoff (v0.13.0).
+ //
+ // 動機:
+-//   Claude Code が quota 切れになって Windsurf に切替えるとき、Cascade が
+-//   どこから作業を引き継ぐべきか分かるよう、現在の作業 context を yagura に
+-//   保存しておく必要がある。
++//
++//	Claude Code が quota 切れになって Windsurf に切替えるとき、Cascade が
++//	どこから作業を引き継ぐべきか分かるよう、現在の作業 context を yagura に
++//	保存しておく必要がある。
+ //
+ // 保存内容(Context):
+ //   - workspace: 現在の git リポジトリ root
+@@ -35,16 +36,16 @@
+ 
+ // Context は handoff session の全データ。
+ type Context struct {
+-	Version       int       `json:"version"`        // スキーマバージョン(現在 1)
+-	SavedAt       time.Time `json:"saved_at"`
+-	SavedBy       string    `json:"saved_by"`       // "claude_code" | "windsurf" | 手動 etc.
+-	Workspace     string    `json:"workspace"`      // 絶対パス
+-	Branch        string    `json:"branch,omitempty"`
+-	LastCommit    string    `json:"last_commit,omitempty"` // SHA
+-	ActiveFiles   []string  `json:"active_files,omitempty"`
+-	PlanMdStep    string    `json:"plan_md_step,omitempty"` // Plan.md の現在進行中フェーズ
+-	OpenTodos     []Todo    `json:"open_todos,omitempty"`
+-	FreeNotes     string    `json:"free_notes,omitempty"`   // 自由記述メモ
++	Version     int       `json:"version"` // スキーマバージョン(現在 1)
++	SavedAt     time.Time `json:"saved_at"`
++	SavedBy     string    `json:"saved_by"`  // "claude_code" | "windsurf" | 手動 etc.
++	Workspace   string    `json:"workspace"` // 絶対パス
++	Branch      string    `json:"branch,omitempty"`
++	LastCommit  string    `json:"last_commit,omitempty"` // SHA
++	ActiveFiles []string  `json:"active_files,omitempty"`
++	PlanMdStep  string    `json:"plan_md_step,omitempty"` // Plan.md の現在進行中フェーズ
++	OpenTodos   []Todo    `json:"open_todos,omitempty"`
++	FreeNotes   string    `json:"free_notes,omitempty"` // 自由記述メモ
+ }
+ 
+ // Todo は単一 TODO/FIXME/NOTE エントリ。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/handoff/handoff_test.go fixed/yagura-v0.34.1/internal/handoff/handoff_test.go
+--- a/yagura-v0.34.1/internal/handoff/handoff_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/handoff/handoff_test.go	2026-06-03 04:24:21.700121756 +0000
+@@ -45,12 +45,12 @@
+ 	s := newTestStore(t)
+ 	now := time.Now().UTC().Truncate(time.Second)
+ 	in := &Context{
+-		Version:    1,
+-		SavedAt:    now,
+-		SavedBy:    "claude_code",
+-		Workspace:  "/home/m/yagura",
+-		Branch:     "main",
+-		LastCommit: "a1b2c3d4",
++		Version:     1,
++		SavedAt:     now,
++		SavedBy:     "claude_code",
++		Workspace:   "/home/m/yagura",
++		Branch:      "main",
++		LastCommit:  "a1b2c3d4",
+ 		ActiveFiles: []string{"internal/scanner/scanner.go", "Plan.md"},
+ 		PlanMdStep:  "Phase 2 — Implementation",
+ 		OpenTodos: []Todo{
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/harness/audit.go fixed/yagura-v0.34.1/internal/harness/audit.go
+--- a/yagura-v0.34.1/internal/harness/audit.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/harness/audit.go	2026-06-03 04:24:21.712121756 +0000
+@@ -18,22 +18,23 @@
+ // SkillAuditResult は SKILL.md 評価結果。
+ //
+ // Score は 0-100。実用判定:
+-//   90+ : production ready
+-//   70-89: usable, 改善余地あり
+-//   50-69: 多くの問題、要 refactor
+-//   <50 : ほぼ動かない(trigger 不発火 / Claude が無視)
++//
++//	90+ : production ready
++//	70-89: usable, 改善余地あり
++//	50-69: 多くの問題、要 refactor
++//	<50 : ほぼ動かない(trigger 不発火 / Claude が無視)
+ type SkillAuditResult struct {
+-	Score              int      `json:"score"`              // 0-100
+-	HasFrontmatter     bool     `json:"has_frontmatter"`
+-	DescriptionLen     int      `json:"description_len"`    // 1024 制限への距離測定
+-	NameLen            int      `json:"name_len"`           // 64 制限への距離測定
+-	BodyWordCount      int      `json:"body_word_count"`    // 1500-2000 目安
+-	IsTriggerFormat    bool     `json:"is_trigger_format"`  // "Use when ..." 形式
+-	HasGotchasSection  bool     `json:"has_gotchas_section"`
+-	HasVagueKeywords   bool     `json:"has_vague_keywords"`
+-	HasProgDisclosure  bool     `json:"has_progressive_disclosure"` // references/ scripts/ への参照
+-	Issues             []string `json:"issues,omitempty"`
+-	Suggestions        []string `json:"suggestions,omitempty"`
++	Score             int      `json:"score"` // 0-100
++	HasFrontmatter    bool     `json:"has_frontmatter"`
++	DescriptionLen    int      `json:"description_len"`   // 1024 制限への距離測定
++	NameLen           int      `json:"name_len"`          // 64 制限への距離測定
++	BodyWordCount     int      `json:"body_word_count"`   // 1500-2000 目安
++	IsTriggerFormat   bool     `json:"is_trigger_format"` // "Use when ..." 形式
++	HasGotchasSection bool     `json:"has_gotchas_section"`
++	HasVagueKeywords  bool     `json:"has_vague_keywords"`
++	HasProgDisclosure bool     `json:"has_progressive_disclosure"` // references/ scripts/ への参照
++	Issues            []string `json:"issues,omitempty"`
++	Suggestions       []string `json:"suggestions,omitempty"`
+ }
+ 
+ // vague description で頻出する単語(filler — 何の trigger にも match しない)
+@@ -45,10 +46,12 @@
+ // AuditSkill は SKILL.md の content 全体を heuristic で評価する。
+ //
+ // 入力:
+-//   content: SKILL.md 全テキスト(frontmatter + body)
++//
++//	content: SKILL.md 全テキスト(frontmatter + body)
+ //
+ // 出力:
+-//   SkillAuditResult。Issues/Suggestions は action-oriented。
++//
++//	SkillAuditResult。Issues/Suggestions は action-oriented。
+ func AuditSkill(content string) SkillAuditResult {
+ 	r := SkillAuditResult{Score: 100}
+ 
+@@ -167,17 +170,17 @@
+ 
+ // SubagentAuditResult は subagent 定義(.claude/agents/*.md)評価結果。
+ type SubagentAuditResult struct {
+-	Score             int      `json:"score"`
+-	HasFrontmatter    bool     `json:"has_frontmatter"`
+-	NameLen           int      `json:"name_len"`
+-	DescriptionLen    int      `json:"description_len"`
+-	BodyWordCount     int      `json:"body_word_count"`
+-	IsActionOriented  bool     `json:"is_action_oriented"`   // description が "Use proactively..." 等
+-	HasToolsAllowlist bool     `json:"has_tools_allowlist"`  // tools 明示(omit はリスク)
+-	HasSafetyMode     bool     `json:"has_safety_mode"`      // permissionMode 明示
+-	IsSystemPromptStyle bool   `json:"is_system_prompt_style"` // "You are X" 形式(主語)
+-	Issues            []string `json:"issues,omitempty"`
+-	Suggestions       []string `json:"suggestions,omitempty"`
++	Score               int      `json:"score"`
++	HasFrontmatter      bool     `json:"has_frontmatter"`
++	NameLen             int      `json:"name_len"`
++	DescriptionLen      int      `json:"description_len"`
++	BodyWordCount       int      `json:"body_word_count"`
++	IsActionOriented    bool     `json:"is_action_oriented"`     // description が "Use proactively..." 等
++	HasToolsAllowlist   bool     `json:"has_tools_allowlist"`    // tools 明示(omit はリスク)
++	HasSafetyMode       bool     `json:"has_safety_mode"`        // permissionMode 明示
++	IsSystemPromptStyle bool     `json:"is_system_prompt_style"` // "You are X" 形式(主語)
++	Issues              []string `json:"issues,omitempty"`
++	Suggestions         []string `json:"suggestions,omitempty"`
+ }
+ 
+ // AuditSubagent は .claude/agents/*.md content を評価する。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/harness/harness.go fixed/yagura-v0.34.1/internal/harness/harness.go
+--- a/yagura-v0.34.1/internal/harness/harness.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/harness/harness.go	2026-06-03 04:24:21.716121756 +0000
+@@ -2,14 +2,15 @@
+ // 構造化データ + scaffolding generator として提供する。
+ //
+ // 動機 (v0.19.0):
+-//   Anthropic / Fowler / cortex(aircloset)が confirm した知見:
+-//     - CLAUDE.md = advisory (≤60 行で hard-rule は hook へ移譲)
+-//     - skill description = trigger condition (NOT summary)
+-//     - skill Gotchas section = highest-signal content
+-//     - 一般知識を再述しない / 既定挙動の divergence を書く
+-//     - subagent body = system prompt (NOT user prompt) ← #1 misunderstanding
+-//     - hooks = deterministic (lint / format / 危険 cmd block)
+-//     - permissions = allow/deny/ask 明示で逐次確認を回避
++//
++//	Anthropic / Fowler / cortex(aircloset)が confirm した知見:
++//	  - CLAUDE.md = advisory (≤60 行で hard-rule は hook へ移譲)
++//	  - skill description = trigger condition (NOT summary)
++//	  - skill Gotchas section = highest-signal content
++//	  - 一般知識を再述しない / 既定挙動の divergence を書く
++//	  - subagent body = system prompt (NOT user prompt) ← #1 misunderstanding
++//	  - hooks = deterministic (lint / format / 危険 cmd block)
++//	  - permissions = allow/deny/ask 明示で逐次確認を回避
+ //
+ // yagura は portfolio orchestrator の立場で、各 project 用 .claude/ scaffolding を
+ // 生成・audit する MCP tools の土台を提供する。
+@@ -31,12 +32,12 @@
+ // クライアントは編集して .claude/ 配下に save するか、yagura に
+ // commit を任せる(未実装、v0.20+ 候補)。
+ type Recommendation struct {
+-	Language      string             `json:"language"`
+-	ClaudeMd      string             `json:"claude_md"`              // CLAUDE.md content (≤60 lines)
+-	SettingsJSON  string             `json:"settings_json"`          // .claude/settings.json (hooks + permissions)
+-	Skills        []SkillTemplate    `json:"skills"`                 // 推奨 skill list
+-	Subagents     []SubagentTemplate `json:"subagents"`              // 推奨 subagent list
+-	Citations     []string           `json:"citations"`              // 参考ドキュメント(Anthropic 公式優先)
++	Language     string             `json:"language"`
++	ClaudeMd     string             `json:"claude_md"`     // CLAUDE.md content (≤60 lines)
++	SettingsJSON string             `json:"settings_json"` // .claude/settings.json (hooks + permissions)
++	Skills       []SkillTemplate    `json:"skills"`        // 推奨 skill list
++	Subagents    []SubagentTemplate `json:"subagents"`     // 推奨 subagent list
++	Citations    []string           `json:"citations"`     // 参考ドキュメント(Anthropic 公式優先)
+ }
+ 
+ // SkillTemplate は単一 skill のスケルトン(SKILL.md content + 配置先 path)。
+@@ -48,7 +49,7 @@
+ 
+ // SubagentTemplate は単一 subagent のスケルトン。
+ type SubagentTemplate struct {
+-	Path        string   `json:"path"`        // 例: .claude/agents/security-reviewer.md
++	Path        string   `json:"path"` // 例: .claude/agents/security-reviewer.md
+ 	Name        string   `json:"name"`
+ 	Description string   `json:"description"` // trigger 形式("Use proactively when ...")
+ 	Tools       []string `json:"tools"`       // allowlist
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/hookreceiver/receiver.go fixed/yagura-v0.34.1/internal/hookreceiver/receiver.go
+--- a/yagura-v0.34.1/internal/hookreceiver/receiver.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/hookreceiver/receiver.go	2026-06-03 04:24:21.712121756 +0000
+@@ -1,14 +1,15 @@
+ // Package hookreceiver は Claude Code の HTTP hooks を受信する。
+ //
+ // Motivation (v0.31.0):
+-//   Claude Code は 2026-02 に HTTP hooks (`type: "http"`) を GA。
+-//   PreToolUse / PostToolUse / Stop / SubagentStop 等のイベントを
+-//   localhost:8080/hooks/* に POST する spec が確立した。が、それを受け取って
+-//   活用する deterministic local backend がエコシステムに不足している
+-//   (GitHub anthropics/claude-code#4995 で要望、未実装)。
+ //
+-//   yagura は既に local HTTP server + Bearer token auth + JSONL persist +
+-//   registry (cwd → project mapping) を持つので、最も自然な host。
++//	Claude Code は 2026-02 に HTTP hooks (`type: "http"`) を GA。
++//	PreToolUse / PostToolUse / Stop / SubagentStop 等のイベントを
++//	localhost:8080/hooks/* に POST する spec が確立した。が、それを受け取って
++//	活用する deterministic local backend がエコシステムに不足している
++//	(GitHub anthropics/claude-code#4995 で要望、未実装)。
++//
++//	yagura は既に local HTTP server + Bearer token auth + JSONL persist +
++//	registry (cwd → project mapping) を持つので、最も自然な host。
+ //
+ // 設計判断:
+ //   - 観察モード (v0.31): allow/deny は返さない、純粋に記録のみ。response は
+@@ -55,11 +56,11 @@
+ 	Project string `json:"project,omitempty"` // cwd → registry lookup 結果
+ 
+ 	// tool 関連 (PreToolUse / PostToolUse / PostToolUseFailure)
+-	ToolName    string          `json:"tool_name,omitempty"`
+-	ToolUseID   string          `json:"tool_use_id,omitempty"`
+-	ToolInput   json.RawMessage `json:"tool_input,omitempty"`
++	ToolName     string          `json:"tool_name,omitempty"`
++	ToolUseID    string          `json:"tool_use_id,omitempty"`
++	ToolInput    json.RawMessage `json:"tool_input,omitempty"`
+ 	ToolResponse json.RawMessage `json:"tool_response,omitempty"`
+-	DurationMS  int64           `json:"duration_ms,omitempty"` // PostToolUse only
++	DurationMS   int64           `json:"duration_ms,omitempty"` // PostToolUse only
+ 
+ 	// subagent 関連
+ 	AgentID   string `json:"agent_id,omitempty"`
+@@ -81,12 +82,12 @@
+ 
+ // Stats は project 別の集計値。
+ type Stats struct {
+-	Total       int                  `json:"total"`
+-	ByEvent     map[string]int       `json:"by_event"`
+-	ByTool      map[string]int       `json:"by_tool"`
+-	ErrorCount  int                  `json:"error_count"`
+-	TotalMS     int64                `json:"total_ms"`
+-	LastEvent   time.Time            `json:"last_event"`
++	Total      int            `json:"total"`
++	ByEvent    map[string]int `json:"by_event"`
++	ByTool     map[string]int `json:"by_tool"`
++	ErrorCount int            `json:"error_count"`
++	TotalMS    int64          `json:"total_ms"`
++	LastEvent  time.Time      `json:"last_event"`
+ }
+ 
+ // Receiver は HTTP hook events を受け取って persist + 集計する。
+@@ -96,10 +97,10 @@
+ 	path   string
+ 	lookup ProjectLookup
+ 
+-	mu      sync.RWMutex
+-	stats   map[string]*Stats // project slug → Stats
+-	recent  []Event           // ring buffer (most recent N)
+-	maxBuf  int
++	mu     sync.RWMutex
++	stats  map[string]*Stats // project slug → Stats
++	recent []Event           // ring buffer (most recent N)
++	maxBuf int
+ 
+ 	NowFn func() time.Time
+ }
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/hookreceiver/receiver_test.go fixed/yagura-v0.34.1/internal/hookreceiver/receiver_test.go
+--- a/yagura-v0.34.1/internal/hookreceiver/receiver_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/hookreceiver/receiver_test.go	2026-06-03 04:24:21.704121756 +0000
+@@ -1,8 +1,8 @@
+ package hookreceiver
+ 
+ import (
+-	"encoding/json"
+ 	"bytes"
++	"encoding/json"
+ 	"io"
+ 	"net/http"
+ 	"net/http/httptest"
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/httplimit/bucket.go fixed/yagura-v0.34.1/internal/httplimit/bucket.go
+--- a/yagura-v0.34.1/internal/httplimit/bucket.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/httplimit/bucket.go	2026-06-03 04:24:21.740121757 +0000
+@@ -1,16 +1,18 @@
+ // Package httplimit implements per-key token bucket rate limiting for HTTP.
+ //
+ // 動機 (v0.12.0):
+-//   v0.11 で追加した /sbom, /gha-audit, /pin-drift endpoint は認証以外の
+-//   保護が無い。悪意ある(or 単に bug の)client が連打した場合:
+-//     - /pin-drift 連打で GitHub PAT の rate limit を消費し、scanner も巻き
+-//       添えで失敗(blast radius が portfolio 全体)
+-//     - /gha-audit に 5MB body を毎秒投げて CPU を喰い潰す
+-//     - /sbom 連打で I/O 圧迫
++//
++//	v0.11 で追加した /sbom, /gha-audit, /pin-drift endpoint は認証以外の
++//	保護が無い。悪意ある(or 単に bug の)client が連打した場合:
++//	  - /pin-drift 連打で GitHub PAT の rate limit を消費し、scanner も巻き
++//	    添えで失敗(blast radius が portfolio 全体)
++//	  - /gha-audit に 5MB body を毎秒投げて CPU を喰い潰す
++//	  - /sbom 連打で I/O 圧迫
+ //
+ // 解決:
+-//   標準ライブラリのみで token bucket を実装(ADR-0001 維持)。golang.org/x/time/rate
+-//   は使わない。
++//
++//	標準ライブラリのみで token bucket を実装(ADR-0001 維持)。golang.org/x/time/rate
++//	は使わない。
+ //
+ // 設計:
+ //   - per-key の bucket map(キーは IP or Auth token、route で異なる戦略)
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/initps1/initps1.go fixed/yagura-v0.34.1/internal/initps1/initps1.go
+--- a/yagura-v0.34.1/internal/initps1/initps1.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/initps1/initps1.go	2026-06-03 04:24:21.704121756 +0000
+@@ -2,13 +2,14 @@
+ // for long-running coding-agent sessions on Windows.
+ //
+ // Motivation (v0.34.0):
+-//   yagura v0.33 introduced init.sh for Anthropic's 2-agent harness pattern.
+-//   It works great on macOS / Linux. On Windows, agents either need WSL or
+-//   they hit "/usr/bin/env sh: not found".
+-//
+-//   Windows is a first-class target for the sovereign computing stack — m
+-//   runs many projects on Windows directly (Loco, Wave DAW, Otedama bank
+-//   converters). The Initializer agent needs a native boot script there too.
++//
++//	yagura v0.33 introduced init.sh for Anthropic's 2-agent harness pattern.
++//	It works great on macOS / Linux. On Windows, agents either need WSL or
++//	they hit "/usr/bin/env sh: not found".
++//
++//	Windows is a first-class target for the sovereign computing stack — m
++//	runs many projects on Windows directly (Loco, Wave DAW, Otedama bank
++//	converters). The Initializer agent needs a native boot script there too.
+ //
+ // Design (ADR-0001 zero-dep):
+ //   - Pure function: initsh.BootSpec → PowerShell string (same input type
+@@ -20,7 +21,8 @@
+ //   - Idempotent — safe to re-run
+ //
+ // Reference (PS5+ compatible features only):
+-//   https://learn.microsoft.com/en-us/powershell/scripting/learn/ps101/01-getting-started
++//
++//	https://learn.microsoft.com/en-us/powershell/scripting/learn/ps101/01-getting-started
+ package initps1
+ 
+ import (
+@@ -34,9 +36,9 @@
+ // rather than import initsh to keep this package cycle-free and to allow
+ // PowerShell-specific tweaks in the future without leaking them upstream.
+ type BootSpec struct {
+-	Project       string
+-	GeneratedAt   time.Time
+-	GeneratedBy   string
++	Project     string
++	GeneratedAt time.Time
++	GeneratedBy string
+ 
+ 	WorkDir       string   // absolute Windows path (e.g. C:\dev\breeze)
+ 	Language      string   // go / node / python / rust
+@@ -211,7 +213,7 @@
+ 
+ // psQuote returns a PowerShell single-quoted literal.
+ //
+-// PowerShell rule: inside '...', a single quote is doubled (''). Backticks
++// PowerShell rule: inside '...', a single quote is doubled (”). Backticks
+ // and $vars are taken literally (no interpolation). This is the safest
+ // quoting for paths and arbitrary strings.
+ func psQuote(s string) string {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/initsh/initsh.go fixed/yagura-v0.34.1/internal/initsh/initsh.go
+--- a/yagura-v0.34.1/internal/initsh/initsh.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/initsh/initsh.go	2026-06-03 04:24:21.720121756 +0000
+@@ -2,14 +2,15 @@
+ // script from Anthropic's 2-agent long-running harness pattern.
+ //
+ // Motivation (v0.33.0):
+-//   Anthropic "Effective harnesses for long-running agents" (2026):
+-//     "An initializer agent runs once at the start of a project to set up the
+-//      environment, expand the prompt into a structured feature-list.json,
+-//      and write an init.sh that future sessions will run on boot."
+-//
+-//   yagura already produces feature-list.json (v0.32). The missing companion
+-//   is init.sh — the script every Coding agent session runs to verify the
+-//   environment is sane and load the handoff state before doing real work.
++//
++//	Anthropic "Effective harnesses for long-running agents" (2026):
++//	  "An initializer agent runs once at the start of a project to set up the
++//	   environment, expand the prompt into a structured feature-list.json,
++//	   and write an init.sh that future sessions will run on boot."
++//
++//	yagura already produces feature-list.json (v0.32). The missing companion
++//	is init.sh — the script every Coding agent session runs to verify the
++//	environment is sane and load the handoff state before doing real work.
+ //
+ // Design (ADR-0001 zero-dep):
+ //   - Pure function: BootSpec → string
+@@ -30,9 +31,9 @@
+ 
+ // BootSpec is the structured input — caller assembles from registry facts.
+ type BootSpec struct {
+-	Project       string
+-	GeneratedAt   time.Time
+-	GeneratedBy   string
++	Project     string
++	GeneratedAt time.Time
++	GeneratedBy string
+ 
+ 	// Working directory (absolute). If empty, script uses $PWD.
+ 	WorkDir string
+@@ -199,7 +200,7 @@
+ 
+ // shQuote wraps s in single quotes, escaping any embedded single quotes.
+ //
+-// POSIX-safe: 'a'\''b' → a'b literally.
++// POSIX-safe: 'a'\”b' → a'b literally.
+ func shQuote(s string) string {
+ 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+ }
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/logging/logging.go fixed/yagura-v0.34.1/internal/logging/logging.go
+--- a/yagura-v0.34.1/internal/logging/logging.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/logging/logging.go	2026-06-03 04:24:21.688121755 +0000
+@@ -17,10 +17,11 @@
+ )
+ 
+ // New は構造化 JSON ログを生成する。
+-//   level: debug / info / warn / error
+-//   serviceName: ログに自動付与する service タグ
+-//   version: ビルドバージョン
+-//   out: 出力先(通常 os.Stdout、テストは bytes.Buffer)
++//
++//	level: debug / info / warn / error
++//	serviceName: ログに自動付与する service タグ
++//	version: ビルドバージョン
++//	out: 出力先(通常 os.Stdout、テストは bytes.Buffer)
+ func New(level, serviceName, version string, out io.Writer) *slog.Logger {
+ 	l := slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{
+ 		Level: parseLevel(level),
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/errors.go fixed/yagura-v0.34.1/internal/mcp/errors.go
+--- a/yagura-v0.34.1/internal/mcp/errors.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/errors.go	2026-06-03 04:24:21.736121757 +0000
+@@ -47,9 +47,10 @@
+ // asJSONError は ToolError を JSON-RPC error response 用に変換する。
+ //
+ // JSON-RPC 標準 error codes:
+-//   -32602: invalid params(クライアント側エラー)
+-//   -32603: internal error(サーバ側エラー)
+-//   -32000: server error(application-specific、その他)
++//
++//	-32602: invalid params(クライアント側エラー)
++//	-32603: internal error(サーバ側エラー)
++//	-32000: server error(application-specific、その他)
+ func asJSONError(err error) json.RawMessage {
+ 	var te *ToolError
+ 	if !errors.As(err, &te) {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/server.go fixed/yagura-v0.34.1/internal/mcp/server.go
+--- a/yagura-v0.34.1/internal/mcp/server.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/server.go	2026-06-03 04:24:21.696121755 +0000
+@@ -18,9 +18,9 @@
+ 	"time"
+ 
+ 	"github.com/shizukutanaka/yagura/internal/alertfix"
+-	"github.com/shizukutanaka/yagura/internal/hookreceiver"
+ 	"github.com/shizukutanaka/yagura/internal/audit"
+ 	"github.com/shizukutanaka/yagura/internal/dedupe"
++	"github.com/shizukutanaka/yagura/internal/hookreceiver"
+ )
+ 
+ const (
+@@ -80,8 +80,9 @@
+ // ToolStats は単一 tool の累積使用量を表す。
+ //
+ // 動機:
+-//   v0.16 で description / JSON を圧縮したが、効果を end-to-end で測定する手段が無かった。
+-//   各 tool の request/response byte 数を累積記録し、yagura_token_stats で取得可能にする。
++//
++//	v0.16 で description / JSON を圧縮したが、効果を end-to-end で測定する手段が無かった。
++//	各 tool の request/response byte 数を累積記録し、yagura_token_stats で取得可能にする。
+ //
+ // 計測単位は byte ベース(token ではない)。LLM の tokenizer は client 側で異なるため、
+ // yagura は generic な byte 数のみ report する。byte/token 比は概ね 3-4x なので
+@@ -306,12 +307,13 @@
+ // handleToolsList returns the tools/list response, honoring opt-in compact mode.
+ //
+ // Compact mode (env YAGURA_MCP_COMPACT=1):
+-//   v0.22.0 で追加。Anthropic の Tool Search Tool / defer_loading が API-side 機能で
+-//   server から advertise できないため、server-internal の opt-in compact mode を提供。
+-//   - description を最小化 ([G]/[S] prefix のみ等)
+-//   - InputSchema は type + required のみに簡略化(properties detail を削除)
+-//   - tool 名から意味を推測する前提
+-//   client は yagura_tools_catalog を補完手段として呼べる。
++//
++//	v0.22.0 で追加。Anthropic の Tool Search Tool / defer_loading が API-side 機能で
++//	server から advertise できないため、server-internal の opt-in compact mode を提供。
++//	- description を最小化 ([G]/[S] prefix のみ等)
++//	- InputSchema は type + required のみに簡略化(properties detail を削除)
++//	- tool 名から意味を推測する前提
++//	client は yagura_tools_catalog を補完手段として呼べる。
+ func (s *Server) handleToolsList(w http.ResponseWriter, id json.RawMessage) {
+ 	s.mu.RLock()
+ 	defer s.mu.RUnlock()
+@@ -388,7 +390,7 @@
+ 	defer cancel()
+ 
+ 	var (
+-		result any
++		result  any
+ 		callErr error
+ 	)
+ 	func() {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/server_test.go fixed/yagura-v0.34.1/internal/mcp/server_test.go
+--- a/yagura-v0.34.1/internal/mcp/server_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/server_test.go	2026-06-03 04:24:21.700121756 +0000
+@@ -223,11 +223,11 @@
+ 
+ func TestCompactDescription(t *testing.T) {
+ 	cases := map[string]string{
+-		"[G] long description here":             "[G]",
+-		"[S] another long one":                  "[S]",
+-		"no prefix":                             "",
+-		"":                                      "",
+-		"[G]":                                   "[G]",
++		"[G] long description here": "[G]",
++		"[S] another long one":      "[S]",
++		"no prefix":                 "",
++		"":                          "",
++		"[G]":                       "[G]",
+ 	}
+ 	for in, want := range cases {
+ 		got := compactDescription(in)
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools.go fixed/yagura-v0.34.1/internal/mcp/tools.go
+--- a/yagura-v0.34.1/internal/mcp/tools.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools.go	2026-06-03 04:28:06.596129669 +0000
+@@ -16,20 +16,21 @@
+ 	"sort"
+ 	"strings"
+ 	"time"
+-	"github.com/shizukutanaka/yagura/internal/aiverify"
++
+ 	"github.com/shizukutanaka/yagura/internal/agentmd"
++	"github.com/shizukutanaka/yagura/internal/aiverify"
+ 	"github.com/shizukutanaka/yagura/internal/alertfix"
+ 	"github.com/shizukutanaka/yagura/internal/atomicfile"
+ 	"github.com/shizukutanaka/yagura/internal/featurelist"
+-	"github.com/shizukutanaka/yagura/internal/initps1"
+-	"github.com/shizukutanaka/yagura/internal/initsh"
+-	"github.com/shizukutanaka/yagura/internal/progressfile"
+ 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+-	"github.com/shizukutanaka/yagura/internal/harness"
+ 	"github.com/shizukutanaka/yagura/internal/handoff"
++	"github.com/shizukutanaka/yagura/internal/harness"
++	"github.com/shizukutanaka/yagura/internal/initps1"
++	"github.com/shizukutanaka/yagura/internal/initsh"
+ 	"github.com/shizukutanaka/yagura/internal/osv"
+ 	"github.com/shizukutanaka/yagura/internal/pindrift"
+ 	"github.com/shizukutanaka/yagura/internal/plantracker"
++	"github.com/shizukutanaka/yagura/internal/progressfile"
+ 	"github.com/shizukutanaka/yagura/internal/project"
+ 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
+ 	"github.com/shizukutanaka/yagura/internal/quotamonitor"
+@@ -54,10 +55,10 @@
+ 	MainVersion    string           // SBOM 生成時のメイン version(例: "0.9.0")
+ 
+ 	// v0.13.0: agent handoff layer
+-	QuotaMonitor  QuotaMonitor   // 両 agent の quota state 管理。nil なら quota tool は使用不可
+-	HandoffStore  HandoffStore   // session context 永続化。nil なら session tool は使用不可
+-	AgentLauncher AgentLauncher  // Windsurf / Claude Code 起動。nil なら handoff は dry-run のみ
+-	WorkspaceRoot string         // 現在の workspace ルートパス(handoff 既定値)
++	QuotaMonitor  QuotaMonitor  // 両 agent の quota state 管理。nil なら quota tool は使用不可
++	HandoffStore  HandoffStore  // session context 永続化。nil なら session tool は使用不可
++	AgentLauncher AgentLauncher // Windsurf / Claude Code 起動。nil なら handoff は dry-run のみ
++	WorkspaceRoot string        // 現在の workspace ルートパス(handoff 既定値)
+ }
+ 
+ // QuotaMonitor は両 agent の quota 状態を管理する interface。
+@@ -193,16 +194,16 @@
+ // ─── yagura_list ─────────────────────────────────────────────
+ 
+ type listOut struct {
+-	Slug           string `json:"slug"`
+-	DisplayName    string `json:"display_name"`
+-	Stage          string `json:"stage"`
+-	Priority       int    `json:"priority"`
+-	Language       string `json:"language,omitempty"`
+-	OpenPRs        int    `json:"open_prs"`
+-	OpenIssues     int    `json:"open_issues"`
+-	CIStatus       string `json:"ci_status,omitempty"`
+-	LatestVersion  string `json:"latest_version,omitempty"`
+-	DaysSinceCommit int   `json:"days_since_commit"`
++	Slug            string `json:"slug"`
++	DisplayName     string `json:"display_name"`
++	Stage           string `json:"stage"`
++	Priority        int    `json:"priority"`
++	Language        string `json:"language,omitempty"`
++	OpenPRs         int    `json:"open_prs"`
++	OpenIssues      int    `json:"open_issues"`
++	CIStatus        string `json:"ci_status,omitempty"`
++	LatestVersion   string `json:"latest_version,omitempty"`
++	DaysSinceCommit int    `json:"days_since_commit"`
+ }
+ 
+ // ─── yagura_get ──────────────────────────────────────────────
+@@ -212,14 +213,14 @@
+ // ─── yagura_today ────────────────────────────────────────────
+ 
+ type todayItem struct {
+-	Slug         string  `json:"slug"`
+-	DisplayName  string  `json:"display_name"`
+-	Score        float64 `json:"score"`
+-	Reasons      []string `json:"reasons"`
+-	Priority     int     `json:"priority"`
+-	OpenPRs      int     `json:"open_prs"`
+-	CIStatus     string  `json:"ci_status,omitempty"`
+-	DaysIdle     int     `json:"days_idle"`
++	Slug        string   `json:"slug"`
++	DisplayName string   `json:"display_name"`
++	Score       float64  `json:"score"`
++	Reasons     []string `json:"reasons"`
++	Priority    int      `json:"priority"`
++	OpenPRs     int      `json:"open_prs"`
++	CIStatus    string   `json:"ci_status,omitempty"`
++	DaysIdle    int      `json:"days_idle"`
+ }
+ 
+ // ─── yagura_register ─────────────────────────────────────────
+@@ -244,16 +245,16 @@
+ 
+ func buildSecretScanTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_secretscan",
++		Name:        "yagura_secretscan",
+ 		Description: "[G] Secret scan: 12 patterns + entropy. Redacts hits.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"slug": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"min_severity": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 			},
+ 		},
+@@ -394,13 +395,13 @@
+ 
+ func buildSbomTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_sbom",
++		Name:        "yagura_sbom",
+ 		Description: "[G] yagura SBOM CycloneDX 1.5. Set summary_only for compact.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"summary_only": map[string]any{
+-					"type":        "boolean",
++					"type": "boolean",
+ 				},
+ 			},
+ 		},
+@@ -442,16 +443,16 @@
+ 
+ func buildGhaAuditTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_gha_audit",
++		Name:        "yagura_gha_audit",
+ 		Description: "[G] GHA workflow audit: 7 supply-chain risk patterns.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"files": map[string]any{
+-					"type":        "object",
++					"type": "object",
+ 				},
+ 				"summary_only": map[string]any{
+-					"type":        "boolean",
++					"type": "boolean",
+ 				},
+ 			},
+ 			"required": []string{"files"},
+@@ -496,19 +497,19 @@
+ 
+ func buildPinDriftTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_pin_drift",
++		Name:        "yagura_pin_drift",
+ 		Description: "[G] GHA SHA pin verify via API. Detects drift/stale.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"files": map[string]any{
+-					"type":        "object",
++					"type": "object",
+ 				},
+ 				"summary_only": map[string]any{
+-					"type":        "boolean",
++					"type": "boolean",
+ 				},
+ 				"concurrency": map[string]any{
+-					"type":        "integer",
++					"type": "integer",
+ 				},
+ 			},
+ 			"required": []string{"files"},
+@@ -611,7 +612,7 @@
+ // 外から注入する設計にする。
+ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
+ 	return &Tool{
+-		Name: "yagura_token_stats",
++		Name:        "yagura_token_stats",
+ 		Description: "[S] Per-tool byte counts since daemon start.",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+@@ -645,7 +646,7 @@
+ }
+ 
+ // ─── yagura_graph_neighbors / impact / stats (v0.18.0) ───────
+-// 
++//
+ // Inspired by cortex (aircloset, 辻 2026/05) "Product Graph" 構想:
+ // portfolio の depends_on を semantic graph として AI から探索可能にする。
+ 
+@@ -658,14 +659,14 @@
+ 
+ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
+ 	return &Tool{
+-		Name: "yagura_quality_check",
++		Name:        "yagura_quality_check",
+ 		Description: "[G] Code lint: as any, ts-ignore, TODO. 3 severity tiers.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+-				"files":    map[string]any{"type": "object"},
+-				"text":     map[string]any{"type": "string"},
+-				"language": map[string]any{"type": "string"},
++				"files":        map[string]any{"type": "object"},
++				"text":         map[string]any{"type": "string"},
++				"language":     map[string]any{"type": "string"},
+ 				"summary_only": map[string]any{"type": "boolean"},
+ 			},
+ 		},
+@@ -709,13 +710,13 @@
+ // formatQualityResult is MCP-friendly output formatter.
+ func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
+ 	out := map[string]any{
+-		"files_scanned":   res.FilesScanned,
+-		"total_lines":     res.TotalLines,
+-		"finding_count":   len(res.Findings),
+-		"by_severity":     res.BySeverity,
+-		"by_rule":         res.ByRule,
+-		"has_prohibited":  res.HasProhibited(),
+-		"summary":         res.Summary(),
++		"files_scanned":  res.FilesScanned,
++		"total_lines":    res.TotalLines,
++		"finding_count":  len(res.Findings),
++		"by_severity":    res.BySeverity,
++		"by_rule":        res.ByRule,
++		"has_prohibited": res.HasProhibited(),
++		"summary":        res.Summary(),
+ 	}
+ 	if !summaryOnly {
+ 		out["findings"] = res.Findings
+@@ -730,7 +731,7 @@
+ 
+ func buildHarnessRecommendTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_harness_recommend",
++		Name:        "yagura_harness_recommend",
+ 		Description: "[G] Claude Code .claude/ scaffold by slug or language.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -765,7 +766,7 @@
+ 
+ func buildSkillAuditTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_skill_audit",
++		Name:        "yagura_skill_audit",
+ 		Description: "[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -791,7 +792,7 @@
+ 
+ func buildSubagentAuditTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_subagent_audit",
++		Name:        "yagura_subagent_audit",
+ 		Description: "[G] Subagent .md audit: prompt style, tools, description.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -822,7 +823,7 @@
+ 
+ func buildToolsCatalogTool(s *Server) *Tool {
+ 	return &Tool{
+-		Name: "yagura_tools_catalog",
++		Name:        "yagura_tools_catalog",
+ 		Description: "[G] Full tool details lookup. Use when compact mode hides info you need.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -836,7 +837,11 @@
+ 				Name  string `json:"name"`
+ 				Query string `json:"query"`
+ 			}
+-			_ = json.Unmarshal(args, &in)
++			if len(args) > 0 {
++				if err := json.Unmarshal(args, &in); err != nil {
++					return nil, &ToolError{Code: "invalid_input", Cause: err}
++				}
++			}
+ 
+ 			s.mu.RLock()
+ 			defer s.mu.RUnlock()
+@@ -885,7 +890,7 @@
+ 
+ func buildDedupeStatsTool(s *Server) *Tool {
+ 	return &Tool{
+-		Name: "yagura_dedupe_stats",
++		Name:        "yagura_dedupe_stats",
+ 		Description: "[S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+@@ -905,7 +910,7 @@
+ 
+ func buildPlanStatusTool(d Deps, cache plantracker.CacheLike) *Tool {
+ 	return &Tool{
+-		Name: "yagura_plan_status",
++		Name:        "yagura_plan_status",
+ 		Description: "[G] Plan.md progress for project. Parses checkboxes + required sections (目的/スコープ/フェーズ/DoD).",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -968,7 +973,7 @@
+ 
+ func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
+ 	return &Tool{
+-		Name: "yagura_release_radar",
++		Name:        "yagura_release_radar",
+ 		Description: "[S] Cross-project release readiness ranking. Aggregates Plan/CI/issues/quality/AI-risk.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -1123,7 +1128,7 @@
+ 
+ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
+ 	return &Tool{
+-		Name: "yagura_ai_verify",
++		Name:        "yagura_ai_verify",
+ 		Description: "[G] AI code risk audit. 6 categories: auth/billing/data/external/crypto/secret. 2x multiplier inside AI-marker zones.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -1222,7 +1227,7 @@
+ 
+ func buildTestAuditTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_test_audit",
++		Name:        "yagura_test_audit",
+ 		Description: "[G] Source-test coverage detection. Go/TS/JS/Python/Rust/Java filename + Rust inline #[cfg(test)] + Python doctest.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -1267,7 +1272,7 @@
+ 
+ func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Store) *Tool {
+ 	return &Tool{
+-		Name: "yagura_alert_fix",
++		Name:        "yagura_alert_fix",
+ 		Description: "[S] Aggregate health signals across portfolio. Returns actionable alerts with suggested_tool + args.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -1288,7 +1293,11 @@
+ 				OpenIssuesHigh  int     `json:"open_issues_high"`
+ 				IncludeInactive bool    `json:"include_inactive"` // v0.30: resolved/snoozed も含める
+ 			}
+-			_ = json.Unmarshal(args, &in)
++			if len(args) > 0 {
++				if err := json.Unmarshal(args, &in); err != nil {
++					return nil, &ToolError{Code: "invalid_input", Cause: err}
++				}
++			}
+ 
+ 			th := alertfix.DefaultThresholds()
+ 			if in.StaleDays > 0 {
+@@ -1425,15 +1434,15 @@
+ 
+ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+ 	return &Tool{
+-		Name: "yagura_alert_resolve",
++		Name:        "yagura_alert_resolve",
+ 		Description: "[G] Manage alert lifecycle: resolve/snooze/reopen. Persists to {state_dir}/alert_state.jsonl.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+-				"alert_id":     map[string]any{"type": "string"},
+-				"action":       map[string]any{"type": "string", "enum": []string{"resolve", "snooze", "reopen"}},
+-				"note":         map[string]any{"type": "string"},
+-				"snooze_days":  map[string]any{"type": "integer"}, // snooze 期間(日)
++				"alert_id":    map[string]any{"type": "string"},
++				"action":      map[string]any{"type": "string", "enum": []string{"resolve", "snooze", "reopen"}},
++				"note":        map[string]any{"type": "string"},
++				"snooze_days": map[string]any{"type": "integer"}, // snooze 期間(日)
+ 			},
+ 			"required": []string{"alert_id", "action"},
+ 		},
+@@ -1475,9 +1484,9 @@
+ 			}
+ 			st, _ := store.Get(in.AlertID)
+ 			return map[string]any{
+-				"alert_id":      in.AlertID,
+-				"action":        in.Action,
+-				"current_state": st,
++				"alert_id":        in.AlertID,
++				"action":          in.Action,
++				"current_state":   st,
+ 				"lifecycle_stats": store.Stats(),
+ 			}, nil
+ 		},
+@@ -1492,14 +1501,14 @@
+ 
+ func buildAgentsMdTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_agents_md",
++		Name:        "yagura_agents_md",
+ 		Description: "[G] Generate AGENTS.md for a registered project from Plan.md + registry facts. Cross-tool: Claude Code / Codex / Cursor.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+-				"slug":         map[string]any{"type": "string"},
++				"slug":          map[string]any{"type": "string"},
+ 				"include_rules": map[string]any{"type": "boolean", "description": "Include house rules section (default true)"},
+-				"write":        map[string]any{"type": "boolean", "description": "Also write to {local_path}/AGENTS.md (v0.33.0)"},
++				"write":         map[string]any{"type": "boolean", "description": "Also write to {local_path}/AGENTS.md (v0.33.0)"},
+ 			},
+ 			"required": []string{"slug"},
+ 		},
+@@ -1578,7 +1587,7 @@
+ 
+ func buildFeatureListTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_feature_list",
++		Name:        "yagura_feature_list",
+ 		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -1643,7 +1652,7 @@
+ 
+ func buildHarnessCoverageTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_harness_coverage",
++		Name:        "yagura_harness_coverage",
+ 		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+@@ -1687,11 +1696,11 @@
+ 				}
+ 			}
+ 			return map[string]any{
+-				"taxonomy_source":      "https://martinfowler.com/articles/harness-engineering.html",
+-				"matrix":               matrix,
+-				"counts":               counts,
++				"taxonomy_source":       "https://martinfowler.com/articles/harness-engineering.html",
++				"matrix":                matrix,
++				"counts":                counts,
+ 				"feedback_only_warning": false, // v0.32 で解消
+-				"note": "yagura intentionally leaves the inferential-sensor quadrant empty (LLM-as-judge would violate ADR-0001 zero-deps). External Claude/GPT review can be plugged in via Claude Code subagents and reported back via /hooks/claude-code.",
++				"note":                  "yagura intentionally leaves the inferential-sensor quadrant empty (LLM-as-judge would violate ADR-0001 zero-deps). External Claude/GPT review can be plugged in via Claude Code subagents and reported back via /hooks/claude-code.",
+ 			}, nil
+ 		},
+ 	}
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_graph.go fixed/yagura-v0.34.1/internal/mcp/tools_graph.go
+--- a/yagura-v0.34.1/internal/mcp/tools_graph.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_graph.go	2026-06-03 04:28:06.600129669 +0000
+@@ -8,13 +8,14 @@
+ import (
+ 	"context"
+ 	"encoding/json"
++
+ 	"github.com/shizukutanaka/yagura/internal/project"
+ 	"github.com/shizukutanaka/yagura/internal/projectgraph"
+ )
+ 
+ func buildGraphNeighborsTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_graph_neighbors",
++		Name:        "yagura_graph_neighbors",
+ 		Description: "[G] Graph walk from slug. Returns direct + N-hop deps/dependents.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -49,7 +50,7 @@
+ 
+ func buildGraphImpactTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_graph_impact",
++		Name:        "yagura_graph_impact",
+ 		Description: "[G] Project impact (transitive reverse deps). Cycle-aware.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -76,7 +77,7 @@
+ 
+ func buildGraphStatsTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_graph_stats",
++		Name:        "yagura_graph_stats",
+ 		Description: "[G] Graph stats: nodes/edges/hubs + dangling deps.",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_handoff.go fixed/yagura-v0.34.1/internal/mcp/tools_handoff.go
+--- a/yagura-v0.34.1/internal/mcp/tools_handoff.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_handoff.go	2026-06-03 04:28:06.604129670 +0000
+@@ -10,31 +10,32 @@
+ 	"encoding/json"
+ 	"errors"
+ 	"time"
++
+ 	"github.com/shizukutanaka/yagura/internal/handoff"
+ 	"github.com/shizukutanaka/yagura/internal/quotamonitor"
+ )
+ 
+ func buildQuotaReportTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_quota_report",
++		Name:        "yagura_quota_report",
+ 		Description: "[S] Report agent quota. Triggers auto-handoff.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"agent": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"remaining_percent": map[string]any{
+-					"type":        "integer",
++					"type": "integer",
+ 				},
+ 				"source": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"window_resets_at": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"weekly_resets_at": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 			},
+ 			"required": []string{"agent", "remaining_percent"},
+@@ -71,10 +72,10 @@
+ 			should, target, reason := d.QuotaMonitor.ShouldHandoff(agent)
+ 			st, _ := d.QuotaMonitor.Status(agent)
+ 			return map[string]any{
+-				"recorded":         st,
+-				"should_handoff":   should,
+-				"handoff_target":   string(target),
+-				"handoff_reason":   reason,
++				"recorded":       st,
++				"should_handoff": should,
++				"handoff_target": string(target),
++				"handoff_reason": reason,
+ 			}, nil
+ 		},
+ 	}
+@@ -82,7 +83,7 @@
+ 
+ func buildAgentStatusTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_agent_status",
++		Name:        "yagura_agent_status",
+ 		Description: "[S] Get both agents' quota state + recommended next agent.",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+@@ -101,8 +102,8 @@
+ 				statuses[string(k)] = v
+ 			}
+ 			return map[string]any{
+-				"statuses":             statuses,
+-				"recommended_agent":    string(recommended),
++				"statuses":              statuses,
++				"recommended_agent":     string(recommended),
+ 				"recommendation_reason": reason,
+ 			}, nil
+ 		},
+@@ -111,32 +112,32 @@
+ 
+ func buildSessionSaveTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_session_save",
++		Name:        "yagura_session_save",
+ 		Description: "[S] Save handoff context.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"workspace": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"saved_by": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"branch": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"last_commit": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"active_files": map[string]any{
+-					"type":        "array",
+-					"items":       map[string]any{"type": "string"},
++					"type":  "array",
++					"items": map[string]any{"type": "string"},
+ 				},
+ 				"plan_md_step": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"open_todos": map[string]any{
+-					"type":        "array",
++					"type": "array",
+ 					"items": map[string]any{
+ 						"type": "object",
+ 						"properties": map[string]any{
+@@ -148,7 +149,7 @@
+ 					},
+ 				},
+ 				"free_notes": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 			},
+ 			"required": []string{"workspace"},
+@@ -169,10 +170,10 @@
+ 				return nil, &ToolError{Code: "save_failed", Message: err.Error()}
+ 			}
+ 			return map[string]any{
+-				"saved":      true,
+-				"path":       d.HandoffStore.Path(),
+-				"saved_at":   in.SavedAt,
+-				"workspace":  in.Workspace,
++				"saved":     true,
++				"path":      d.HandoffStore.Path(),
++				"saved_at":  in.SavedAt,
++				"workspace": in.Workspace,
+ 			}, nil
+ 		},
+ 	}
+@@ -180,7 +181,7 @@
+ 
+ func buildSessionLoadTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_session_load",
++		Name:        "yagura_session_load",
+ 		Description: "[S] Load handoff context. Null if none.",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+@@ -211,22 +212,22 @@
+ 
+ func buildHandoffTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_handoff",
++		Name:        "yagura_handoff",
+ 		Description: "[S] Handoff: save + mark + launch target. dry_run optional.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"target": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"workspace": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"free_notes": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"dry_run": map[string]any{
+-					"type":        "boolean",
++					"type": "boolean",
+ 				},
+ 			},
+ 			"required": []string{"target"},
+@@ -310,13 +311,13 @@
+ 
+ func buildHeartbeatTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_heartbeat",
++		Name:        "yagura_heartbeat",
+ 		Description: "[S] Agent heartbeat (~5min). Detects stale agents.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"agent": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 			},
+ 			"required": []string{"agent"},
+@@ -350,13 +351,13 @@
+ 
+ func buildQuotaForecastTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_quota_forecast",
++		Name:        "yagura_quota_forecast",
+ 		Description: "[S] Empty-time linreg forecast. Needs ≥3 samples.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"agent": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 			},
+ 			"required": []string{"agent"},
+@@ -398,13 +399,13 @@
+ 
+ func buildUsageSummaryTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_usage_summary",
++		Name:        "yagura_usage_summary",
+ 		Description: "[S] Agent usage summary + sparkline. Both agents by default.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"agent": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 			},
+ 		},
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_inventory.go fixed/yagura-v0.34.1/internal/mcp/tools_inventory.go
+--- a/yagura-v0.34.1/internal/mcp/tools_inventory.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_inventory.go	2026-06-03 04:28:06.612129670 +0000
+@@ -12,13 +12,14 @@
+ 	"sort"
+ 	"strings"
+ 	"time"
++
+ 	"github.com/shizukutanaka/yagura/internal/project"
+ 	"github.com/shizukutanaka/yagura/internal/registry"
+ )
+ 
+ func buildListTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_list",
++		Name:        "yagura_list",
+ 		Description: "[G] List projects (compact).",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+@@ -30,15 +31,15 @@
+ 			out := make([]listOut, 0, len(projects))
+ 			for _, p := range projects {
+ 				out = append(out, listOut{
+-					Slug:           p.Slug,
+-					DisplayName:    p.DisplayName,
+-					Stage:          string(p.Stage),
+-					Priority:       p.Priority,
+-					Language:       p.Language,
+-					OpenPRs:        p.OpenPRs,
+-					OpenIssues:     p.OpenIssues,
+-					CIStatus:       string(p.CIStatus),
+-					LatestVersion:  p.LatestVersion,
++					Slug:            p.Slug,
++					DisplayName:     p.DisplayName,
++					Stage:           string(p.Stage),
++					Priority:        p.Priority,
++					Language:        p.Language,
++					OpenPRs:         p.OpenPRs,
++					OpenIssues:      p.OpenIssues,
++					CIStatus:        string(p.CIStatus),
++					LatestVersion:   p.LatestVersion,
+ 					DaysSinceCommit: daysSince(p.LatestActivity, now),
+ 				})
+ 			}
+@@ -52,7 +53,7 @@
+ 
+ func buildGetTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_get",
++		Name:        "yagura_get",
+ 		Description: "[G] Get project by slug.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -85,7 +86,7 @@
+ 
+ func buildSearchTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_search",
++		Name:        "yagura_search",
+ 		Description: "[G] Search projects: tag/lang/stage/text (AND).",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -138,15 +139,15 @@
+ 			outProjects := make([]listOut, 0, len(result))
+ 			for _, p := range result {
+ 				outProjects = append(outProjects, listOut{
+-					Slug:           p.Slug,
+-					DisplayName:    p.DisplayName,
+-					Stage:          string(p.Stage),
+-					Priority:       p.Priority,
+-					Language:       p.Language,
+-					OpenPRs:        p.OpenPRs,
+-					OpenIssues:     p.OpenIssues,
+-					CIStatus:       string(p.CIStatus),
+-					LatestVersion:  p.LatestVersion,
++					Slug:            p.Slug,
++					DisplayName:     p.DisplayName,
++					Stage:           string(p.Stage),
++					Priority:        p.Priority,
++					Language:        p.Language,
++					OpenPRs:         p.OpenPRs,
++					OpenIssues:      p.OpenIssues,
++					CIStatus:        string(p.CIStatus),
++					LatestVersion:   p.LatestVersion,
+ 					DaysSinceCommit: daysSince(p.LatestActivity, now),
+ 				})
+ 			}
+@@ -160,7 +161,7 @@
+ 
+ func buildTodayTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_today",
++		Name:        "yagura_today",
+ 		Description: "[G] Top projects today by score.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -250,7 +251,7 @@
+ 
+ func buildRegisterTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_register",
++		Name:        "yagura_register",
+ 		Description: "[G] Register project.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -322,7 +323,7 @@
+ 
+ func buildUnregisterTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_unregister",
++		Name:        "yagura_unregister",
+ 		Description: "[G] Unregister project (hard delete).",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -359,7 +360,7 @@
+ 
+ func buildUpdateTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_update",
++		Name:        "yagura_update",
+ 		Description: "[G] Update project manual fields. Omit field = unchanged.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -460,7 +461,7 @@
+ 
+ func buildStatsTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_stats",
++		Name:        "yagura_stats",
+ 		Description: "[G] Portfolio counts/totals/averages.",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_security.go fixed/yagura-v0.34.1/internal/mcp/tools_security.go
+--- a/yagura-v0.34.1/internal/mcp/tools_security.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_security.go	2026-06-03 04:28:06.616129670 +0000
+@@ -11,6 +11,7 @@
+ 	"errors"
+ 	"strings"
+ 	"time"
++
+ 	"github.com/shizukutanaka/yagura/internal/osv"
+ 	"github.com/shizukutanaka/yagura/internal/project"
+ 	"github.com/shizukutanaka/yagura/internal/scorecard"
+@@ -18,7 +19,7 @@
+ 
+ func buildVulnsTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_vulns",
++		Name:        "yagura_vulns",
+ 		Description: "[S] OSV.dev vulns by CVSS desc.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -28,7 +29,7 @@
+ 				"version":   map[string]any{"type": "string", "description": "バージョン文字列(省略時は全バージョン)"},
+ 				"ecosystem": map[string]any{"type": "string", "description": "OSV ecosystem(Go/PyPI/npm 等)"},
+ 				"min_severity": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 			},
+ 		},
+@@ -127,7 +128,7 @@
+ 
+ func buildScorecardTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_scorecard",
++		Name:        "yagura_scorecard",
+ 		Description: "[S] OpenSSF Scorecard fetch. priority_only=top 7 checks.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -196,15 +197,15 @@
+ 			}
+ 
+ 			return map[string]any{
+-				"repo":            score.Repo,
+-				"commit":          score.Commit,
+-				"score":           score.Score,
+-				"category":        scorecard.HealthCategory(score.Score),
+-				"analyzed_at":     score.Date.Format("2006-01-02"),
++				"repo":              score.Repo,
++				"commit":            score.Commit,
++				"score":             score.Score,
++				"category":          scorecard.HealthCategory(score.Score),
++				"analyzed_at":       score.Date.Format("2006-01-02"),
+ 				"scorecard_version": score.ScorecardVersion,
+-				"resolved_from":   resolvedFrom,
+-				"checks":          checks,
+-				"check_count":     len(checks),
++				"resolved_from":     resolvedFrom,
++				"checks":            checks,
++				"check_count":       len(checks),
+ 			}, nil
+ 		},
+ 	}
+@@ -212,7 +213,7 @@
+ 
+ func buildHealthTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_health",
++		Name:        "yagura_health",
+ 		Description: "[S] Security summary: vuln + Scorecard issues. Cached.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -302,7 +303,7 @@
+ 					"medium":   totalMedium,
+ 					"low":      totalLow,
+ 				},
+-				"needs_attention":      needsAttention,
++				"needs_attention":       needsAttention,
+ 				"needs_attention_count": len(needsAttention),
+ 			}, nil
+ 		},
+@@ -332,17 +333,17 @@
+ 		vulnScanAt = p.VulnScanAt.Format(time.RFC3339)
+ 	}
+ 	return map[string]any{
+-		"slug":              p.Slug,
+-		"repository":        p.Repository,
+-		"scorecard_score":   p.ScorecardScore,
++		"slug":               p.Slug,
++		"repository":         p.Repository,
++		"scorecard_score":    p.ScorecardScore,
+ 		"scorecard_category": scoreCat,
+-		"scorecard_at":      scorecardAt,
+-		"vuln_critical":     p.VulnCritical,
+-		"vuln_high":         p.VulnHigh,
+-		"vuln_medium":       p.VulnMedium,
+-		"vuln_low":          p.VulnLow,
+-		"vuln_total":        p.TotalVulns(),
+-		"vuln_scan_at":      vulnScanAt,
+-		"needs_attention":   p.HasCriticalSecurityIssue(),
++		"scorecard_at":       scorecardAt,
++		"vuln_critical":      p.VulnCritical,
++		"vuln_high":          p.VulnHigh,
++		"vuln_medium":        p.VulnMedium,
++		"vuln_low":           p.VulnLow,
++		"vuln_total":         p.TotalVulns(),
++		"vuln_scan_at":       vulnScanAt,
++		"needs_attention":    p.HasCriticalSecurityIssue(),
+ 	}
+ }
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_test.go fixed/yagura-v0.34.1/internal/mcp/tools_test.go
+--- a/yagura-v0.34.1/internal/mcp/tools_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_test.go	2026-06-03 04:24:21.720121756 +0000
+@@ -9,10 +9,10 @@
+ 	"time"
+ 
+ 	"github.com/shizukutanaka/yagura/internal/osv"
+-	"github.com/shizukutanaka/yagura/internal/scorecard"
+-	"github.com/shizukutanaka/yagura/internal/secretscan"
+ 	"github.com/shizukutanaka/yagura/internal/project"
+ 	"github.com/shizukutanaka/yagura/internal/registry"
++	"github.com/shizukutanaka/yagura/internal/scorecard"
++	"github.com/shizukutanaka/yagura/internal/secretscan"
+ )
+ 
+ // fixedNow returns a deterministic timestamp for score/staleness tests.
+@@ -746,7 +746,7 @@
+ 	d := newDeps(t)
+ 	d.Scorecard = &mockScorecard{
+ 		score: &scorecard.Score{
+-			Repo: "github.com/x/y",
++			Repo:  "github.com/x/y",
+ 			Score: 7.0,
+ 			Checks: []scorecard.Check{
+ 				{Name: "Branch-Protection", Score: 10},
+@@ -1077,7 +1077,7 @@
+ 
+ func TestProjectFieldsAsScanItems_IncludesSprint(t *testing.T) {
+ 	p := &project.Project{
+-		Slug: "p",
++		Slug:  "p",
+ 		Notes: "hello",
+ 		Sprint: &project.Sprint{
+ 			Goal: "ship v1",
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/osv/osv.go fixed/yagura-v0.34.1/internal/osv/osv.go
+--- a/yagura-v0.34.1/internal/osv/osv.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/osv/osv.go	2026-06-03 04:24:21.712121756 +0000
+@@ -52,14 +52,14 @@
+ // OSV.dev の生レスポンスはより豊富だが、Yagura が必要とするフィールドのみ抽出して
+ // 安定したスキーマで返す。生レスポンスへの依存を内部に閉じ込めるため。
+ type Vuln struct {
+-	ID         string    `json:"id"`            // 例: "GHSA-xxxx-xxxx-xxxx", "CVE-2024-...", "GO-2024-..."
+-	Summary    string    `json:"summary"`       // 1 行サマリ
+-	Severity   Severity  `json:"severity"`      // 正規化された深刻度
+-	CVSSScore  float64   `json:"cvss_score"`    // CVSS v3 base score (取得できれば)
+-	Published  time.Time `json:"published"`     // 公開日
+-	Modified   time.Time `json:"modified"`      // 最終更新日
+-	References []string  `json:"references"`    // URL 一覧
+-	Aliases    []string  `json:"aliases"`       // 他名(CVE, GHSA 等)
++	ID         string    `json:"id"`         // 例: "GHSA-xxxx-xxxx-xxxx", "CVE-2024-...", "GO-2024-..."
++	Summary    string    `json:"summary"`    // 1 行サマリ
++	Severity   Severity  `json:"severity"`   // 正規化された深刻度
++	CVSSScore  float64   `json:"cvss_score"` // CVSS v3 base score (取得できれば)
++	Published  time.Time `json:"published"`  // 公開日
++	Modified   time.Time `json:"modified"`   // 最終更新日
++	References []string  `json:"references"` // URL 一覧
++	Aliases    []string  `json:"aliases"`    // 他名(CVE, GHSA 等)
+ }
+ 
+ // Client は OSV.dev への問合せクライアント。
+@@ -202,15 +202,15 @@
+ }
+ 
+ type rawVuln struct {
+-	ID               string             `json:"id"`
+-	Aliases          []string           `json:"aliases"`
+-	Summary          string             `json:"summary"`
+-	Details          string             `json:"details"`
+-	Published        time.Time          `json:"published"`
+-	Modified         time.Time          `json:"modified"`
+-	Severity         []rawSeverity      `json:"severity"`
+-	References       []rawReference     `json:"references"`
+-	DatabaseSpecific map[string]any     `json:"database_specific"`
++	ID               string         `json:"id"`
++	Aliases          []string       `json:"aliases"`
++	Summary          string         `json:"summary"`
++	Details          string         `json:"details"`
++	Published        time.Time      `json:"published"`
++	Modified         time.Time      `json:"modified"`
++	Severity         []rawSeverity  `json:"severity"`
++	References       []rawReference `json:"references"`
++	DatabaseSpecific map[string]any `json:"database_specific"`
+ }
+ 
+ type rawSeverity struct {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/osv/osv_test.go fixed/yagura-v0.34.1/internal/osv/osv_test.go
+--- a/yagura-v0.34.1/internal/osv/osv_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/osv/osv_test.go	2026-06-03 04:24:21.716121756 +0000
+@@ -14,25 +14,25 @@
+ 
+ func TestLanguageToEcosystem(t *testing.T) {
+ 	tests := map[string]string{
+-		"Go":          "Go",
+-		"go":          "Go",
+-		"GOLANG":      "Go",
+-		" python ":    "PyPI",
+-		"py":          "PyPI",
+-		"JavaScript":  "npm",
+-		"typescript":  "npm",
+-		"node.js":     "npm",
+-		"Rust":        "crates.io",
+-		"rust":        "crates.io",
+-		"ruby":        "RubyGems",
+-		"java":        "Maven",
+-		"Kotlin":      "Maven",
+-		"C#":          "NuGet",
+-		"dotnet":      "NuGet",
+-		"PHP":         "Packagist",
+-		"":            "",
+-		"klingon":     "",
+-		"Cobol":       "",
++		"Go":         "Go",
++		"go":         "Go",
++		"GOLANG":     "Go",
++		" python ":   "PyPI",
++		"py":         "PyPI",
++		"JavaScript": "npm",
++		"typescript": "npm",
++		"node.js":    "npm",
++		"Rust":       "crates.io",
++		"rust":       "crates.io",
++		"ruby":       "RubyGems",
++		"java":       "Maven",
++		"Kotlin":     "Maven",
++		"C#":         "NuGet",
++		"dotnet":     "NuGet",
++		"PHP":        "Packagist",
++		"":           "",
++		"klingon":    "",
++		"Cobol":      "",
+ 	}
+ 	for in, want := range tests {
+ 		if got := LanguageToEcosystem(in); got != want {
+@@ -45,11 +45,11 @@
+ 
+ func TestSeverityRank(t *testing.T) {
+ 	tests := map[Severity]int{
+-		SeverityCritical: 4,
+-		SeverityHigh:     3,
+-		SeverityMedium:   2,
+-		SeverityLow:      1,
+-		SeverityUnknown:  0,
++		SeverityCritical:    4,
++		SeverityHigh:        3,
++		SeverityMedium:      2,
++		SeverityLow:         1,
++		SeverityUnknown:     0,
+ 		Severity("garbage"): 0,
+ 	}
+ 	for in, want := range tests {
+@@ -93,7 +93,7 @@
+ 		"CVSS:3.1/AV:A/AC:H/PR:L/UI:N/S:U/C:L/I:N/A:N": 6.5,
+ 		"CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:H/I:N/A:N": 5.5,
+ 		"CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:L/I:N/A:N": 3.5,
+-		"": 0,
++		"":        0,
+ 		"garbage": 0,
+ 	}
+ 	for in, want := range tests {
+@@ -148,8 +148,8 @@
+ 		resp := map[string]any{
+ 			"vulns": []map[string]any{
+ 				{
+-					"id":      "GO-2024-1234",
+-					"summary": "Buffer overflow in foo.Bar",
++					"id":        "GO-2024-1234",
++					"summary":   "Buffer overflow in foo.Bar",
+ 					"published": "2024-01-15T00:00:00Z",
+ 					"modified":  "2024-01-20T00:00:00Z",
+ 					"severity": []map[string]any{
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/pindrift/pindrift.go fixed/yagura-v0.34.1/internal/pindrift/pindrift.go
+--- a/yagura-v0.34.1/internal/pindrift/pindrift.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/pindrift/pindrift.go	2026-06-03 04:24:21.688121755 +0000
+@@ -45,7 +45,7 @@
+ 
+ // Pin は workflow から抽出された SHA pin 1 件。
+ type Pin struct {
+-	File       string `json:"file"`        // ".github/workflows/ci.yml"
++	File       string `json:"file"` // ".github/workflows/ci.yml"
+ 	Line       int    `json:"line"`
+ 	Owner      string `json:"owner"`       // "actions"
+ 	Repo       string `json:"repo"`        // "checkout"
+@@ -55,12 +55,12 @@
+ 
+ // Result は 1 つの pin に対する検証結果。
+ type Result struct {
+-	Pin            Pin         `json:"pin"`
+-	Status         DriftStatus `json:"status"`
+-	Detail         string      `json:"detail"`                      // 人間向け説明
+-	LatestTagSHA   string      `json:"latest_tag_sha,omitempty"`    // TAG_DRIFT 検出時
+-	CommitDate     string      `json:"commit_date,omitempty"`       // OK / STALE 時
+-	AgeDays        int         `json:"age_days,omitempty"`
++	Pin          Pin         `json:"pin"`
++	Status       DriftStatus `json:"status"`
++	Detail       string      `json:"detail"`                   // 人間向け説明
++	LatestTagSHA string      `json:"latest_tag_sha,omitempty"` // TAG_DRIFT 検出時
++	CommitDate   string      `json:"commit_date,omitempty"`    // OK / STALE 時
++	AgeDays      int         `json:"age_days,omitempty"`
+ }
+ 
+ // GitHubClient は pindrift が必要とする最小 interface。
+@@ -278,9 +278,9 @@
+ 
+ // Summary は 1 回の検証結果の要約。
+ type Summary struct {
+-	TotalPins   int            `json:"total_pins"`
+-	ByStatus    map[string]int `json:"by_status"`
+-	Concerning  []Result       `json:"concerning,omitempty"` // OK 以外
++	TotalPins  int            `json:"total_pins"`
++	ByStatus   map[string]int `json:"by_status"`
++	Concerning []Result       `json:"concerning,omitempty"` // OK 以外
+ }
+ 
+ // Summarize は results から Summary を作成する。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/pindrift/pindrift_test.go fixed/yagura-v0.34.1/internal/pindrift/pindrift_test.go
+--- a/yagura-v0.34.1/internal/pindrift/pindrift_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/pindrift/pindrift_test.go	2026-06-03 04:24:21.720121756 +0000
+@@ -103,10 +103,10 @@
+ 
+ // mockGH は GitHubClient interface の手書きモック。
+ type mockGH struct {
+-	commits map[string]*github.CommitInfo // key = "owner/repo/sha"
++	commits   map[string]*github.CommitInfo // key = "owner/repo/sha"
+ 	commitErr map[string]error
+-	tagSHAs map[string]string             // key = "owner/repo/tag"
+-	tagErr  map[string]error
++	tagSHAs   map[string]string // key = "owner/repo/tag"
++	tagErr    map[string]error
+ }
+ 
+ func (m *mockGH) GetCommit(ctx context.Context, owner, repo, sha string) (*github.CommitInfo, error) {
+@@ -243,15 +243,15 @@
+ 
+ func TestLooksLikeTag(t *testing.T) {
+ 	cases := map[string]bool{
+-		"v4":         true,
+-		"v4.2.2":     true,
+-		"1.0":        true,
+-		"1.2.3-rc1":  true,
+-		"pin@v4":     true,
+-		"trusted":    false,
+-		"":           false,
+-		"main":       false,
+-		"some text":  false,
++		"v4":        true,
++		"v4.2.2":    true,
++		"1.0":       true,
++		"1.2.3-rc1": true,
++		"pin@v4":    true,
++		"trusted":   false,
++		"":          false,
++		"main":      false,
++		"some text": false,
+ 	}
+ 	for in, want := range cases {
+ 		if got := looksLikeTag(in); got != want {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/pindrift/ratelimit.go fixed/yagura-v0.34.1/internal/pindrift/ratelimit.go
+--- a/yagura-v0.34.1/internal/pindrift/ratelimit.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/pindrift/ratelimit.go	2026-06-03 04:24:21.720121756 +0000
+@@ -52,9 +52,9 @@
+ 	Sleeper func(ctx context.Context, d time.Duration) error
+ 
+ 	// 観測値
+-	mu          sync.Mutex
+-	totalWaits  int
+-	totalSleep  time.Duration
++	mu         sync.Mutex
++	totalWaits int
++	totalSleep time.Duration
+ }
+ 
+ // NewRateLimitGuard は標準値で Guard を生成する。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/plantracker/plantracker.go fixed/yagura-v0.34.1/internal/plantracker/plantracker.go
+--- a/yagura-v0.34.1/internal/plantracker/plantracker.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/plantracker/plantracker.go	2026-06-03 04:24:21.692121755 +0000
+@@ -1,13 +1,14 @@
+ // Package plantracker は Plan.md を parse して進捗を計測する。
+ //
+ // 動機 (v0.24.0):
+-//   m の harness G1.P が Plan.md 必須記載項目 (目的/スコープ/フェーズ/DoD) を
+-//   defined している。23+ projects で共通 format が存在するので、yagura が
+-//   portfolio 全体の Plan.md を parse し "どの project が release 近いか" を
+-//   機械的に判定できる。
+ //
+-//   cortex (aircloset 2026/05) の 4 flywheel の ④ Alert-Fix の precursor として
+-//   まず "release readiness を機械的に評価する" を実装する。
++//	m の harness G1.P が Plan.md 必須記載項目 (目的/スコープ/フェーズ/DoD) を
++//	defined している。23+ projects で共通 format が存在するので、yagura が
++//	portfolio 全体の Plan.md を parse し "どの project が release 近いか" を
++//	機械的に判定できる。
++//
++//	cortex (aircloset 2026/05) の 4 flywheel の ④ Alert-Fix の precursor として
++//	まず "release readiness を機械的に評価する" を実装する。
+ //
+ // 設計判断 (ADR-0001 ゼロ依存):
+ //   - Markdown を full parse せず、特定 pattern (checkbox, header) のみ抽出
+@@ -37,27 +38,27 @@
+ 	CurrentPhase   string  `json:"current_phase,omitempty"`
+ 
+ 	// Required sections 検出(m の harness G1.P 準拠)
+-	HasPurpose   bool `json:"has_purpose"`   // "目的" or "Purpose"
+-	HasScope     bool `json:"has_scope"`     // "スコープ" or "Scope"
+-	HasPhases    bool `json:"has_phases"`    // "フェーズ" or "Phase"
+-	HasRisks     bool `json:"has_risks"`     // "リスク" or "Risk"
+-	HasDoD       bool `json:"has_dod"`       // "DoD" or "Definition of Done" or "完了定義"
++	HasPurpose bool `json:"has_purpose"` // "目的" or "Purpose"
++	HasScope   bool `json:"has_scope"`   // "スコープ" or "Scope"
++	HasPhases  bool `json:"has_phases"`  // "フェーズ" or "Phase"
++	HasRisks   bool `json:"has_risks"`   // "リスク" or "Risk"
++	HasDoD     bool `json:"has_dod"`     // "DoD" or "Definition of Done" or "完了定義"
+ 
+ 	// Health 集約
+-	IsHealthy  bool   `json:"is_healthy"`           // 全 required section 存在 + progress 計測可能
+-	Issues     []string `json:"issues,omitempty"`   // 問題点(missing section 等)
+-	LineCount  int    `json:"line_count"`
++	IsHealthy bool     `json:"is_healthy"`       // 全 required section 存在 + progress 計測可能
++	Issues    []string `json:"issues,omitempty"` // 問題点(missing section 等)
++	LineCount int      `json:"line_count"`
+ }
+ 
+ // Phase は 1 phase(セクション)の進捗。
+ type Phase struct {
+ 	Name           string `json:"name"`
+-	Level          int    `json:"level"`             // header level (# = 1, ## = 2, ### = 3)
++	Level          int    `json:"level"` // header level (# = 1, ## = 2, ### = 3)
+ 	TotalTasks     int    `json:"total_tasks"`
+ 	CompletedTasks int    `json:"completed_tasks"`
+-	Done           bool   `json:"done"`              // 全 task 完了
++	Done           bool   `json:"done"` // 全 task 完了
+ 	ProgressPct    int    `json:"progress_pct"`
+-	LineStart      int    `json:"line_start"`        // 1-indexed
++	LineStart      int    `json:"line_start"` // 1-indexed
+ }
+ 
+ // pattern: ^([\s>-]*)- \[([ x])\] で checkbox を捉える
+@@ -206,10 +207,11 @@
+ //   - hasProhibitedFindings: quality_check で prohibited 検出されたか
+ //
+ // Score 計算 (重み付け):
+-//   plan progress  40% (主成分)
+-//   ci passing     25%
+-//   no critical    20%
+-//   quality clean  15%
++//
++//	plan progress  40% (主成分)
++//	ci passing     25%
++//	no critical    20%
++//	quality clean  15%
+ //
+ // 単純な linear scoring。CI なら 100, failing なら 0、unknown は 50。
+ //
+@@ -226,11 +228,12 @@
+ //   - aiHasCritical: aiverify.Result.HasCritical (true なら強い penalty)
+ //
+ // 拡張 score 計算 (重み付け再配分):
+-//   plan progress     35%   (40% から減少)
+-//   ci passing        20%   (25% から減少)
+-//   no critical issue 15%   (20% から減少)
+-//   quality clean     15%   (維持)
+-//   AI safe           15%   (NEW; 100 - aiRiskScore で算出)
++//
++//	plan progress     35%   (40% から減少)
++//	ci passing        20%   (25% から減少)
++//	no critical issue 15%   (20% から減少)
++//	quality clean     15%   (維持)
++//	AI safe           15%   (NEW; 100 - aiRiskScore で算出)
+ //
+ // AI critical: aiHasCritical=true なら最終 score を 70% にキャップ(release blocker)。
+ // m's harness G0.7 INVARIANT (AI生成 critical risk = 手動検証必須) 直接対応。
+@@ -292,18 +295,18 @@
+ 
+ // RankedProject は release_radar の 1 row。
+ type RankedProject struct {
+-	Slug              string `json:"slug"`
+-	Readiness         int    `json:"readiness"`            // 0-100
+-	PlanProgressPct   int    `json:"plan_progress_pct"`
+-	CurrentPhase      string `json:"current_phase,omitempty"`
+-	CIStatus          string `json:"ci_status,omitempty"`
+-	HasProhibited     bool   `json:"has_prohibited,omitempty"`
++	Slug               string `json:"slug"`
++	Readiness          int    `json:"readiness"` // 0-100
++	PlanProgressPct    int    `json:"plan_progress_pct"`
++	CurrentPhase       string `json:"current_phase,omitempty"`
++	CIStatus           string `json:"ci_status,omitempty"`
++	HasProhibited      bool   `json:"has_prohibited,omitempty"`
+ 	OpenIssuesCritical int    `json:"open_issues_critical,omitempty"`
+ 	// v0.25.0: AI risk integration (aiverify)
+-	AIRiskScore       int  `json:"ai_risk_score,omitempty"`     // 0-100; 高いほど悪い
+-	AIHasCritical     bool `json:"ai_has_critical,omitempty"`   // critical AI risk あり = release blocker
+-	AIGenLineCount    int  `json:"ai_gen_line_count,omitempty"` // AI 生成 line 数(統計用)
+-	Reason            string `json:"reason,omitempty"`     // 最大要因
++	AIRiskScore    int    `json:"ai_risk_score,omitempty"`     // 0-100; 高いほど悪い
++	AIHasCritical  bool   `json:"ai_has_critical,omitempty"`   // critical AI risk あり = release blocker
++	AIGenLineCount int    `json:"ai_gen_line_count,omitempty"` // AI 生成 line 数(統計用)
++	Reason         string `json:"reason,omitempty"`            // 最大要因
+ }
+ 
+ // Rank は複数 project を readiness 降順で sort する。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/plantracker/plantracker_test.go fixed/yagura-v0.34.1/internal/plantracker/plantracker_test.go
+--- a/yagura-v0.34.1/internal/plantracker/plantracker_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/plantracker/plantracker_test.go	2026-06-03 04:24:21.728121757 +0000
+@@ -440,9 +440,9 @@
+ // ─── ParseCached (v0.29) ─────────────────────────────────────────
+ 
+ type fakeCache struct {
+-	store    map[string][]byte
+-	hits     int
+-	misses   int
++	store  map[string][]byte
++	hits   int
++	misses int
+ }
+ 
+ func newFakeCache() *fakeCache {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/progressfile/progressfile.go fixed/yagura-v0.34.1/internal/progressfile/progressfile.go
+--- a/yagura-v0.34.1/internal/progressfile/progressfile.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/progressfile/progressfile.go	2026-06-03 04:24:21.688121755 +0000
+@@ -2,18 +2,19 @@
+ // artifact from Anthropic's 2-agent long-running harness pattern.
+ //
+ // Motivation (v0.33.0):
+-//   Anthropic "Effective harnesses for long-running agents" (2026) describes
+-//   the coding agent writing a claude-progress.txt at session end so that the
+-//   next session (with no shared memory) can resume from the right place.
+-//
+-//   Quote: "The key insight here was finding a way for agents to quickly
+-//   understand the state of work when starting with a fresh context window,
+-//   which is accomplished with the claude-progress.txt file alongside the git
+-//   history."
+-//
+-//   yagura already knows: registry facts, Plan.md state, feature_list status,
+-//   recent hook events, recent alerts. The missing piece was synthesizing
+-//   these into one human + agent readable handoff file.
++//
++//	Anthropic "Effective harnesses for long-running agents" (2026) describes
++//	the coding agent writing a claude-progress.txt at session end so that the
++//	next session (with no shared memory) can resume from the right place.
++//
++//	Quote: "The key insight here was finding a way for agents to quickly
++//	understand the state of work when starting with a fresh context window,
++//	which is accomplished with the claude-progress.txt file alongside the git
++//	history."
++//
++//	yagura already knows: registry facts, Plan.md state, feature_list status,
++//	recent hook events, recent alerts. The missing piece was synthesizing
++//	these into one human + agent readable handoff file.
+ //
+ // Design (ADR-0001 zero-dep):
+ //   - Pure function: Snapshot → string
+@@ -35,9 +36,9 @@
+ // Snapshot is the structured input — caller assembles this from registry +
+ // plantracker + featurelist + hookreceiver + alertfix in mcp/tools.go.
+ type Snapshot struct {
+-	Project        string
+-	GeneratedAt    time.Time
+-	GeneratedBy    string // "yagura vX.Y.Z"
++	Project     string
++	GeneratedAt time.Time
++	GeneratedBy string // "yagura vX.Y.Z"
+ 
+ 	// Feature list state (from yagura_feature_list)
+ 	TotalFeatures   int
+@@ -49,9 +50,9 @@
+ 	CurrentPhase    string
+ 
+ 	// Recent hook activity (from yagura_hook_stats, last N sessions)
+-	HookSessions    int
+-	ToolErrorCount  int
+-	TopTools        []ToolUse
++	HookSessions   int
++	ToolErrorCount int
++	TopTools       []ToolUse
+ 
+ 	// Active alerts (from yagura_alert_fix)
+ 	ActiveAlerts []Alert
+@@ -77,13 +78,13 @@
+ // Generate renders the full claude-progress.txt body as plain text.
+ //
+ // Output sections (in order):
+-//   1. Header — project, when, by whom
+-//   2. Where you are — % done, current phase
+-//   3. What's next — top 5 pending features
+-//   4. Recent activity — sessions, errors, top tools
+-//   5. Active alerts — if any
+-//   6. Note — caller-supplied intent
+-//   7. Footer — how to use this file
++//  1. Header — project, when, by whom
++//  2. Where you are — % done, current phase
++//  3. What's next — top 5 pending features
++//  4. Recent activity — sessions, errors, top tools
++//  5. Active alerts — if any
++//  6. Note — caller-supplied intent
++//  7. Footer — how to use this file
+ //
+ // Empty sections are omitted (no filler) to keep the file scannable.
+ func Generate(s Snapshot) string {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/project/project.go fixed/yagura-v0.34.1/internal/project/project.go
+--- a/yagura-v0.34.1/internal/project/project.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/project/project.go	2026-06-03 04:24:21.728121757 +0000
+@@ -107,13 +107,13 @@
+ 
+ 	// Security health (S1.1 + S1.2). scanner が 24h 周期で更新する。
+ 	// 取得失敗時はゼロ値のまま放置(graceful degradation)。
+-	ScorecardScore   float64   `json:"scorecard_score,omitempty"`   // 0.0-10.0
+-	ScorecardAt      time.Time `json:"scorecard_at,omitempty"`      // 最終取得日時
+-	VulnCritical     int       `json:"vuln_critical,omitempty"`     // CRITICAL 件数
+-	VulnHigh         int       `json:"vuln_high,omitempty"`         // HIGH 件数
+-	VulnMedium       int       `json:"vuln_medium,omitempty"`       // MEDIUM 件数
+-	VulnLow          int       `json:"vuln_low,omitempty"`          // LOW 件数
+-	VulnScanAt       time.Time `json:"vuln_scan_at,omitempty"`      // 最終スキャン日時
++	ScorecardScore float64   `json:"scorecard_score,omitempty"` // 0.0-10.0
++	ScorecardAt    time.Time `json:"scorecard_at,omitempty"`    // 最終取得日時
++	VulnCritical   int       `json:"vuln_critical,omitempty"`   // CRITICAL 件数
++	VulnHigh       int       `json:"vuln_high,omitempty"`       // HIGH 件数
++	VulnMedium     int       `json:"vuln_medium,omitempty"`     // MEDIUM 件数
++	VulnLow        int       `json:"vuln_low,omitempty"`        // LOW 件数
++	VulnScanAt     time.Time `json:"vuln_scan_at,omitempty"`    // 最終スキャン日時
+ 
+ 	Stage    Stage   `json:"stage"`
+ 	Priority int     `json:"priority"`
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/projectgraph/graph.go fixed/yagura-v0.34.1/internal/projectgraph/graph.go
+--- a/yagura-v0.34.1/internal/projectgraph/graph.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/projectgraph/graph.go	2026-06-03 04:24:21.700121756 +0000
+@@ -1,11 +1,12 @@
+ // Package projectgraph は portfolio の depends_on 関係を graph として扱う。
+ //
+ // 動機 (v0.18.0):
+-//   cortex/aircloset の "Product Graph" 構想を yagura に翻訳。
+-//   project.DependsOn は既に v0.x から存在していたが、検索可能な graph として
+-//   公開する MCP tool が無かった。
+-//   "プロジェクト X を変更したら何が影響を受けるか?" "X が依存している全 transitive deps は?"
+-//   といった問いに 1 回の MCP 呼出で答えられる土台を提供する。
++//
++//	cortex/aircloset の "Product Graph" 構想を yagura に翻訳。
++//	project.DependsOn は既に v0.x から存在していたが、検索可能な graph として
++//	公開する MCP tool が無かった。
++//	"プロジェクト X を変更したら何が影響を受けるか?" "X が依存している全 transitive deps は?"
++//	といった問いに 1 回の MCP 呼出で答えられる土台を提供する。
+ //
+ // 設計判断:
+ //   - ゼロ依存(ADR-0001)、隣接リスト map[slug][]slug の素朴実装
+@@ -88,12 +89,12 @@
+ 
+ // NeighborsResult は graph_neighbors の戻り値。
+ type NeighborsResult struct {
+-	Slug              string            `json:"slug"`
+-	DirectDeps        []string          `json:"direct_deps,omitempty"`         // 直接依存先
+-	DirectDependents  []string          `json:"direct_dependents,omitempty"`   // 直接依存元
+-	TransitiveDeps    []string          `json:"transitive_deps,omitempty"`     // depth N までの全依存先
+-	TransitiveDependents []string       `json:"transitive_dependents,omitempty"` // depth N までの全依存元
+-	Depth             int               `json:"depth"`
++	Slug                 string   `json:"slug"`
++	DirectDeps           []string `json:"direct_deps,omitempty"`           // 直接依存先
++	DirectDependents     []string `json:"direct_dependents,omitempty"`     // 直接依存元
++	TransitiveDeps       []string `json:"transitive_deps,omitempty"`       // depth N までの全依存先
++	TransitiveDependents []string `json:"transitive_dependents,omitempty"` // depth N までの全依存元
++	Depth                int      `json:"depth"`
+ }
+ 
+ // Neighbors は slug から depth 階層まで graph を BFS で探索する。
+@@ -156,12 +157,12 @@
+ // 「このプロジェクトを変更したら、どこに波及するか」を提供する。
+ // AI レビュアー(cortex Auto Review 相当)が PR の影響範囲を把握するために使う。
+ type ImpactResult struct {
+-	Slug              string   `json:"slug"`
+-	DirectImpact      []string `json:"direct_impact,omitempty"`      // 直接依存元
+-	TransitiveImpact  []string `json:"transitive_impact,omitempty"`  // 全 transitive 依存元
+-	ImpactCount       int      `json:"impact_count"`
+-	HasCycle          bool     `json:"has_cycle"`
+-	CyclePath         []string `json:"cycle_path,omitempty"`
++	Slug             string   `json:"slug"`
++	DirectImpact     []string `json:"direct_impact,omitempty"`     // 直接依存元
++	TransitiveImpact []string `json:"transitive_impact,omitempty"` // 全 transitive 依存元
++	ImpactCount      int      `json:"impact_count"`
++	HasCycle         bool     `json:"has_cycle"`
++	CyclePath        []string `json:"cycle_path,omitempty"`
+ }
+ 
+ // Impact は slug を変更した時に影響を受けるプロジェクトを列挙する。
+@@ -233,15 +234,15 @@
+ 
+ // Summary は portfolio 全体の graph 統計を返す。
+ type Summary struct {
+-	NodeCount       int `json:"node_count"`
+-	EdgeCount       int `json:"edge_count"`
+-	RootCount       int `json:"root_count"`        // 誰にも依存されていない node
+-	LeafCount       int `json:"leaf_count"`        // 何にも依存しない node
+-	IsolatedCount   int `json:"isolated_count"`    // 入次数=出次数=0
+-	MaxFanOut       int `json:"max_fan_out"`       // 最大依存先数
+-	MaxFanIn        int `json:"max_fan_in"`        // 最大依存元数
+-	MostDependedOn  string `json:"most_depended_on,omitempty"`
+-	DanglingCount   int `json:"dangling_count"`
++	NodeCount      int    `json:"node_count"`
++	EdgeCount      int    `json:"edge_count"`
++	RootCount      int    `json:"root_count"`     // 誰にも依存されていない node
++	LeafCount      int    `json:"leaf_count"`     // 何にも依存しない node
++	IsolatedCount  int    `json:"isolated_count"` // 入次数=出次数=0
++	MaxFanOut      int    `json:"max_fan_out"`    // 最大依存先数
++	MaxFanIn       int    `json:"max_fan_in"`     // 最大依存元数
++	MostDependedOn string `json:"most_depended_on,omitempty"`
++	DanglingCount  int    `json:"dangling_count"`
+ }
+ 
+ // Stats は graph の集計統計を返す。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/promexport/promexport.go fixed/yagura-v0.34.1/internal/promexport/promexport.go
+--- a/yagura-v0.34.1/internal/promexport/promexport.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/promexport/promexport.go	2026-06-03 04:24:21.700121756 +0000
+@@ -2,10 +2,11 @@
+ // 生成する (https://prometheus.io/docs/instrumenting/exposition_formats/)。
+ //
+ // Motivation (v0.31.0):
+-//   m の harness G16 が「OpenTelemetry(OTel)を標準プロトコルとして採用」
+-//   と明示し、Prometheus + Grafana も推奨。yagura は既に ToolStats / Cache
+-//   stats / AlertFix stats / HookReceiver stats を内部に持つが、export 経路
+-//   が無かった。
++//
++//	m の harness G16 が「OpenTelemetry(OTel)を標準プロトコルとして採用」
++//	と明示し、Prometheus + Grafana も推奨。yagura は既に ToolStats / Cache
++//	stats / AlertFix stats / HookReceiver stats を内部に持つが、export 経路
++//	が無かった。
+ //
+ // 設計判断 (ADR-0001 ゼロ依存):
+ //   - prometheus/client_golang は外部 dep のため使えず
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/qualitycheck/qualitycheck.go fixed/yagura-v0.34.1/internal/qualitycheck/qualitycheck.go
+--- a/yagura-v0.34.1/internal/qualitycheck/qualitycheck.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/qualitycheck/qualitycheck.go	2026-06-03 04:24:21.716121756 +0000
+@@ -1,13 +1,14 @@
+ // Package qualitycheck は「逸脱を物理的に潰す」品質ゲートを実装する。
+ //
+ // 動機 (v0.19.0, cortex/aircloset 2026/05 翻訳):
+-//   cortex の harness の中心は「コードの正しさを 100% 担保する」ことで、
+-//   その手段が「`as any` / TODO / `eslint-disable` を 0 件強制」。これにより
+-//   AI が間違ったコードを書いても merge されない設計が成立している。
+-//
+-//   yagura は portfolio 23+ プロジェクトを対象に同等の検査を提供する。
+-//   各プロジェクトの CI 内で `yagura_quality_check` を呼び出して 0 件強制すれば、
+-//   m の sovereign computing stack 全体が同じ品質ゲートで保護される。
++//
++//	cortex の harness の中心は「コードの正しさを 100% 担保する」ことで、
++//	その手段が「`as any` / TODO / `eslint-disable` を 0 件強制」。これにより
++//	AI が間違ったコードを書いても merge されない設計が成立している。
++//
++//	yagura は portfolio 23+ プロジェクトを対象に同等の検査を提供する。
++//	各プロジェクトの CI 内で `yagura_quality_check` を呼び出して 0 件強制すれば、
++//	m の sovereign computing stack 全体が同じ品質ゲートで保護される。
+ //
+ // 設計判断:
+ //   - ゼロ依存 (ADR-0001, regex のみ stdlib)
+@@ -61,19 +62,19 @@
+ 	File        string   `json:"file"`
+ 	Line        int      `json:"line"`
+ 	Column      int      `json:"column"`
+-	Excerpt     string   `json:"excerpt"`     // 該当 line の trimmed snippet (最大 120 char)
++	Excerpt     string   `json:"excerpt"` // 該当 line の trimmed snippet (最大 120 char)
+ 	Description string   `json:"description"`
+ 	Suggestion  string   `json:"suggestion,omitempty"`
+ }
+ 
+ // Result はファイル全体スキャンの集計。
+ type Result struct {
+-	FilesScanned int                `json:"files_scanned"`
+-	TotalLines   int                `json:"total_lines"`
+-	Findings     []Finding          `json:"findings"`
+-	BySeverity   map[Severity]int   `json:"by_severity"`
+-	ByRule       map[string]int     `json:"by_rule"`
+-	ByFile       map[string]int     `json:"by_file,omitempty"`
++	FilesScanned int              `json:"files_scanned"`
++	TotalLines   int              `json:"total_lines"`
++	Findings     []Finding        `json:"findings"`
++	BySeverity   map[Severity]int `json:"by_severity"`
++	ByRule       map[string]int   `json:"by_rule"`
++	ByFile       map[string]int   `json:"by_file,omitempty"`
+ 	// v0.23.0: cache 統計(ScanFilesCached 使用時のみ非ゼロ)
+ 	CacheHits   int `json:"cache_hits,omitempty"`
+ 	CacheMisses int `json:"cache_misses,omitempty"`
+@@ -228,10 +229,11 @@
+ // ScanText は 1 つのコンテンツに対してルールを適用する。
+ //
+ // 引数:
+-//   path     — 結果に含める file 名(空でも可、表示用)
+-//   content  — スキャン対象テキスト
+-//   language — 言語ヒント("ts" "go" "py" "any" 等)。"" / "any" なら言語非依存ルールのみ
+-//   rules    — 適用するルール
++//
++//	path     — 結果に含める file 名(空でも可、表示用)
++//	content  — スキャン対象テキスト
++//	language — 言語ヒント("ts" "go" "py" "any" 等)。"" / "any" なら言語非依存ルールのみ
++//	rules    — 適用するルール
+ //
+ // 戻り値: Finding 配列(line/column 順に sort されない、呼出側で必要なら sort)
+ func ScanText(path, content, language string, rules []Rule) []Finding {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/quotamonitor/forecast.go fixed/yagura-v0.34.1/internal/quotamonitor/forecast.go
+--- a/yagura-v0.34.1/internal/quotamonitor/forecast.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/quotamonitor/forecast.go	2026-06-03 04:24:21.736121757 +0000
+@@ -1,14 +1,16 @@
+ // forecast.go: linear quota depletion forecasting (v0.15.0)
+ //
+ // 動機:
+-//   v0.14 までは "EXHAUSTED になってから切替提案" の reactive design。
+-//   実用上は "あと 10 分で枯渇" を事前に知れれば、自然な区切りで安全に
+-//   handoff できる(行コミット完了後、新規 task 開始前など)。
++//
++//	v0.14 までは "EXHAUSTED になってから切替提案" の reactive design。
++//	実用上は "あと 10 分で枯渇" を事前に知れれば、自然な区切りで安全に
++//	handoff できる(行コミット完了後、新規 task 開始前など)。
+ //
+ // 仕組み:
+-//   各 Report 呼出を時系列の (timestamp, remaining_percent) として保持し、
+-//   直近 N 件(window=10)で線形回帰して slope を算出。
+-//   slope が負(消費中)で十分な信頼度があれば、predicted_empty_at を返す。
++//
++//	各 Report 呼出を時系列の (timestamp, remaining_percent) として保持し、
++//	直近 N 件(window=10)で線形回帰して slope を算出。
++//	slope が負(消費中)で十分な信頼度があれば、predicted_empty_at を返す。
+ //
+ // 設計判断:
+ //   - ゼロ依存(ADR-0001、math 関数も使わず純粋四則演算)
+@@ -32,17 +34,18 @@
+ 
+ // ReportEvent は 1 回の Report 呼出を記録する。
+ type ReportEvent struct {
+-	At                time.Time
+-	RemainingPercent  int
+-	Source            string
++	At               time.Time
++	RemainingPercent int
++	Source           string
+ }
+ 
+ // Forecast は agent の枯渇予測を返す。
+ //
+ // 戻り値:
+-//   predictedEmptyAt: 予測 0% 到達時刻(ゼロ値なら予測不能)
+-//   confidence: 0.0-1.0、サンプル数 + slope 一貫性ベース
+-//   reason: 人間向け説明
++//
++//	predictedEmptyAt: 予測 0% 到達時刻(ゼロ値なら予測不能)
++//	confidence: 0.0-1.0、サンプル数 + slope 一貫性ベース
++//	reason: 人間向け説明
+ //
+ // 予測不能(zero time)になる条件:
+ //   - サンプル数 < MinForecastSamples
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/quotamonitor/persist.go fixed/yagura-v0.34.1/internal/quotamonitor/persist.go
+--- a/yagura-v0.34.1/internal/quotamonitor/persist.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/quotamonitor/persist.go	2026-06-03 04:24:21.732121757 +0000
+@@ -1,15 +1,17 @@
+ // persist.go: per-agent history persistence (v0.17.0)
+ //
+ // 動機:
+-//   v0.16 までは Monitor.histories は完全 in-memory で、daemon 再起動で
+-//   sparkline data と forecast 履歴が全失。実運用で yagura を毎日再起動
+-//   する m のワークフローではほぼ常にデータ空 → forecast/usage_summary が
+-//   無意味になる。
++//
++//	v0.16 までは Monitor.histories は完全 in-memory で、daemon 再起動で
++//	sparkline data と forecast 履歴が全失。実運用で yagura を毎日再起動
++//	する m のワークフローではほぼ常にデータ空 → forecast/usage_summary が
++//	無意味になる。
+ //
+ // 解決:
+-//   各 Report 直後に append-only JSONL に 1 行追記。
+-//   起動時に LoadHistory(path) で全 line を replay し、agent 毎に直近
+-//   ForecastWindowSize 件をメモリ復元。
++//
++//	各 Report 直後に append-only JSONL に 1 行追記。
++//	起動時に LoadHistory(path) で全 line を replay し、agent 毎に直近
++//	ForecastWindowSize 件をメモリ復元。
+ //
+ // 設計判断:
+ //   - JSONL (1 line = 1 ReportEvent + agent name)
+@@ -44,10 +46,10 @@
+ 	S string `json:"s,omitempty"` // source (auto/manual/429)
+ 
+ 	// legacy format (v0.17 〜 v0.21 で書込まれた旧 line を読込むため)
+-	Agent             Agent  `json:"agent,omitempty"`
+-	At                string `json:"at,omitempty"` // RFC3339Nano
+-	RemainingPercent  int    `json:"remaining_percent,omitempty"`
+-	Source            string `json:"source,omitempty"`
++	Agent            Agent  `json:"agent,omitempty"`
++	At               string `json:"at,omitempty"` // RFC3339Nano
++	RemainingPercent int    `json:"remaining_percent,omitempty"`
++	Source           string `json:"source,omitempty"`
+ }
+ 
+ // compactAgent は Agent enum を 2-char compact form に変換する。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/quotamonitor/quotamonitor.go fixed/yagura-v0.34.1/internal/quotamonitor/quotamonitor.go
+--- a/yagura-v0.34.1/internal/quotamonitor/quotamonitor.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/quotamonitor/quotamonitor.go	2026-06-03 04:24:21.732121757 +0000
+@@ -2,10 +2,11 @@
+ // between Claude Code and Windsurf (v0.13.0).
+ //
+ // 動機:
+-//   m は Claude Code を main で使う(Pro/Max plan)。usage policy は
+-//   5-hour rolling window + weekly cap で、使い切ると新 prompt が即 block される。
+-//   v0.13.0 では Windsurf を fallback として運用できるよう、両 agent の
+-//   quota state を yagura が hub として管理する。
++//
++//	m は Claude Code を main で使う(Pro/Max plan)。usage policy は
++//	5-hour rolling window + weekly cap で、使い切ると新 prompt が即 block される。
++//	v0.13.0 では Windsurf を fallback として運用できるよう、両 agent の
++//	quota state を yagura が hub として管理する。
+ //
+ // 仕組み:
+ //   - 各 agent (claude_code / windsurf) は独立した State machine を持つ
+@@ -49,18 +50,19 @@
+ // AgentStatus は単一 agent の状態スナップショット。
+ //
+ // v0.22.0 omitempty 補強:
+-//   起動直後の zero time が "0001-01-01T00:00:00Z"(30 byte) として出力されるのを抑止。
+-//   field 自体が missing なら "未報告" を意味する。
++//
++//	起動直後の zero time が "0001-01-01T00:00:00Z"(30 byte) として出力されるのを抑止。
++//	field 自体が missing なら "未報告" を意味する。
+ type AgentStatus struct {
+-	Agent              Agent     `json:"agent"`
+-	State              State     `json:"state"`
+-	RemainingPercent   int       `json:"remaining_percent"`            // 0-100, always populated
+-	WindowResetsAt     time.Time `json:"window_resets_at,omitempty"`
+-	WeeklyResetsAt     time.Time `json:"weekly_resets_at,omitempty"`
+-	LastReportAt       time.Time `json:"last_report_at,omitempty"`     // v0.22.0: zero time omit
+-	LastReportSource   string    `json:"last_report_source,omitempty"`
+-	HandoffAt          time.Time `json:"handoff_at,omitempty"`
+-	LastHeartbeatAt    time.Time `json:"last_heartbeat_at,omitempty"`
++	Agent            Agent     `json:"agent"`
++	State            State     `json:"state"`
++	RemainingPercent int       `json:"remaining_percent"` // 0-100, always populated
++	WindowResetsAt   time.Time `json:"window_resets_at,omitempty"`
++	WeeklyResetsAt   time.Time `json:"weekly_resets_at,omitempty"`
++	LastReportAt     time.Time `json:"last_report_at,omitempty"` // v0.22.0: zero time omit
++	LastReportSource string    `json:"last_report_source,omitempty"`
++	HandoffAt        time.Time `json:"handoff_at,omitempty"`
++	LastHeartbeatAt  time.Time `json:"last_heartbeat_at,omitempty"`
+ }
+ 
+ // Monitor は両 agent の状態を保持する hub。
+@@ -267,8 +269,8 @@
+ // usabilityLocked は agent が今使える状態かを判定する(mu 取得済み前提)。
+ //
+ // unusable と判定する条件:
+-//   1. State が EXHAUSTED or SWITCHED
+-//   2. heartbeat が IdleTimeout 超え(ただし一度も heartbeat なしは除外)
++//  1. State が EXHAUSTED or SWITCHED
++//  2. heartbeat が IdleTimeout 超え(ただし一度も heartbeat なしは除外)
+ //
+ // usable な場合の reason は短い state 説明、unusable は理由を含む。
+ func (m *Monitor) usabilityLocked(s *AgentStatus) (usable bool, reason string) {
+@@ -297,9 +299,10 @@
+ //   - それ以外 → false
+ //
+ // 戻り値:
+-//   should: 切替推奨か
+-//   target: 切替先 agent("" なら切替先なし)
+-//   reason: 人間向け説明
++//
++//	should: 切替推奨か
++//	target: 切替先 agent("" なら切替先なし)
++//	reason: 人間向け説明
+ func (m *Monitor) ShouldHandoff(current Agent) (bool, Agent, string) {
+ 	if !validAgent(current) {
+ 		return false, "", "unknown agent: " + string(current)
+@@ -384,8 +387,9 @@
+ // AgentFromString は柔軟な input(case-insensitive、aliases)から Agent を解決する。
+ //
+ // 入力 → Agent:
+-//   "claude_code", "claude-code", "claude", "cc" → AgentClaudeCode
+-//   "windsurf", "cascade", "ws" → AgentWindsurf
++//
++//	"claude_code", "claude-code", "claude", "cc" → AgentClaudeCode
++//	"windsurf", "cascade", "ws" → AgentWindsurf
+ func AgentFromString(s string) (Agent, error) {
+ 	switch strings.ToLower(strings.TrimSpace(s)) {
+ 	case "claude_code", "claude-code", "claude", "cc":
+@@ -424,9 +428,12 @@
+ // RecordHeartbeat は agent からの "alive" 通知を受け取る。
+ //
+ // 引数:
+-//   agent: AgentClaudeCode or AgentWindsurf
++//
++//	agent: AgentClaudeCode or AgentWindsurf
++//
+ // 副作用:
+-//   LastHeartbeatAt = m.now()
++//
++//	LastHeartbeatAt = m.now()
+ func (m *Monitor) RecordHeartbeat(agent Agent) error {
+ 	if !validAgent(agent) {
+ 		return fmt.Errorf("unknown agent: %s", agent)
+@@ -440,8 +447,9 @@
+ // IsStale は agent が IdleTimeout 以上 silent か判定する。
+ //
+ // 戻り値:
+-//   stale: true なら timeout 超過
+-//   sinceLastHeartbeat: 最終 heartbeat からの経過時間
++//
++//	stale: true なら timeout 超過
++//	sinceLastHeartbeat: 最終 heartbeat からの経過時間
+ func (m *Monitor) IsStale(agent Agent, idleTimeout time.Duration) (stale bool, sinceLastHeartbeat time.Duration) {
+ 	if !validAgent(agent) {
+ 		return false, 0
+@@ -497,19 +505,20 @@
+ 
+ // StaleEvent は agent の stale 状態変化を表す。
+ type StaleEvent struct {
+-	Agent      Agent
+-	BecameStale bool      // true なら active→stale、false なら復帰
+-	At         time.Time
+-	Elapsed    time.Duration // BecameStale=true 時の last heartbeat からの経過
++	Agent       Agent
++	BecameStale bool // true なら active→stale、false なら復帰
++	At          time.Time
++	Elapsed     time.Duration // BecameStale=true 時の last heartbeat からの経過
+ }
+ 
+ // Watch は IdleTimeout 経過した agent の状態変化を監視する。
+ //
+ // 引数:
+-//   ctx: context.Done で goroutine 停止
+-//   interval: 評価間隔(0 なら 30 秒)
+-//   idleTimeout: stale 判定閾値(0 なら DefaultIdleTimeout)
+-//   emit: 状態変化時に呼ばれる callback
++//
++//	ctx: context.Done で goroutine 停止
++//	interval: 評価間隔(0 なら 30 秒)
++//	idleTimeout: stale 判定閾値(0 なら DefaultIdleTimeout)
++//	emit: 状態変化時に呼ばれる callback
+ //
+ // この関数は呼出側のゴルーチンで動く(self-block)。go func() でラップする
+ // 想定。状態変化のみ emit するので、emit は log/metric の両方で使用可能。
+@@ -582,27 +591,29 @@
+ // MinReliableWindowMinutes は AvgConsumePerHour を出す最小 window。
+ //
+ // 動機(v0.17.0):
+-//   v0.16 の test smoke で 0.3 秒間隔の Report 投入時に
+-//   `avg_consume_per_hour: 250857` のような非現実値が出力された。
+-//   分母の windowHours が極小だと per-hour 換算が爆発する数学的問題。
++//
++//	v0.16 の test smoke で 0.3 秒間隔の Report 投入時に
++//	`avg_consume_per_hour: 250857` のような非現実値が出力された。
++//	分母の windowHours が極小だと per-hour 換算が爆発する数学的問題。
+ //
+ // 解決:
+-//   window が 5 分未満なら avg/h を 0 で返す(omitempty で消える)。
+-//   呼出側は Reliable flag で短期データかどうか区別できる。
++//
++//	window が 5 分未満なら avg/h を 0 で返す(omitempty で消える)。
++//	呼出側は Reliable flag で短期データかどうか区別できる。
+ const MinReliableWindowMinutes = 5
+ 
+ // UsageSummary は単一 agent の使用量サマリ。
+ type UsageSummary struct {
+ 	Agent              Agent         `json:"agent"`
+ 	TotalReports       int           `json:"total_reports"`
+-	WindowHours        float64       `json:"window_hours"`            // history が cover する時間幅
+-	Consumed1h         float64       `json:"consumed_1h,omitempty"`   // 直近 1h での remaining 減少量
++	WindowHours        float64       `json:"window_hours"`          // history が cover する時間幅
++	Consumed1h         float64       `json:"consumed_1h,omitempty"` // 直近 1h での remaining 減少量
+ 	Consumed24h        float64       `json:"consumed_24h,omitempty"`
+ 	AvgConsumePerHour  float64       `json:"avg_consume_per_hour,omitempty"`  // history 全体での平均速度 (window 不足時 0)
+ 	SlopePercentPerSec float64       `json:"slope_percent_per_sec,omitempty"` // 現在の消費速度
+-	LastConsumeAt     time.Time      `json:"last_consume_at,omitempty"`
+-	CurrentPercent    int            `json:"current_percent"`
+-	Samples           []ReportEvent  `json:"samples,omitempty"` // sparkline data(直近 10 件、古→新)
++	LastConsumeAt      time.Time     `json:"last_consume_at,omitempty"`
++	CurrentPercent     int           `json:"current_percent"`
++	Samples            []ReportEvent `json:"samples,omitempty"` // sparkline data(直近 10 件、古→新)
+ 	// v0.17.0: 統計の信頼性 flag。WindowHours < MinReliableWindowMinutes/60 で false。
+ 	// false なら AvgConsumePerHour / SlopePercentPerSec を信頼してはいけない。
+ 	Reliable bool `json:"reliable"`
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/quotamonitor/quotamonitor_test.go fixed/yagura-v0.34.1/internal/quotamonitor/quotamonitor_test.go
+--- a/yagura-v0.34.1/internal/quotamonitor/quotamonitor_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/quotamonitor/quotamonitor_test.go	2026-06-03 04:24:21.712121756 +0000
+@@ -34,7 +34,7 @@
+ 	}{
+ 		{100, StateActive},
+ 		{50, StateActive},
+-		{20, StateActive},  // boundary at WarnThreshold=20
++		{20, StateActive}, // boundary at WarnThreshold=20
+ 		{19, StateWarn},
+ 		{1, StateWarn},
+ 		{0, StateExhausted},
+@@ -169,8 +169,8 @@
+ 
+ func TestShouldHandoff_WarnWithBetterAlternative(t *testing.T) {
+ 	m := New()
+-	_ = m.Report(AgentClaudeCode, 10, "auto", time.Time{}, time.Time{})  // WARN
+-	_ = m.Report(AgentWindsurf, 90, "auto", time.Time{}, time.Time{})    // ACTIVE
++	_ = m.Report(AgentClaudeCode, 10, "auto", time.Time{}, time.Time{}) // WARN
++	_ = m.Report(AgentWindsurf, 90, "auto", time.Time{}, time.Time{})   // ACTIVE
+ 	should, target, _ := m.ShouldHandoff(AgentClaudeCode)
+ 	if !should || target != AgentWindsurf {
+ 		t.Errorf("should=%v, target=%s", should, target)
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/registry/registry_fuzz_test.go fixed/yagura-v0.34.1/internal/registry/registry_fuzz_test.go
+--- a/yagura-v0.34.1/internal/registry/registry_fuzz_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/registry/registry_fuzz_test.go	2026-06-03 04:24:21.700121756 +0000
+@@ -19,11 +19,11 @@
+ 		{"with-hyphen", "x/y"},
+ 		{"with.dot", "x/y"},
+ 		{"with_under", "x/y"},
+-		{"../etc/passwd", "x/y"},  // path traversal - should reject
+-		{"/abs", "x/y"},           // absolute path - should reject
+-		{"with space", "x/y"},     // space - should reject
+-		{"with\x00null", "x/y"},   // null byte - should reject
+-		{"", ""},                  // empty - should reject
++		{"../etc/passwd", "x/y"}, // path traversal - should reject
++		{"/abs", "x/y"},          // absolute path - should reject
++		{"with space", "x/y"},    // space - should reject
++		{"with\x00null", "x/y"},  // null byte - should reject
++		{"", ""},                 // empty - should reject
+ 	}
+ 	for _, s := range seeds {
+ 		f.Add(s.slug, s.repo)
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/sbom/sbom.go fixed/yagura-v0.34.1/internal/sbom/sbom.go
+--- a/yagura-v0.34.1/internal/sbom/sbom.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/sbom/sbom.go	2026-06-03 04:24:21.688121755 +0000
+@@ -34,11 +34,11 @@
+ // CycloneDX 1.5 仕様の中で SBOM 生成に必要な最小サブセットのみを実装。
+ // HBOM (Hardware) / OBOM (Operations) / VEX(vulnerability) は対象外。
+ type Bom struct {
+-	BomFormat    string      `json:"bomFormat"`             // "CycloneDX"
+-	SpecVersion  string      `json:"specVersion"`           // "1.5"
+-	SerialNumber string      `json:"serialNumber"`          // "urn:uuid:..."
+-	Version      int         `json:"version"`               // 1 (incremented on regeneration)
+-	Metadata     Metadata    `json:"metadata"`              // 生成情報
++	BomFormat    string      `json:"bomFormat"`            // "CycloneDX"
++	SpecVersion  string      `json:"specVersion"`          // "1.5"
++	SerialNumber string      `json:"serialNumber"`         // "urn:uuid:..."
++	Version      int         `json:"version"`              // 1 (incremented on regeneration)
++	Metadata     Metadata    `json:"metadata"`             // 生成情報
+ 	Components   []Component `json:"components,omitempty"` // 依存ライブラリ群
+ 	Dependencies []Dep       `json:"dependencies,omitempty"`
+ }
+@@ -59,12 +59,12 @@
+ 
+ // Component は SBOM の構成要素(application or library or framework)。
+ type Component struct {
+-	BomRef     string         `json:"bom-ref,omitempty"`    // 内部参照 ID
+-	Type       string         `json:"type"`                 // "application" | "library" | "framework"
++	BomRef     string         `json:"bom-ref,omitempty"` // 内部参照 ID
++	Type       string         `json:"type"`              // "application" | "library" | "framework"
+ 	Name       string         `json:"name"`
+ 	Version    string         `json:"version,omitempty"`
+-	PackageURL string         `json:"purl,omitempty"`       // "pkg:golang/path@version"
+-	Scope      string         `json:"scope,omitempty"`      // "required" | "optional" | "excluded"
++	PackageURL string         `json:"purl,omitempty"`  // "pkg:golang/path@version"
++	Scope      string         `json:"scope,omitempty"` // "required" | "optional" | "excluded"
+ 	Hashes     []Hash         `json:"hashes,omitempty"`
+ 	Licenses   []LicenseEntry `json:"licenses,omitempty"`
+ }
+@@ -280,7 +280,8 @@
+ 
+ // extractName は module path から最後のセグメントを抽出する(name field 用)。
+ // 例: "github.com/CycloneDX/cyclonedx-go" → "cyclonedx-go"
+-//     "runtime"                            → "runtime"
++//
++//	"runtime"                            → "runtime"
+ func extractName(modulePath string) string {
+ 	if i := strings.LastIndex(modulePath, "/"); i >= 0 {
+ 		return modulePath[i+1:]
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/scanner/scanner_leak_test.go fixed/yagura-v0.34.1/internal/scanner/scanner_leak_test.go
+--- a/yagura-v0.34.1/internal/scanner/scanner_leak_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/scanner/scanner_leak_test.go	2026-06-03 04:24:21.696121755 +0000
+@@ -17,10 +17,10 @@
+ // すべての goroutine を確実に終了することを確認する。
+ //
+ // uber-go/goleak の手法を zero-dep で再実装(ADR-0001 準拠):
+-//   1. baseline goroutine 数を記録
+-//   2. scanner を 10 サイクル起動・停止
+-//   3. GC + 安定化待機後の数を再計測
+-//   4. baseline+3 以上の差があれば leak と判定
++//  1. baseline goroutine 数を記録
++//  2. scanner を 10 サイクル起動・停止
++//  3. GC + 安定化待機後の数を再計測
++//  4. baseline+3 以上の差があれば leak と判定
+ //
+ // 24/7 daemon を意図するため、たとえ 1 サイクル 1 goroutine leak でも
+ // 1 年で大量に積み上がる。zero-tolerance で検証する。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/scanner/scanner_test.go fixed/yagura-v0.34.1/internal/scanner/scanner_test.go
+--- a/yagura-v0.34.1/internal/scanner/scanner_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/scanner/scanner_test.go	2026-06-03 04:24:21.736121757 +0000
+@@ -265,20 +265,20 @@
+ 
+ func TestMapCIStatus_AllInputs(t *testing.T) {
+ 	tests := map[string]project.CIStatus{
+-		"success":          project.CIStatusPassing,
+-		"SUCCESS":          project.CIStatusPassing,
+-		"Success":          project.CIStatusPassing,
+-		"failure":          project.CIStatusFailing,
+-		"timed_out":        project.CIStatusFailing,
+-		"startup_failure":  project.CIStatusFailing,
+-		"action_required":  project.CIStatusFailing,
+-		"":                 project.CIStatusUnknown,
+-		"pending":          project.CIStatusUnknown,
+-		"queued":           project.CIStatusUnknown,
+-		"in_progress":      project.CIStatusUnknown,
+-		"skipped":          project.CIStatusUnknown,
+-		"cancelled":        project.CIStatusUnknown,
+-		"random_garbage":   project.CIStatusUnknown,
++		"success":         project.CIStatusPassing,
++		"SUCCESS":         project.CIStatusPassing,
++		"Success":         project.CIStatusPassing,
++		"failure":         project.CIStatusFailing,
++		"timed_out":       project.CIStatusFailing,
++		"startup_failure": project.CIStatusFailing,
++		"action_required": project.CIStatusFailing,
++		"":                project.CIStatusUnknown,
++		"pending":         project.CIStatusUnknown,
++		"queued":          project.CIStatusUnknown,
++		"in_progress":     project.CIStatusUnknown,
++		"skipped":         project.CIStatusUnknown,
++		"cancelled":       project.CIStatusUnknown,
++		"random_garbage":  project.CIStatusUnknown,
+ 	}
+ 	for in, want := range tests {
+ 		if got := mapCIStatus(in); got != want {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/scanner/security_test.go fixed/yagura-v0.34.1/internal/scanner/security_test.go
+--- a/yagura-v0.34.1/internal/scanner/security_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/scanner/security_test.go	2026-06-03 04:24:21.696121755 +0000
+@@ -20,10 +20,10 @@
+ // ─── mocks ───────────────────────────────────────────────────
+ 
+ type mockOSV struct {
+-	mu        sync.Mutex
+-	calls     int
+-	failOn    map[string]error
+-	vulnsFor  map[string][]osv.Vuln
++	mu       sync.Mutex
++	calls    int
++	failOn   map[string]error
++	vulnsFor map[string][]osv.Vuln
+ }
+ 
+ func (m *mockOSV) Query(_ context.Context, ecosystem, pkg, version string) ([]osv.Vuln, error) {
+@@ -75,12 +75,12 @@
+ func addProject(t *testing.T, s *Scanner, slug, repo, lang, version string) {
+ 	t.Helper()
+ 	p := &project.Project{
+-		Slug:        slug,
+-		DisplayName: slug,
+-		Repository:  repo,
+-		Language:    lang,
++		Slug:          slug,
++		DisplayName:   slug,
++		Repository:    repo,
++		Language:      lang,
+ 		LatestVersion: version,
+-		Stage:       project.StageActive,
++		Stage:         project.StageActive,
+ 	}
+ 	if err := s.registry.Add(p); err != nil {
+ 		t.Fatal(err)
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/scorecard/scorecard.go fixed/yagura-v0.34.1/internal/scorecard/scorecard.go
+--- a/yagura-v0.34.1/internal/scorecard/scorecard.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/scorecard/scorecard.go	2026-06-03 04:24:21.712121756 +0000
+@@ -33,21 +33,21 @@
+ 
+ // Score は単一プロジェクトの Scorecard 結果。
+ type Score struct {
+-	Repo      string    `json:"repo"`       // "github.com/owner/repo"
+-	Commit    string    `json:"commit"`     // 解析対象 commit SHA
+-	Score     float64   `json:"score"`      // 0.0 - 10.0(集約スコア)
+-	Date      time.Time `json:"date"`       // スコア計測日
+-	Checks    []Check   `json:"checks"`     // 各 check の結果
+-	ScorecardVersion string `json:"scorecard_version"`
++	Repo             string    `json:"repo"`   // "github.com/owner/repo"
++	Commit           string    `json:"commit"` // 解析対象 commit SHA
++	Score            float64   `json:"score"`  // 0.0 - 10.0(集約スコア)
++	Date             time.Time `json:"date"`   // スコア計測日
++	Checks           []Check   `json:"checks"` // 各 check の結果
++	ScorecardVersion string    `json:"scorecard_version"`
+ }
+ 
+ // Check は単一 check の結果。
+ type Check struct {
+-	Name       string   `json:"name"`        // 例: "Branch-Protection"
+-	Score      int      `json:"score"`       // -1 (N/A) または 0-10
+-	Reason     string   `json:"reason"`      // 短い説明
+-	Details    []string `json:"details"`     // 詳細(N>0 件まで)
+-	Documentation string `json:"documentation"` // check のドキュメント URL
++	Name          string   `json:"name"`          // 例: "Branch-Protection"
++	Score         int      `json:"score"`         // -1 (N/A) または 0-10
++	Reason        string   `json:"reason"`        // 短い説明
++	Details       []string `json:"details"`       // 詳細(N>0 件まで)
++	Documentation string   `json:"documentation"` // check のドキュメント URL
+ }
+ 
+ // Client は Scorecard API クライアント。
+@@ -180,11 +180,11 @@
+ 
+ // wireScore は api.scorecard.dev のレスポンス形式。
+ type wireScore struct {
+-	Date    string    `json:"date"`
+-	Repo    wireRepo  `json:"repo"`
+-	Scorecard wireMeta `json:"scorecard"`
+-	Score   float64   `json:"score"`
+-	Checks  []wireCheck `json:"checks"`
++	Date      string      `json:"date"`
++	Repo      wireRepo    `json:"repo"`
++	Scorecard wireMeta    `json:"scorecard"`
++	Score     float64     `json:"score"`
++	Checks    []wireCheck `json:"checks"`
+ }
+ 
+ type wireRepo struct {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/scorecard/scorecard_test.go fixed/yagura-v0.34.1/internal/scorecard/scorecard_test.go
+--- a/yagura-v0.34.1/internal/scorecard/scorecard_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/scorecard/scorecard_test.go	2026-06-03 04:24:21.712121756 +0000
+@@ -14,16 +14,16 @@
+ 
+ func TestNormalizeRepo(t *testing.T) {
+ 	tests := map[string]string{
+-		"owner/repo":                                 "github.com/owner/repo",
+-		"github.com/owner/repo":                      "github.com/owner/repo",
+-		"https://github.com/owner/repo":              "github.com/owner/repo",
+-		"http://github.com/owner/repo":               "github.com/owner/repo",
+-		"  github.com/shizukutanaka/yagura  ":        "github.com/shizukutanaka/yagura",
+-		"github.com/owner/repo/":                     "github.com/owner/repo",
+-		"owner/repo/extra":                           "github.com/owner/repo",  // 余分は無視
+-		"":                                           "",
+-		"justonepart":                                "",
+-		"/":                                          "",
++		"owner/repo":                          "github.com/owner/repo",
++		"github.com/owner/repo":               "github.com/owner/repo",
++		"https://github.com/owner/repo":       "github.com/owner/repo",
++		"http://github.com/owner/repo":        "github.com/owner/repo",
++		"  github.com/shizukutanaka/yagura  ": "github.com/shizukutanaka/yagura",
++		"github.com/owner/repo/":              "github.com/owner/repo",
++		"owner/repo/extra":                    "github.com/owner/repo", // 余分は無視
++		"":                                    "",
++		"justonepart":                         "",
++		"/":                                   "",
+ 	}
+ 	for in, want := range tests {
+ 		if got := normalizeRepo(in); got != want {
+@@ -91,7 +91,7 @@
+ 				"commit": "abc123def456",
+ 			},
+ 			"scorecard": map[string]string{"version": "v5.0.0"},
+-			"score": 7.8,
++			"score":     7.8,
+ 			"checks": []map[string]any{
+ 				{
+ 					"name":   "Branch-Protection",
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/secrets/secrets.go fixed/yagura-v0.34.1/internal/secrets/secrets.go
+--- a/yagura-v0.34.1/internal/secrets/secrets.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/secrets/secrets.go	2026-06-03 04:24:21.728121757 +0000
+@@ -12,11 +12,11 @@
+ //
+ // ファイル形式 (v1):
+ //
+-//   YAGURA-SECRET-V1
+-//   iter=600000
+-//   salt=<base64(16 bytes)>
+-//   nonce=<base64(12 bytes)>
+-//   data=<base64(AES-256-GCM(plaintext))>
++//	YAGURA-SECRET-V1
++//	iter=600000
++//	salt=<base64(16 bytes)>
++//	nonce=<base64(12 bytes)>
++//	data=<base64(AES-256-GCM(plaintext))>
+ //
+ // PBKDF2 iteration count 600,000 は OWASP 2023+ の推奨値。
+ package secrets
+@@ -46,16 +46,16 @@
+ 	formatHeader  = "YAGURA-SECRET-V1"
+ 	defaultIter   = 600_000
+ 	saltSize      = 16
+-	nonceSize     = 12 // GCM standard
+-	keySize       = 32 // AES-256
+-	minPassphrase = 12 // OWASP minimum
++	nonceSize     = 12      // GCM standard
++	keySize       = 32      // AES-256
++	minPassphrase = 12      // OWASP minimum
+ 	maxFileSize   = 1 << 20 // 1 MB; secrets shouldn't be larger
+ )
+ 
+ // Errors exposed for caller pattern matching.
+ var (
+-	ErrPassphraseTooShort  = errors.New("secrets: passphrase must be at least 12 characters")
+-	ErrInvalidFormat       = errors.New("secrets: invalid file format")
++	ErrPassphraseTooShort   = errors.New("secrets: passphrase must be at least 12 characters")
++	ErrInvalidFormat        = errors.New("secrets: invalid file format")
+ 	ErrAuthenticationFailed = errors.New("secrets: authentication failed (wrong passphrase or corrupted file)")
+ )
+ 
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/secrets/secrets_test.go fixed/yagura-v0.34.1/internal/secrets/secrets_test.go
+--- a/yagura-v0.34.1/internal/secrets/secrets_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/secrets/secrets_test.go	2026-06-03 04:24:21.740121757 +0000
+@@ -97,9 +97,9 @@
+ 	tests := [][]byte{
+ 		[]byte(""),
+ 		[]byte("hello"),
+-		[]byte("YAGURA-SECRET-V1\n"),                       // no fields
+-		[]byte("YAGURA-SECRET-V1\niter=600000\n"),          // partial
+-		[]byte("YAGURA-SECRET-V1\nmalformed-line\n"),       // missing =
++		[]byte("YAGURA-SECRET-V1\n"), // no fields
++		[]byte("YAGURA-SECRET-V1\niter=600000\n"),    // partial
++		[]byte("YAGURA-SECRET-V1\nmalformed-line\n"), // missing =
+ 	}
+ 	for i, in := range tests {
+ 		_, err := Decrypt(in, "correct-passphrase-1")
+@@ -194,16 +194,16 @@
+ 		}
+ 	}
+ 	invalid := []string{
+-		"",                  // empty
+-		"../etc/passwd",     // path traversal
+-		"/abs",              // absolute
+-		"name with spaces",  // space
+-		"name\x00null",      // null byte
+-		".hidden",           // leading dot
+-		"-flag",             // leading hyphen
++		"",                       // empty
++		"../etc/passwd",          // path traversal
++		"/abs",                   // absolute
++		"name with spaces",       // space
++		"name\x00null",           // null byte
++		".hidden",                // leading dot
++		"-flag",                  // leading hyphen
+ 		strings.Repeat("a", 201), // too long
+-		"日本語",              // non-ASCII (intentional restriction)
+-		"name/sub",          // slash
++		"日本語",                    // non-ASCII (intentional restriction)
++		"name/sub",               // slash
+ 	}
+ 	for _, n := range invalid {
+ 		if err := validateName(n); err == nil {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/secretscan/secretscan.go fixed/yagura-v0.34.1/internal/secretscan/secretscan.go
+--- a/yagura-v0.34.1/internal/secretscan/secretscan.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/secretscan/secretscan.go	2026-06-03 04:24:21.728121757 +0000
+@@ -265,7 +265,7 @@
+ 			Severity:    SeverityHigh,
+ 			// password は 1 文字以上。scheme が既知の DB なので短いパスワードでも
+ 			// 資格情報埋め込みは検出する({4,} だと 1-3 文字を見逃していた)。
+-			Regex:       regexp.MustCompile(`(?i)\b(postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^:\s]+:[^@\s]{1,}@[^/\s]+`),
++			Regex: regexp.MustCompile(`(?i)\b(postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^:\s]+:[^@\s]{1,}@[^/\s]+`),
+ 		},
+ 	}
+ }
+@@ -382,7 +382,7 @@
+ 
+ 	var all []Finding
+ 	br := BatchResult{
+-		BySource: make(map[string][]Finding, len(bySource)),
++		BySource:    make(map[string][]Finding, len(bySource)),
+ 		SourceOrder: sources,
+ 	}
+ 	for _, src := range sources {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/telemetry/telemetry.go fixed/yagura-v0.34.1/internal/telemetry/telemetry.go
+--- a/yagura-v0.34.1/internal/telemetry/telemetry.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/telemetry/telemetry.go	2026-06-03 04:24:21.728121757 +0000
+@@ -140,10 +140,10 @@
+ 
+ type noopSpan struct{}
+ 
+-func (noopSpan) End(_ ...EndOption)                     {}
+-func (noopSpan) SetAttributes(_ ...Attribute)           {}
+-func (noopSpan) SetStatus(_ StatusCode, _ string)       {}
+-func (noopSpan) RecordError(_ error)                    {}
++func (noopSpan) End(_ ...EndOption)               {}
++func (noopSpan) SetAttributes(_ ...Attribute)     {}
++func (noopSpan) SetStatus(_ StatusCode, _ string) {}
++func (noopSpan) RecordError(_ error)              {}
+ 
+ // ─── recording implementation (testing-friendly) ─────────────
+ 
+@@ -162,14 +162,14 @@
+ 
+ // RecordedSpan は記録された span。
+ type RecordedSpan struct {
+-	Name        string
+-	Kind        SpanKind
+-	StartTime   time.Time
+-	EndTime     time.Time
+-	Attributes  []Attribute
+-	Status      StatusCode
+-	StatusDesc  string
+-	Errors      []error
++	Name       string
++	Kind       SpanKind
++	StartTime  time.Time
++	EndTime    time.Time
++	Attributes []Attribute
++	Status     StatusCode
++	StatusDesc string
++	Errors     []error
+ }
+ 
+ // NewRecordingTracer は新しい RecordingTracer を返す。
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/testcoverage/testcoverage.go fixed/yagura-v0.34.1/internal/testcoverage/testcoverage.go
+--- a/yagura-v0.34.1/internal/testcoverage/testcoverage.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/testcoverage/testcoverage.go	2026-06-03 04:24:21.728121757 +0000
+@@ -1,12 +1,13 @@
+ // Package testcoverage は source-test 対応関係を検出する。
+ //
+ // 動機 (v0.26.0):
+-//   m's harness G0.7 INVARIANT は「AI 生成物は **テスト通過** + 人間確認が必須」と
+-//   明記。v0.25 で risk pattern は検出できるようになったが、
+-//   "AI 生成箇所に対応 test が存在するか" は audit できていなかった。
+ //
+-//   本 package は language-aware な test file 検出を提供し、aiverify と組合せて
+-//   "untested AI risk" を機械的に flag する。
++//	m's harness G0.7 INVARIANT は「AI 生成物は **テスト通過** + 人間確認が必須」と
++//	明記。v0.25 で risk pattern は検出できるようになったが、
++//	"AI 生成箇所に対応 test が存在するか" は audit できていなかった。
++//
++//	本 package は language-aware な test file 検出を提供し、aiverify と組合せて
++//	"untested AI risk" を機械的に flag する。
+ //
+ // 設計判断 (ADR-0001 ゼロ依存):
+ //   - regex / 文字列操作のみ(stdlib)
+@@ -28,31 +29,31 @@
+ 
+ // FileStatus は 1 ファイルの test 検出結果。
+ type FileStatus struct {
+-	Path       string `json:"path"`
+-	Language   string `json:"language,omitempty"`
+-	IsTest     bool   `json:"is_test,omitempty"`     // この file 自体が test か
+-	HasTest    bool   `json:"has_test,omitempty"`    // 対応 test が input に存在するか
+-	TestPath   string `json:"test_path,omitempty"`   // 検出された test の path
+-	HasInline  bool   `json:"has_inline,omitempty"`  // Rust の #[cfg(test)] 等 inline test
++	Path      string `json:"path"`
++	Language  string `json:"language,omitempty"`
++	IsTest    bool   `json:"is_test,omitempty"`    // この file 自体が test か
++	HasTest   bool   `json:"has_test,omitempty"`   // 対応 test が input に存在するか
++	TestPath  string `json:"test_path,omitempty"`  // 検出された test の path
++	HasInline bool   `json:"has_inline,omitempty"` // Rust の #[cfg(test)] 等 inline test
+ }
+ 
+ // AuditResult は集計。
+ type AuditResult struct {
+-	FilesScanned      int                  `json:"files_scanned"`
+-	TestFiles         int                  `json:"test_files"`
+-	SourceFiles       int                  `json:"source_files"`
+-	SourcesWithTest   int                  `json:"sources_with_test"`
+-	SourcesNoTest     int                  `json:"sources_no_test"`
+-	CoverageRatio     float64              `json:"coverage_ratio"`        // 0.0-1.0
+-	ByLanguage        map[string]LangStats `json:"by_language,omitempty"`
+-	UntestedFiles     []string             `json:"untested_files,omitempty"` // test なし source の path
++	FilesScanned    int                  `json:"files_scanned"`
++	TestFiles       int                  `json:"test_files"`
++	SourceFiles     int                  `json:"source_files"`
++	SourcesWithTest int                  `json:"sources_with_test"`
++	SourcesNoTest   int                  `json:"sources_no_test"`
++	CoverageRatio   float64              `json:"coverage_ratio"` // 0.0-1.0
++	ByLanguage      map[string]LangStats `json:"by_language,omitempty"`
++	UntestedFiles   []string             `json:"untested_files,omitempty"` // test なし source の path
+ }
+ 
+ // LangStats は言語別集計。
+ type LangStats struct {
+-	Sources     int     `json:"sources"`
+-	Tests       int     `json:"tests"`
+-	WithTest    int     `json:"with_test"`
++	Sources       int     `json:"sources"`
++	Tests         int     `json:"tests"`
++	WithTest      int     `json:"with_test"`
+ 	CoverageRatio float64 `json:"coverage_ratio"`
+ }
+ 
+@@ -67,11 +68,12 @@
+ // IsTestFile は path から test file かを判定する。
+ //
+ // 各言語の慣習:
+-//   Go     : *_test.go
+-//   TS/JS  : *.test.ts/tsx/js/jsx, *.spec.ts/tsx/js/jsx, *__tests__/*
+-//   Python : test_*.py, *_test.py, tests/*.py
+-//   Rust   : tests/*.rs (integration test dir)
+-//   Java   : *Test.java, *IT.java, *Tests.java
++//
++//	Go     : *_test.go
++//	TS/JS  : *.test.ts/tsx/js/jsx, *.spec.ts/tsx/js/jsx, *__tests__/*
++//	Python : test_*.py, *_test.py, tests/*.py
++//	Rust   : tests/*.rs (integration test dir)
++//	Java   : *Test.java, *IT.java, *Tests.java
+ func IsTestFile(p string) bool {
+ 	base := path.Base(p)
+ 	dir := path.Dir(p)
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/testcoverage/testcoverage_test.go fixed/yagura-v0.34.1/internal/testcoverage/testcoverage_test.go
+--- a/yagura-v0.34.1/internal/testcoverage/testcoverage_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/testcoverage/testcoverage_test.go	2026-06-03 04:24:21.732121757 +0000
+@@ -103,9 +103,9 @@
+ func TestTestPathCandidates_TS(t *testing.T) {
+ 	cands := TestPathCandidates("src/auth.ts")
+ 	wantSome := map[string]bool{
+-		"src/auth.test.ts":              true,
+-		"src/auth.spec.ts":              true,
+-		"src/__tests__/auth.test.ts":    true,
++		"src/auth.test.ts":           true,
++		"src/auth.spec.ts":           true,
++		"src/__tests__/auth.test.ts": true,
+ 	}
+ 	for _, c := range cands {
+ 		delete(wantSome, c)
+@@ -118,9 +118,9 @@
+ func TestTestPathCandidates_Python(t *testing.T) {
+ 	cands := TestPathCandidates("foo.py")
+ 	wantSome := map[string]bool{
+-		"test_foo.py":         true,
+-		"foo_test.py":         true,
+-		"tests/test_foo.py":   true,
++		"test_foo.py":       true,
++		"foo_test.py":       true,
++		"tests/test_foo.py": true,
+ 	}
+ 	for _, c := range cands {
+ 		delete(wantSome, c)
+@@ -235,9 +235,9 @@
+ 
+ func TestAudit_TSWithTests(t *testing.T) {
+ 	files := map[string]string{
+-		"src/auth.ts":         "export const login = () => {}",
+-		"src/auth.test.ts":    "test('login', () => {})",
+-		"src/billing.ts":      "export const charge = () => {}",
++		"src/auth.ts":                         "export const login = () => {}",
++		"src/auth.test.ts":                    "test('login', () => {})",
++		"src/billing.ts":                      "export const charge = () => {}",
+ 		"src/components/Button.tsx":           "export const Button = () => null",
+ 		"src/components/__tests__/Button.tsx": "test('button', () => {})",
+ 	}
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/workspace/workspace.go fixed/yagura-v0.34.1/internal/workspace/workspace.go
+--- a/yagura-v0.34.1/internal/workspace/workspace.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/workspace/workspace.go	2026-06-03 04:24:21.724121756 +0000
+@@ -1,15 +1,16 @@
+ // Package workspace detects the project root directory for handoff context.
+ //
+ // 動機 (v0.14.0):
+-//   v0.13.0 の `yagura_handoff` は workspace パスを明示指定する必要があり、
+-//   client が忘れると state_dir に fallback されてしまう。実用上、ほぼ
+-//   常に「.git があるディレクトリ」が正解なので、yagura 起動時に
+-//   自動で検出して Deps.WorkspaceRoot に注入する。
++//
++//	v0.13.0 の `yagura_handoff` は workspace パスを明示指定する必要があり、
++//	client が忘れると state_dir に fallback されてしまう。実用上、ほぼ
++//	常に「.git があるディレクトリ」が正解なので、yagura 起動時に
++//	自動で検出して Deps.WorkspaceRoot に注入する。
+ //
+ // 検出戦略:
+-//   1. 引数 startDir から上方向に `.git` を探索(最大 MaxDepth=20 階層)
+-//   2. 見つかれば、その親ディレクトリが workspace root
+-//   3. 見つからなければ startDir 自体を返す(プロジェクト未配置でも壊れない)
++//  1. 引数 startDir から上方向に `.git` を探索(最大 MaxDepth=20 階層)
++//  2. 見つかれば、その親ディレクトリが workspace root
++//  3. 見つからなければ startDir 自体を返す(プロジェクト未配置でも壊れない)
+ //
+ // 設計判断:
+ //   - ゼロ依存(ADR-0001、os.Stat / filepath.Dir のみ)
+@@ -30,9 +31,10 @@
+ // Detect は startDir から上方向に .git を探し、見つかった親 dir を返す。
+ //
+ // 戻り値:
+-//   workspace: 検出された workspace root の絶対パス
+-//   gitFound:  .git ディレクトリが見つかったか
+-//   err:       startDir が不正な場合のみ
++//
++//	workspace: 検出された workspace root の絶対パス
++//	gitFound:  .git ディレクトリが見つかったか
++//	err:       startDir が不正な場合のみ
+ //
+ // 検出失敗時は workspace = startDir 絶対パス(壊れない fallback)。
+ func Detect(startDir string) (workspace string, gitFound bool, err error) {
