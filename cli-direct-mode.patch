@@ -63,10 +63,10 @@ index 986f84e..e3ac25e 100644
  
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..07cbd41
+index 0000000..fabc8d0
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,761 @@
+@@ -0,0 +1,741 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -568,7 +568,7 @@ index 0000000..07cbd41
 +func cliGhaAudit(args []string, stdout, stderr io.Writer) error {
 +	fs := newFlagSet("gha-audit", stderr)
 +	jsonOut := fs.Bool("json", false, "JSON output")
-+	dir := fs.String("dir", ".", "directory containing workflow YAML files")
++	dir := fs.String("dir", ".github/workflows", "directory containing workflow YAML files")
 +	summary := fs.Bool("summary", false, "summary only")
 +	if err := fs.Parse(args); err != nil {
 +		return errUsage
@@ -596,7 +596,7 @@ index 0000000..07cbd41
 +func cliPinDrift(args []string, stdout, stderr io.Writer) error {
 +	fs := newFlagSet("pin-drift", stderr)
 +	jsonOut := fs.Bool("json", false, "JSON output")
-+	dir := fs.String("dir", ".", "directory containing workflow YAML files")
++	dir := fs.String("dir", ".github/workflows", "directory containing workflow YAML files")
 +	concurrency := fs.Int("concurrency", 4, "parallel API checks")
 +	if err := fs.Parse(args); err != nil {
 +		return errUsage
@@ -667,31 +667,11 @@ index 0000000..07cbd41
 +		if stage != "" && p.Stage != st {
 +			return false
 +		}
-+		if query != "" && !matchesQuery(p, query) {
++		if query != "" && !p.MatchesQuery(query) {
 +			return false
 +		}
 +		return true
 +	}), nil
-+}
-+
-+// matchesQuery は internal/mcp の同名 helper(unexported)と同じ部分一致判定。
-+func matchesQuery(p *project.Project, q string) bool {
-+	q = strings.ToLower(strings.TrimSpace(q))
-+	if q == "" {
-+		return true
-+	}
-+	if strings.Contains(strings.ToLower(p.Slug), q) ||
-+		strings.Contains(strings.ToLower(p.DisplayName), q) ||
-+		strings.Contains(strings.ToLower(p.Notes), q) ||
-+		strings.Contains(strings.ToLower(p.Repository), q) {
-+		return true
-+	}
-+	for _, t := range p.Tags {
-+		if strings.Contains(strings.ToLower(t), q) {
-+			return true
-+		}
-+	}
-+	return false
 +}
 +
 +// splitCSV は "a, b ,c" → ["a","b","c"]。空文字は nil。
@@ -830,10 +810,10 @@ index 0000000..07cbd41
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
 new file mode 100644
-index 0000000..b08fc82
+index 0000000..26f03b4
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
-@@ -0,0 +1,309 @@
+@@ -0,0 +1,302 @@
 +// cli_format.go: output formatters for CLI direct mode (v0.35.0).
 +//
 +// 2 つの出力経路:
@@ -899,7 +879,7 @@ index 0000000..b08fc82
 +			OpenIssues:      p.OpenIssues,
 +			CIStatus:        string(p.CIStatus),
 +			LatestVersion:   p.LatestVersion,
-+			DaysSinceCommit: daysSince(p.LatestActivity, now),
++			DaysSinceCommit: project.DaysSince(p.LatestActivity, now),
 +		})
 +	}
 +	return map[string]any{"count": len(out), "projects": out}
@@ -913,7 +893,7 @@ index 0000000..b08fc82
 +	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 +	fmt.Fprintln(tw, "SLUG\tSTAGE\tPRI\tLANG\tCI\tPRS\tISSUES\tIDLE\tREPO")
 +	for _, p := range projects {
-+		idle := daysSince(p.LatestActivity, now)
++		idle := project.DaysSince(p.LatestActivity, now)
 +		idleStr := "-"
 +		if idle >= 0 {
 +			idleStr = fmt.Sprintf("%dd", idle)
@@ -1122,13 +1102,6 @@ index 0000000..b08fc82
 +}
 +
 +// ─── small helpers ───────────────────────────────────────────
-+
-+func daysSince(t, now time.Time) int {
-+	if t.IsZero() {
-+		return -1
-+	}
-+	return int(now.Sub(t).Hours() / 24)
-+}
 +
 +func dash(s string) string {
 +	if s == "" {
@@ -1620,3 +1593,115 @@ index 6981102..8711b5c 100644
  </div>
  </body>
  </html>`
+diff --git a/yagura-v0.35.0/internal/mcp/tools_inventory.go b/yagura-v0.35.0/internal/mcp/tools_inventory.go
+index e08cf8f..fe69d7f 100644
+--- a/yagura-v0.35.0/internal/mcp/tools_inventory.go
++++ b/yagura-v0.35.0/internal/mcp/tools_inventory.go
+@@ -39,7 +39,7 @@ func buildListTool(d Deps) *Tool {
+ 					OpenIssues:     p.OpenIssues,
+ 					CIStatus:       string(p.CIStatus),
+ 					LatestVersion:  p.LatestVersion,
+-					DaysSinceCommit: daysSince(p.LatestActivity, now),
++					DaysSinceCommit: project.DaysSince(p.LatestActivity, now),
+ 				})
+ 			}
+ 			return map[string]any{
+@@ -128,7 +128,7 @@ func buildSearchTool(d Deps) *Tool {
+ 				if in.Stage != "" && p.Stage != stage {
+ 					return false
+ 				}
+-				if in.Query != "" && !matchesQuery(p, in.Query) {
++				if in.Query != "" && !p.MatchesQuery(in.Query) {
+ 					return false
+ 				}
+ 				return true
+@@ -147,7 +147,7 @@ func buildSearchTool(d Deps) *Tool {
+ 					OpenIssues:     p.OpenIssues,
+ 					CIStatus:       string(p.CIStatus),
+ 					LatestVersion:  p.LatestVersion,
+-					DaysSinceCommit: daysSince(p.LatestActivity, now),
++					DaysSinceCommit: project.DaysSince(p.LatestActivity, now),
+ 				})
+ 			}
+ 			return map[string]any{
+@@ -212,7 +212,7 @@ func buildTodayTool(d Deps) *Tool {
+ 					score += 20
+ 					reasons = append(reasons, "CI failing")
+ 				}
+-				days := daysSince(p.LatestActivity, now)
++				days := project.DaysSince(p.LatestActivity, now)
+ 				if days >= 14 && p.Stage == project.StageActive {
+ 					score += 5
+ 					reasons = append(reasons, "stale (active but idle)")
+@@ -521,29 +521,3 @@ func buildStatsTool(d Deps) *Tool {
+ 		},
+ 	}
+ }
+-
+-func daysSince(t time.Time, now time.Time) int {
+-	if t.IsZero() {
+-		return -1
+-	}
+-	return int(now.Sub(t).Hours() / 24)
+-}
+-
+-func matchesQuery(p *project.Project, q string) bool {
+-	q = strings.ToLower(strings.TrimSpace(q))
+-	if q == "" {
+-		return true
+-	}
+-	if strings.Contains(strings.ToLower(p.Slug), q) ||
+-		strings.Contains(strings.ToLower(p.DisplayName), q) ||
+-		strings.Contains(strings.ToLower(p.Notes), q) ||
+-		strings.Contains(strings.ToLower(p.Repository), q) {
+-		return true
+-	}
+-	for _, t := range p.Tags {
+-		if strings.Contains(strings.ToLower(t), q) {
+-			return true
+-		}
+-	}
+-	return false
+-}
+diff --git a/yagura-v0.35.0/internal/project/project.go b/yagura-v0.35.0/internal/project/project.go
+index 9ca620a..f400aba 100644
+--- a/yagura-v0.35.0/internal/project/project.go
++++ b/yagura-v0.35.0/internal/project/project.go
+@@ -218,6 +218,37 @@ func (p *Project) HasTag(tag string) bool {
+ 	return false
+ }
+ 
++// MatchesQuery は q(case-insensitive 部分一致)が slug / display_name / notes /
++// repository / tags のいずれかにマッチするか判定する。q が空なら常に true。
++// MCP search tool と CLI search が共有する(以前は両者に重複実装されていた)。
++func (p *Project) MatchesQuery(q string) bool {
++	q = strings.ToLower(strings.TrimSpace(q))
++	if q == "" {
++		return true
++	}
++	if strings.Contains(strings.ToLower(p.Slug), q) ||
++		strings.Contains(strings.ToLower(p.DisplayName), q) ||
++		strings.Contains(strings.ToLower(p.Notes), q) ||
++		strings.Contains(strings.ToLower(p.Repository), q) {
++		return true
++	}
++	for _, t := range p.Tags {
++		if strings.Contains(strings.ToLower(t), q) {
++			return true
++		}
++	}
++	return false
++}
++
++// DaysSince は t から now までの経過日数(整数)を返す。t が zero なら -1
++// (=「データなし」)。list/search/today の "days since commit" 表示で共有する。
++func DaysSince(t, now time.Time) int {
++	if t.IsZero() {
++		return -1
++	}
++	return int(now.Sub(t).Hours() / 24)
++}
++
+ // SortBySlug は slug 昇順ソート。
+ func SortBySlug(ps []*Project) {
+ 	sort.Slice(ps, func(i, j int) bool { return ps[i].Slug < ps[j].Slug })
