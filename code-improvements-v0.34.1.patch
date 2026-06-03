@@ -57,8 +57,8 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +        run: go test -run='^$' -fuzz=FuzzAdd -fuzztime=10s ./internal/registry/
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/.golangci.yml fixed/yagura-v0.34.1/.golangci.yml
 --- baseline/yagura-v0.34.1/.golangci.yml	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/.golangci.yml	2026-06-03 08:11:53.136585210 +0000
-@@ -1,84 +1,84 @@
++++ fixed/yagura-v0.34.1/.golangci.yml	2026-06-03 08:18:54.252600028 +0000
+@@ -1,84 +1,94 @@
 -# golangci-lint configuration for Yagura.
 -# Covers OSPS-VM-06.02 (automated SAST evaluation policy).
 -version: '2'
@@ -126,6 +126,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +    - unused             # 未使用の型・関数・変数(dead code)
 +    - mirror             # bytes/strings の不要な変換([]byte↔string のアロケ削減)
 +    - canonicalheader    # 非正規な HTTP header キー文字列の検出
++    - depguard           # import allowlist。ADR-0001(ゼロ依存)を機械的に強制
 +    - perfsprint         # fmt.Sprintf/Errorf を strconv/errors.New/連結へ(無割当・高速)
 +    - intrange           # Go 1.22 の for-range-int へ近代化
 +    - usestdlibvars      # "GET"/"200" 等を http.MethodGet/StatusOK へ
@@ -187,6 +188,15 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +      checks:
 +        - all
 +        - -QF1001
++    depguard:
++      # ADR-0001: 外部 Go 依存を持たない。許可するのは stdlib と自モジュールのみ。
++      # 新たに外部 package を import すると CI で落ちる(ゼロ依存の機械的強制)。
++      rules:
++        main:
++          list-mode: strict
++          allow:
++            - $gostd
++            - github.com/shizukutanaka/yagura
 +
    exclusions:
 -    rules:
