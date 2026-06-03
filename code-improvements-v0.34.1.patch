@@ -57,8 +57,8 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +        run: go test -run='^$' -fuzz=FuzzAdd -fuzztime=10s ./internal/registry/
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/.golangci.yml fixed/yagura-v0.34.1/.golangci.yml
 --- baseline/yagura-v0.34.1/.golangci.yml	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/.golangci.yml	2026-06-03 08:18:54.252600028 +0000
-@@ -1,84 +1,94 @@
++++ fixed/yagura-v0.34.1/.golangci.yml	2026-06-03 08:51:41.864669265 +0000
+@@ -1,84 +1,109 @@
 -# golangci-lint configuration for Yagura.
 -# Covers OSPS-VM-06.02 (automated SAST evaluation policy).
 -version: '2'
@@ -131,6 +131,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +    - intrange           # Go 1.22 の for-range-int へ近代化
 +    - usestdlibvars      # "GET"/"200" 等を http.MethodGet/StatusOK へ
 +    - whitespace         # 関数本体先頭の不要な空行
++    - gocritic           # 下記 settings の安全な3 check のみ(挙動非変更の機械的 idiom)
 +    # --- naming / API hygiene (低 false-positive) ---
 +    - errname
 +    - gochecknoinits     # init() 乱用の抑止(deterministic startup)
@@ -178,16 +179,29 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 -        - name: var-declaration
      staticcheck:
 -      checks: ['all', '-ST1000']  # ST1000: at least one file in package has package comment
--    gocritic:
--      enabled-tags: [diagnostic, performance, style]
--      disabled-checks:
--        - ifElseChain
--        - hugeParam
 +      # QF1001 (De Morgan 則での書換) は可読性がむしろ落ちる箇所があるため除外。
 +      # それ以外の SA(バグ)/S1/ST 系はすべて有効。
 +      checks:
 +        - all
 +        - -QF1001
+     gocritic:
+-      enabled-tags: [diagnostic, performance, style]
+-      disabled-checks:
+-        - ifElseChain
+-        - hugeParam
++      # gocritic は check 単位で段階導入する。enable-all=50件のうち、
++      # 「機械的かつ完全に挙動非変更」と確認できた 3 check のみ有効化:
++      #   httpNoBody         — nil body を http.NoBody へ(意図が明確、wire 出力同一)
++      #   paramTypeCombine   — func(a T, b T) を func(a, b T) へ(署名のみ)
++      #   stringXbytes       — string()比較を bytes.Equal へ(割当削減・等価)
++      # 残りは false-positive(日本語コメント誤検出の commentedOutCode、ring-buffer の
++      # appendAssign)や挙動差リスク(equalFold の Unicode folding、%q の escape)、
++      # 大規模 refactor(hugeParam/ifElseChain/nestingReduce/exitAfterDefer)のため除外。
++      disable-all: true
++      enabled-checks:
++        - httpNoBody
++        - paramTypeCombine
++        - stringXbytes
 +    depguard:
 +      # ADR-0001: 外部 Go 依存を持たない。許可するのは stdlib と自モジュールのみ。
 +      # 新たに外部 package を import すると CI で落ちる(ゼロ依存の機械的強制)。
@@ -4021,7 +4035,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/cmd/yagura/helpers_test.go fixed/yagura-v0.34.1/cmd/yagura/helpers_test.go
 --- baseline/yagura-v0.34.1/cmd/yagura/helpers_test.go	1970-01-01 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/cmd/yagura/helpers_test.go	2026-06-03 06:30:20.019451127 +0000
++++ fixed/yagura-v0.34.1/cmd/yagura/helpers_test.go	2026-06-03 08:51:13.404668263 +0000
 @@ -0,0 +1,160 @@
 +package main
 +
@@ -4076,7 +4090,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +	}
 +	for _, tc := range cases {
 +		t.Run(tc.name, func(t *testing.T) {
-+			r := httptest.NewRequest(http.MethodGet, "/", nil)
++			r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 +			r.RemoteAddr = tc.remote
 +			if tc.xff != "" {
 +				r.Header.Set("X-Forwarded-For", tc.xff)
@@ -4341,7 +4355,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/cmd/yagura/httpapi_test.go fixed/yagura-v0.34.1/cmd/yagura/httpapi_test.go
 --- baseline/yagura-v0.34.1/cmd/yagura/httpapi_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/cmd/yagura/httpapi_test.go	2026-06-03 08:11:41.216584790 +0000
++++ fixed/yagura-v0.34.1/cmd/yagura/httpapi_test.go	2026-06-03 08:52:20.044670608 +0000
 @@ -2,13 +2,12 @@
  
  import (
@@ -4399,7 +4413,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +		"0": false, "false": false, "": false, "nope": false,
 +	}
 +	for v, want := range cases {
-+		r := httptest.NewRequest(http.MethodGet, "/x?flag="+v, nil)
++		r := httptest.NewRequest(http.MethodGet, "/x?flag="+v, http.NoBody)
 +		if got := queryTrue(r, "flag"); got != want {
 +			t.Errorf("queryTrue(flag=%q) = %v, want %v", v, got, want)
 +		}
@@ -4423,7 +4437,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  
  	// wrong token → 401
 -	req, _ := http.NewRequest("GET", srv.URL+"/sbom", nil)
-+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/sbom", nil)
++	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/sbom", http.NoBody)
  	req.Header.Set("Authorization", "Bearer wrong-token")
 -	resp2, _ := http.DefaultClient.Do(req)
 +	resp2, err := http.DefaultClient.Do(req)
@@ -4437,7 +4451,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  
  	// correct token → 200
 -	req3, _ := http.NewRequest("GET", srv.URL+"/sbom", nil)
-+	req3, _ := http.NewRequest(http.MethodGet, srv.URL+"/sbom", nil)
++	req3, _ := http.NewRequest(http.MethodGet, srv.URL+"/sbom", http.NoBody)
  	req3.Header.Set("Authorization", "Bearer secret-token")
 -	resp3, _ := http.DefaultClient.Do(req3)
 +	resp3, err := http.DefaultClient.Do(req3)
@@ -5706,11 +5720,12 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  //   - audit.log と同じく O_APPEND な JSONL — 1 entry が atomic、corrupt-line
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/atomicfile/atomicfile_test.go fixed/yagura-v0.34.1/internal/atomicfile/atomicfile_test.go
 --- baseline/yagura-v0.34.1/internal/atomicfile/atomicfile_test.go	1970-01-01 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/atomicfile/atomicfile_test.go	2026-06-03 05:32:13.140265022 +0000
-@@ -0,0 +1,148 @@
++++ fixed/yagura-v0.34.1/internal/atomicfile/atomicfile_test.go	2026-06-03 08:52:37.644671228 +0000
+@@ -0,0 +1,149 @@
 +package atomicfile
 +
 +import (
++	"bytes"
 +	"os"
 +	"path/filepath"
 +	"strings"
@@ -5745,7 +5760,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +	if err != nil {
 +		t.Fatalf("ReadFile: %v", err)
 +	}
-+	if string(got) != string(want) {
++	if !bytes.Equal(got, want) {
 +		t.Errorf("content = %q, want %q", got, want)
 +	}
 +
@@ -6023,7 +6038,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		input string
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/dashboard/agent_panel_test.go fixed/yagura-v0.34.1/internal/dashboard/agent_panel_test.go
 --- baseline/yagura-v0.34.1/internal/dashboard/agent_panel_test.go	1970-01-01 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/dashboard/agent_panel_test.go	2026-06-03 06:26:18.203442618 +0000
++++ fixed/yagura-v0.34.1/internal/dashboard/agent_panel_test.go	2026-06-03 08:52:20.048670608 +0000
 @@ -0,0 +1,74 @@
 +package dashboard
 +
@@ -6079,7 +6094,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +	}
 +	h.SetAgentStatusProvider(mon)
 +
-+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
++	req := httptest.NewRequest(http.MethodGet, "/dashboard", http.NoBody)
 +	w := httptest.NewRecorder()
 +	h.ServeHTTP(w, req)
 +
@@ -6094,14 +6109,14 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +	// nil で panel を無効化しても 200 で描画される。
 +	h.SetAgentStatusProvider(nil)
 +	w2 := httptest.NewRecorder()
-+	h.ServeHTTP(w2, httptest.NewRequest(http.MethodGet, "/dashboard", nil))
++	h.ServeHTTP(w2, httptest.NewRequest(http.MethodGet, "/dashboard", http.NoBody))
 +	if w2.Code != http.StatusOK {
 +		t.Errorf("status after disabling panel = %d, want 200", w2.Code)
 +	}
 +}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/dashboard/dashboard.go fixed/yagura-v0.34.1/internal/dashboard/dashboard.go
 --- baseline/yagura-v0.34.1/internal/dashboard/dashboard.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/dashboard/dashboard.go	2026-06-03 07:25:09.234227055 +0000
++++ fixed/yagura-v0.34.1/internal/dashboard/dashboard.go	2026-06-03 08:51:22.084668569 +0000
 @@ -12,6 +12,7 @@
  package dashboard
  
@@ -6140,6 +6155,81 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	}).Parse(htmlTemplate)
  	if err != nil {
  		return nil, fmt.Errorf("parse template: %w", err)
+@@ -264,7 +265,7 @@
+ 
+ // staleClassByTime は template から呼ばれる版で、stage を考慮して
+ // active 以外には何も返さない(意図的な非活動を強調しないため)。
+-func staleClassByTime(t time.Time, now time.Time, stage project.Stage) string {
++func staleClassByTime(t, now time.Time, stage project.Stage) string {
+ 	if stage != project.StageActive || t.IsZero() {
+ 		return ""
+ 	}
+@@ -302,7 +303,7 @@
+ 	return "prio-lo"
+ }
+ 
+-func daysSince(t time.Time, now time.Time) string {
++func daysSince(t, now time.Time) string {
+ 	if t.IsZero() {
+ 		return "—"
+ 	}
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/dashboard/dashboard_test.go fixed/yagura-v0.34.1/internal/dashboard/dashboard_test.go
+--- baseline/yagura-v0.34.1/internal/dashboard/dashboard_test.go	2026-06-02 00:00:00.000000000 +0000
++++ fixed/yagura-v0.34.1/internal/dashboard/dashboard_test.go	2026-06-03 08:52:20.060670609 +0000
+@@ -31,7 +31,7 @@
+ 
+ func TestServeHTTP_RenderEmpty(t *testing.T) {
+ 	h, _ := setupHandler(t)
+-	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
++	req := httptest.NewRequest(http.MethodGet, "/dashboard", http.NoBody)
+ 	w := httptest.NewRecorder()
+ 	h.ServeHTTP(w, req)
+ 
+@@ -59,7 +59,7 @@
+ 		Stage: project.StageArchived,
+ 	})
+ 
+-	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
++	req := httptest.NewRequest(http.MethodGet, "/dashboard", http.NoBody)
+ 	w := httptest.NewRecorder()
+ 	h.ServeHTTP(w, req)
+ 
+@@ -80,7 +80,7 @@
+ 
+ func TestServeHTTP_RejectsPost(t *testing.T) {
+ 	h, _ := setupHandler(t)
+-	req := httptest.NewRequest(http.MethodPost, "/dashboard", nil)
++	req := httptest.NewRequest(http.MethodPost, "/dashboard", http.NoBody)
+ 	w := httptest.NewRecorder()
+ 	h.ServeHTTP(w, req)
+ 	if w.Code != http.StatusMethodNotAllowed {
+@@ -93,7 +93,7 @@
+ 
+ func TestServeHTTP_NoStoreCache(t *testing.T) {
+ 	h, _ := setupHandler(t)
+-	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
++	req := httptest.NewRequest(http.MethodGet, "/dashboard", http.NoBody)
+ 	w := httptest.NewRecorder()
+ 	h.ServeHTTP(w, req)
+ 	if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+@@ -269,7 +269,7 @@
+ 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+ 	h, _ := New(reg, logger)
+ 
+-	req := httptest.NewRequest(http.MethodPost, "/dashboard", nil)
++	req := httptest.NewRequest(http.MethodPost, "/dashboard", http.NoBody)
+ 	w := httptest.NewRecorder()
+ 	h.ServeHTTP(w, req)
+ 	if w.Code != http.StatusMethodNotAllowed {
+@@ -285,7 +285,7 @@
+ 	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+ 	h, _ := New(reg, logger)
+ 
+-	req := httptest.NewRequest(http.MethodHead, "/dashboard", nil)
++	req := httptest.NewRequest(http.MethodHead, "/dashboard", http.NoBody)
+ 	w := httptest.NewRecorder()
+ 	h.ServeHTTP(w, req)
+ 	if w.Code != http.StatusOK {
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/dedupe/dedupe.go fixed/yagura-v0.34.1/internal/dedupe/dedupe.go
 --- baseline/yagura-v0.34.1/internal/dedupe/dedupe.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/dedupe/dedupe.go	2026-06-03 04:24:21.712121756 +0000
@@ -6239,6 +6329,26 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  package featurelist
  
  import (
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/featurelist/featurelist_test.go fixed/yagura-v0.34.1/internal/featurelist/featurelist_test.go
+--- baseline/yagura-v0.34.1/internal/featurelist/featurelist_test.go	2026-06-02 00:00:00.000000000 +0000
++++ fixed/yagura-v0.34.1/internal/featurelist/featurelist_test.go	2026-06-03 08:52:40.476671327 +0000
+@@ -1,6 +1,7 @@
+ package featurelist
+ 
+ import (
++	"bytes"
+ 	"encoding/json"
+ 	"strings"
+ 	"testing"
+@@ -244,7 +245,7 @@
+ 	}
+ 	a, _ := Marshal(Build(in, fixedNow))
+ 	b, _ := Marshal(Build(in, fixedNow))
+-	if string(a) != string(b) {
++	if !bytes.Equal(a, b) {
+ 		t.Error("marshal output not deterministic")
+ 	}
+ }
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go fixed/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go
 --- baseline/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go	2026-06-03 08:12:18.380586098 +0000
@@ -6366,8 +6476,14 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	for in, want := range cases {
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/github/client.go fixed/yagura-v0.34.1/internal/github/client.go
 --- baseline/yagura-v0.34.1/internal/github/client.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/github/client.go	2026-06-03 08:10:51.408583038 +0000
-@@ -188,7 +188,7 @@
++++ fixed/yagura-v0.34.1/internal/github/client.go	2026-06-03 08:51:19.344668472 +0000
+@@ -183,12 +183,12 @@
+ // doJSON は HTTP リクエスト発行 + JSON デコード。
+ func (c *Client) doJSON(ctx context.Context, method, path string, out any) error {
+ 	url := c.baseURL + path
+-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
++	req, err := http.NewRequestWithContext(ctx, method, url, http.NoBody)
+ 	if err != nil {
  		return fmt.Errorf("create request: %w", err)
  	}
  	req.Header.Set("Accept", "application/vnd.github+json")
@@ -6797,7 +6913,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  			_ = json.Unmarshal(v, dst)
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/hookreceiver/receiver_test.go fixed/yagura-v0.34.1/internal/hookreceiver/receiver_test.go
 --- baseline/yagura-v0.34.1/internal/hookreceiver/receiver_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/hookreceiver/receiver_test.go	2026-06-03 07:25:44.298228289 +0000
++++ fixed/yagura-v0.34.1/internal/hookreceiver/receiver_test.go	2026-06-03 08:52:20.060670609 +0000
 @@ -1,8 +1,8 @@
  package hookreceiver
  
@@ -6822,7 +6938,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  func TestHandle_RejectsGET(t *testing.T) {
  	r, _ := newRcv(t)
 -	req := httptest.NewRequest("GET", "/hooks/claude-code", nil)
-+	req := httptest.NewRequest(http.MethodGet, "/hooks/claude-code", nil)
++	req := httptest.NewRequest(http.MethodGet, "/hooks/claude-code", http.NoBody)
  	w := httptest.NewRecorder()
  	r.Handle(w, req)
  	if w.Code != http.StatusMethodNotAllowed {
@@ -6961,7 +7077,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  //   - per-key の bucket map(キーは IP or Auth token、route で異なる戦略)
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/httplimit/bucket_test.go fixed/yagura-v0.34.1/internal/httplimit/bucket_test.go
 --- baseline/yagura-v0.34.1/internal/httplimit/bucket_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/httplimit/bucket_test.go	2026-06-03 07:25:44.274228288 +0000
++++ fixed/yagura-v0.34.1/internal/httplimit/bucket_test.go	2026-06-03 08:52:20.072670609 +0000
 @@ -13,7 +13,7 @@
  	b := &Bucket{capacity: 3, refillRate: 1, tokens: 3, lastRefill: now}
  
@@ -6976,7 +7092,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  func TestLimiter_AllowsFirstNRequests(t *testing.T) {
  	l := New(Options{Capacity: 5, RefillPerMinute: 60})
 -	req := httptest.NewRequest("GET", "/x", nil)
-+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
++	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
  	req.RemoteAddr = "1.2.3.4:5678"
 -	for i := 0; i < 5; i++ {
 +	for i := range 5 {
@@ -6988,10 +7104,10 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  func TestLimiter_DifferentKeysIndependent(t *testing.T) {
  	l := New(Options{Capacity: 2, RefillPerMinute: 60})
 -	a := httptest.NewRequest("GET", "/x", nil)
-+	a := httptest.NewRequest(http.MethodGet, "/x", nil)
++	a := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
  	a.RemoteAddr = "1.1.1.1:1"
 -	b := httptest.NewRequest("GET", "/x", nil)
-+	b := httptest.NewRequest(http.MethodGet, "/x", nil)
++	b := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
  	b.RemoteAddr = "2.2.2.2:2"
 -	for i := 0; i < 2; i++ {
 +	for i := range 2 {
@@ -7007,7 +7123,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	})
  
 -	req := httptest.NewRequest("GET", "/x", nil)
-+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
++	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
  	req.RemoteAddr = "9.9.9.9:1"
  
  	// 1st: allowed
@@ -7016,7 +7132,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	for _, c := range cases {
  		t.Run(c.name, func(t *testing.T) {
 -			req := httptest.NewRequest("GET", "/", nil)
-+			req := httptest.NewRequest(http.MethodGet, "/", nil)
++			req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
  			req.RemoteAddr = c.addr
  			if c.xff != "" {
  				req.Header.Set("X-Forwarded-For", c.xff)
@@ -7025,7 +7141,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	}
  	for in, want := range cases {
 -		req := httptest.NewRequest("GET", "/", nil)
-+		req := httptest.NewRequest(http.MethodGet, "/", nil)
++		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
  		if in != "" {
  			req.Header.Set("Authorization", in)
  		}
@@ -7034,7 +7150,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	l := New(Options{Capacity: 1, RefillPerMinute: 1, IdleTTL: 100 * time.Millisecond})
  
 -	req := httptest.NewRequest("GET", "/", nil)
-+	req := httptest.NewRequest(http.MethodGet, "/", nil)
++	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
  	req.RemoteAddr = "1.1.1.1:1"
  	l.Allow(req)
  	if l.ActiveCount() != 1 {
@@ -7048,7 +7164,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		go func() {
  			defer wg.Done()
 -			req := httptest.NewRequest("GET", "/x", nil)
-+			req := httptest.NewRequest(http.MethodGet, "/x", nil)
++			req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
  			req.RemoteAddr = "1.1.1.1:1"
 -			for j := 0; j < 5; j++ {
 +			for range 5 {
@@ -7217,11 +7333,12 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		Level: parseLevel(level),
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/mcp/compat_golden_test.go fixed/yagura-v0.34.1/internal/mcp/compat_golden_test.go
 --- baseline/yagura-v0.34.1/internal/mcp/compat_golden_test.go	1970-01-01 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/mcp/compat_golden_test.go	2026-06-03 07:56:10.456552039 +0000
-@@ -0,0 +1,99 @@
++++ fixed/yagura-v0.34.1/internal/mcp/compat_golden_test.go	2026-06-03 08:51:33.256668962 +0000
+@@ -0,0 +1,100 @@
 +package mcp
 +
 +import (
++	"bytes"
 +	"encoding/json"
 +	"flag"
 +	"os"
@@ -7311,7 +7428,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +	if err != nil {
 +		t.Fatalf("read golden (run with -update-golden to create): %v", err)
 +	}
-+	if string(got) != string(want) {
++	if !bytes.Equal(got, want) {
 +		t.Errorf("MCP tools/list contract drifted from %s.\n"+
 +			"If this change is intentional (a deliberate, semver-aware API change),\n"+
 +			"regenerate with: go test ./internal/mcp -run TestToolsListContract -update-golden",
@@ -7814,10 +7931,13 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/mcp/server_test.go fixed/yagura-v0.34.1/internal/mcp/server_test.go
 --- baseline/yagura-v0.34.1/internal/mcp/server_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/mcp/server_test.go	2026-06-03 07:25:44.302228289 +0000
-@@ -27,7 +27,7 @@
++++ fixed/yagura-v0.34.1/internal/mcp/server_test.go	2026-06-03 08:52:20.076670609 +0000
+@@ -25,9 +25,9 @@
+ 	return s, reg
+ }
  
- func postJSON(t *testing.T, s http.Handler, body string, token string) *httptest.ResponseRecorder {
+-func postJSON(t *testing.T, s http.Handler, body string, token string) *httptest.ResponseRecorder {
++func postJSON(t *testing.T, s http.Handler, body, token string) *httptest.ResponseRecorder {
  	t.Helper()
 -	req := httptest.NewRequest("POST", "/mcp", bytes.NewBufferString(body))
 +	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewBufferString(body))
@@ -7829,7 +7949,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  func TestServer_GetIsNotAllowed(t *testing.T) {
  	s, _ := newServerForTest(t, "")
 -	req := httptest.NewRequest("GET", "/mcp", nil)
-+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
++	req := httptest.NewRequest(http.MethodGet, "/mcp", http.NoBody)
  	w := httptest.NewRecorder()
  	s.ServeHTTP(w, req)
  	if w.Code != http.StatusMethodNotAllowed {
@@ -11904,7 +12024,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/mcp/tools_inventory.go fixed/yagura-v0.34.1/internal/mcp/tools_inventory.go
 --- baseline/yagura-v0.34.1/internal/mcp/tools_inventory.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/mcp/tools_inventory.go	2026-06-03 04:28:06.612129670 +0000
++++ fixed/yagura-v0.34.1/internal/mcp/tools_inventory.go	2026-06-03 08:51:26.284668717 +0000
 @@ -12,13 +12,14 @@
  	"sort"
  	"strings"
@@ -12034,6 +12154,15 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		Description: "[G] Portfolio counts/totals/averages.",
  		InputSchema: map[string]any{
  			"type":       "object",
+@@ -522,7 +523,7 @@
+ 	}
+ }
+ 
+-func daysSince(t time.Time, now time.Time) int {
++func daysSince(t, now time.Time) int {
+ 	if t.IsZero() {
+ 		return -1
+ 	}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/mcp/tools_quality.go fixed/yagura-v0.34.1/internal/mcp/tools_quality.go
 --- baseline/yagura-v0.34.1/internal/mcp/tools_quality.go	1970-01-01 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/mcp/tools_quality.go	2026-06-03 05:34:42.892270292 +0000
@@ -14463,8 +14592,25 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		return modulePath[i+1:]
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/sbom/sbom_test.go fixed/yagura-v0.34.1/internal/sbom/sbom_test.go
 --- baseline/yagura-v0.34.1/internal/sbom/sbom_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/sbom/sbom_test.go	2026-06-03 07:25:44.286228289 +0000
-@@ -186,7 +186,7 @@
++++ fixed/yagura-v0.34.1/internal/sbom/sbom_test.go	2026-06-03 08:52:42.764671408 +0000
+@@ -1,6 +1,7 @@
+ package sbom
+ 
+ import (
++	"bytes"
+ 	"encoding/json"
+ 	"strings"
+ 	"testing"
+@@ -91,7 +92,7 @@
+ 
+ 	j1, _ := bom1.JSON()
+ 	j2, _ := bom2.JSON()
+-	if string(j1) != string(j2) {
++	if !bytes.Equal(j1, j2) {
+ 		t.Errorf("BOM is not reproducible:\nfirst: %s\nsecond: %s", j1, j2)
+ 	}
+ }
+@@ -186,7 +187,7 @@
  }
  
  func TestRandomUUIDv4_Format(t *testing.T) {
@@ -14473,7 +14619,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		u := randomUUIDv4()
  		// RFC 4122 UUID v4 = 36 chars (8-4-4-4-12)
  		if len(u) != 36 {
-@@ -205,7 +205,7 @@
+@@ -205,7 +206,7 @@
  
  func TestRandomUUIDv4_Unique(t *testing.T) {
  	seen := map[string]bool{}
@@ -14482,7 +14628,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		u := randomUUIDv4()
  		if seen[u] {
  			t.Errorf("UUID collision: %s", u)
-@@ -240,3 +240,25 @@
+@@ -240,3 +241,25 @@
  		t.Errorf("default serial: %q", bom.SerialNumber)
  	}
  }
@@ -14687,7 +14833,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		wg.Add(1)
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/scorecard/scorecard.go fixed/yagura-v0.34.1/internal/scorecard/scorecard.go
 --- baseline/yagura-v0.34.1/internal/scorecard/scorecard.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/scorecard/scorecard.go	2026-06-03 04:24:21.712121756 +0000
++++ fixed/yagura-v0.34.1/internal/scorecard/scorecard.go	2026-06-03 08:52:20.076670609 +0000
 @@ -33,21 +33,21 @@
  
  // Score は単一プロジェクトの Scorecard 結果。
@@ -14721,6 +14867,15 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  }
  
  // Client は Scorecard API クライアント。
+@@ -92,7 +92,7 @@
+ 	// PathEscape は "/" を %2F に変換するが、API は "/" を期待するので戻す
+ 	endpoint = strings.ReplaceAll(endpoint, "%2F", "/")
+ 
+-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("build request: %w", err)
+ 	}
 @@ -180,11 +180,11 @@
  
  // wireScore は api.scorecard.dev のレスポンス形式。
@@ -14796,7 +14951,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  }
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/secrets/secrets.go fixed/yagura-v0.34.1/internal/secrets/secrets.go
 --- baseline/yagura-v0.34.1/internal/secrets/secrets.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/secrets/secrets.go	2026-06-03 04:24:21.728121757 +0000
++++ fixed/yagura-v0.34.1/internal/secrets/secrets.go	2026-06-03 08:52:46.096671525 +0000
 @@ -12,11 +12,11 @@
  //
  // ファイル形式 (v1):
@@ -14836,6 +14991,15 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	ErrAuthenticationFailed = errors.New("secrets: authentication failed (wrong passphrase or corrupted file)")
  )
  
+@@ -167,7 +167,7 @@
+ 
+ // Get は name の secret を passphrase で復号して返す。
+ // 存在しない場合は os.ErrNotExist を返す。
+-func (s *Store) Get(name string, passphrase string) ([]byte, error) {
++func (s *Store) Get(name, passphrase string) ([]byte, error) {
+ 	if err := validateName(name); err != nil {
+ 		return nil, err
+ 	}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/secrets/secrets_test.go fixed/yagura-v0.34.1/internal/secrets/secrets_test.go
 --- baseline/yagura-v0.34.1/internal/secrets/secrets_test.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/secrets/secrets_test.go	2026-06-03 05:46:23.616294949 +0000
