@@ -1,0 +1,1622 @@
+diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
+index 9b29eec..bfb201e 100644
+--- a/yagura-v0.35.0/CHANGELOG.md
++++ b/yagura-v0.35.0/CHANGELOG.md
+@@ -4,6 +4,45 @@ All notable changes to Yagura are documented here. Format follows
+ [Keep a Changelog](https://keepachangelog.com); versions follow
+ [SemVer](https://semver.org).
+ 
++## [v0.35.0] - 2026-06-03
++
++### Theme — "CLI direct mode: registry CRUD + local scans without an MCP client"
++
++v0.35 candidates の #1。これまで registry 操作や local scan は MCP client
++(JSON-RPC over HTTP)経由でしか叩けず、シェルや CI から素早く `yagura list` /
++`yagura register` できなかった(MCP server デメリット #7)。MCP を介さず domain
++logic を直接呼ぶ top-level subcommand を追加した。
++
++### What's new
++
++- **CLI direct mode**(`cmd/yagura/cli.go` / `cli_format.go`):top-level verb
++  - registry: `list` / `get` / `search` / `stats` / `register` / `update` /
++    `unregister`
++  - local scan: `sbom` / `secretscan` / `gha-audit` / `pin-drift`
++  - 各 verb は `--json` で MCP tool と同一 shape の機械可読出力。デフォルトは
++    `text/tabwriter` の整列テキスト。
++  - flag は positional の前後どちらでも解釈(getopt 風の permute)。
++- **register / update / unregister は audit log に追記**(`Actor: "cli"`)。
++  daemon と同じ append-only 監査証跡を CLI 経由でも欠かさない(best-effort)。
++- **token-free state-dir resolver**(`config.ResolveStateDir` /
++  `ProjectsDirFor` / `AuditDirFor` / `SecretsDirFor`):registry CRUD と
++  local scan は GitHub token 不要。`pin-drift` のみ `YAGURA_GITHUB_TOKEN` を
++  要求する。副産物として `yagura secret` も token 不要になり、`yagura verify`
++  が daemon と同じ `~/.yagura/state/audit` を見るよう修正(以前は `~/.yagura`
++  を見ており不一致だった)。
++
++### What's not yet
++
++- `vulns` / `scorecard` の CLG 化(現状 sensor で scanner 専用)。
++- インタラクティブ tty でのフラグ補完。
++- OAuth / tool namespace / streamable HTTP(残りの v0.35 candidates)。
++
++### Notes
++
++- ADR-0001 維持:新規依存ゼロ(`flag` / `text/tabwriter` / `encoding/json` 等
++  stdlib のみ)。`go.mod` 不変 → reproducible build を維持。
++- MCP tool は増えていないので tool 数(46)と `integration_test` は不変。
++
+ ## [v0.34.1] - 2026-05-16
+ 
+ ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
+diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
+index 986f84e..e3ac25e 100644
+--- a/yagura-v0.35.0/README.md
++++ b/yagura-v0.35.0/README.md
+@@ -10,7 +10,7 @@
+ 
+ **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
+ 
+-Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
++Status: **v0.35.0** — 46 MCP tools, 39 internal packages, CLI direct mode, 30 consecutive reproducible releases.
+ 
+ ---
+ 
+diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
+new file mode 100644
+index 0000000..07cbd41
+--- /dev/null
++++ b/yagura-v0.35.0/cmd/yagura/cli.go
+@@ -0,0 +1,761 @@
++// cli.go: yagura v0.35 "CLI direct mode".
++//
++// 動機 (v0.35.0):
++//   v0.34 まで、registry 操作や local scan は MCP client(JSON-RPC over HTTP)
++//   経由でしか叩けなかった(MCP server デメリット #7)。シェルスクリプトや CI
++//   ステップから素早く `yagura list` / `yagura register` したいケースに応えられ
++//   なかった。
++//
++// 本ファイルは MCP を介さず、registry / project / scanner パッケージの domain
++// logic を直接呼ぶ top-level subcommand 群を提供する。ロジックは再実装せず、
++// internal/mcp の各 tool handler と同じ呼び出しを行う(出力 shape も合わせる)。
++//
++// 設計:
++//   - 各 verb は専用の flag.FlagSet(ContinueOnError, output=stderr)で parse。
++//     ExitOnError を使わないのは os.Exit を避けてテスト/dispatch が制御を保つため。
++//   - token 不要(registry CRUD / sbom / secretscan / gha-audit)は
++//     config.ResolveStateDir() で state dir のみ解決(GitHub token を要求しない)。
++//   - pin-drift だけ GitHub API が必要なので config.Load()(token 検証)を通す。
++//   - register / update / unregister は daemon と同様に audit log へ best-effort
++//     で追記する(trust base の append-only 監査証跡を CLI でも欠かさない)。
++
++package main
++
++import (
++	"context"
++	"errors"
++	"flag"
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"strings"
++	"time"
++
++	"github.com/shizukutanaka/yagura/internal/audit"
++	"github.com/shizukutanaka/yagura/internal/config"
++	"github.com/shizukutanaka/yagura/internal/ghaaudit"
++	"github.com/shizukutanaka/yagura/internal/github"
++	"github.com/shizukutanaka/yagura/internal/pindrift"
++	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/registry"
++	"github.com/shizukutanaka/yagura/internal/sbom"
++	"github.com/shizukutanaka/yagura/internal/secretscan"
++)
++
++// mainModulePath は sbom 生成対象(yagura 自身)の module path。
++// run() のハードコードと同じ値を CLI でも使う。
++const mainModulePath = "github.com/shizukutanaka/yagura"
++
++// errUsage は flag parse / 引数不足を示す番兵。runCLI で exit code 2 に変換する。
++// FlagSet 側が既に詳細を stderr に出している。
++var errUsage = errors.New("usage error")
++
++// cliVerbs は dispatch() が runCLI に委譲する direct-mode subcommand の集合。
++var cliVerbs = map[string]bool{
++	"list": true, "get": true, "search": true, "stats": true,
++	"register": true, "update": true, "unregister": true,
++	"sbom": true, "secretscan": true, "gha-audit": true, "pin-drift": true,
++}
++
++// runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
++func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
++	var err error
++	switch verb {
++	case "list":
++		err = cliList(args, stdout, stderr)
++	case "get":
++		err = cliGet(args, stdout, stderr)
++	case "search":
++		err = cliSearch(args, stdout, stderr)
++	case "stats":
++		err = cliStats(args, stdout, stderr)
++	case "register":
++		err = cliRegister(args, stdout, stderr)
++	case "update":
++		err = cliUpdate(args, stdout, stderr)
++	case "unregister":
++		err = cliUnregister(args, stdout, stderr)
++	case "sbom":
++		err = cliSbom(args, stdout, stderr)
++	case "secretscan":
++		err = cliSecretScan(args, stdout, stderr)
++	case "gha-audit":
++		err = cliGhaAudit(args, stdout, stderr)
++	case "pin-drift":
++		err = cliPinDrift(args, stdout, stderr)
++	default:
++		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
++		return 2
++	}
++	if err != nil {
++		if errors.Is(err, errUsage) {
++			return 2
++		}
++		fmt.Fprintf(stderr, "yagura %s: %v\n", verb, err)
++		return 1
++	}
++	return 0
++}
++
++// newFlagSet は ContinueOnError(os.Exit しない)で stderr 出力の FlagSet を返す。
++func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
++	fs := flag.NewFlagSet(name, flag.ContinueOnError)
++	fs.SetOutput(stderr)
++	return fs
++}
++
++// parseArgs は flag が positional の前後どちらにあっても解釈する(GNU getopt 風)。
++// 標準 flag は最初の非 flag で停止するため、`register breeze repo --lang go` の
++// ように flag を後置すると無視されてしまう。これを permute して回避し、
++// positional 引数を順序どおり返す。
++func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
++	var positionals []string
++	for {
++		if err := fs.Parse(args); err != nil {
++			return nil, err
++		}
++		rest := fs.Args()
++		if len(rest) == 0 {
++			break
++		}
++		positionals = append(positionals, rest[0])
++		args = rest[1:]
++	}
++	return positionals, nil
++}
++
++// openRegistry は token 不要の state-dir resolver で registry を開く。
++// partial-load エラーは warning として表示し、致命扱いにしない(daemon と同じ)。
++func openRegistry(stderr io.Writer) (*registry.Registry, error) {
++	sd, err := config.ResolveStateDir()
++	if err != nil {
++		return nil, err
++	}
++	reg, err := registry.New(config.ProjectsDirFor(sd))
++	if reg == nil {
++		return nil, err
++	}
++	if err != nil {
++		fmt.Fprintf(stderr, "yagura: warning: registry partial load: %v\n", err)
++	}
++	return reg, nil
++}
++
++// ─── registry read commands ──────────────────────────────────
++
++func cliList(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("list", stderr)
++	jsonOut := fs.Bool("json", false, "machine-readable JSON output")
++	stage := fs.String("stage", "", "filter by stage (active/maintenance/paused/archived)")
++	tag := fs.String("tag", "", "filter by tag (exact, case-insensitive)")
++	lang := fs.String("language", "", "filter by language (exact, case-insensitive)")
++	if err := fs.Parse(args); err != nil {
++		return errUsage
++	}
++	reg, err := openRegistry(stderr)
++	if err != nil {
++		return err
++	}
++	projects, err := filterProjects(reg, *stage, *tag, *lang, "")
++	if err != nil {
++		return err
++	}
++	now := time.Now()
++	if *jsonOut {
++		return emitJSON(stdout, listPayload(projects, now))
++	}
++	humanList(stdout, projects, now)
++	return nil
++}
++
++func cliSearch(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("search", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	tag := fs.String("tag", "", "filter by tag")
++	lang := fs.String("language", "", "filter by language")
++	stage := fs.String("stage", "", "filter by stage")
++	query := fs.String("query", "", "substring over slug/name/notes/repo/tags")
++	pos, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	// 先頭の positional も query として許容(`yagura search foo`)。
++	if *query == "" && len(pos) > 0 {
++		*query = pos[0]
++	}
++	reg, err := openRegistry(stderr)
++	if err != nil {
++		return err
++	}
++	projects, err := filterProjects(reg, *stage, *tag, *lang, *query)
++	if err != nil {
++		return err
++	}
++	now := time.Now()
++	if *jsonOut {
++		return emitJSON(stdout, listPayload(projects, now))
++	}
++	humanList(stdout, projects, now)
++	return nil
++}
++
++func cliGet(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("get", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	pos, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	if len(pos) < 1 {
++		return fmt.Errorf("usage: yagura get <slug> [--json]")
++	}
++	reg, err := openRegistry(stderr)
++	if err != nil {
++		return err
++	}
++	p, err := reg.Get(pos[0])
++	if err != nil {
++		if errors.Is(err, registry.ErrNotFound) {
++			return fmt.Errorf("not found: %s", pos[0])
++		}
++		return err
++	}
++	if *jsonOut {
++		return emitJSON(stdout, p)
++	}
++	humanProject(stdout, p)
++	return nil
++}
++
++func cliStats(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("stats", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	if err := fs.Parse(args); err != nil {
++		return errUsage
++	}
++	reg, err := openRegistry(stderr)
++	if err != nil {
++		return err
++	}
++	st := computeStats(reg.List(), time.Now())
++	if *jsonOut {
++		return emitJSON(stdout, st)
++	}
++	humanStats(stdout, st)
++	return nil
++}
++
++// ─── registry mutation commands (audited) ────────────────────
++
++func cliRegister(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("register", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	displayName := fs.String("display-name", "", "display name (default: slug)")
++	lang := fs.String("language", "", "language")
++	localPath := fs.String("local-path", "", "local filesystem path")
++	tags := fs.String("tags", "", "comma-separated tags")
++	dependsOn := fs.String("depends-on", "", "comma-separated dependency slugs")
++	stage := fs.String("stage", "", "stage (default: active)")
++	priority := fs.Int("priority", 0, "priority 0-5")
++	notes := fs.String("notes", "", "free-text notes")
++	pos, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	if len(pos) < 2 {
++		return fmt.Errorf("usage: yagura register <slug> <repository> [flags]")
++	}
++	slug, repo := pos[0], pos[1]
++	dn := *displayName
++	if dn == "" {
++		dn = slug
++	}
++	st := project.Stage(strings.ToLower(strings.TrimSpace(*stage)))
++	if st == "" {
++		st = project.StageActive
++	}
++	p := &project.Project{
++		Slug:        slug,
++		DisplayName: dn,
++		Repository:  repo,
++		Language:    *lang,
++		LocalPath:   *localPath,
++		Tags:        splitCSV(*tags),
++		DependsOn:   splitCSV(*dependsOn),
++		Stage:       st,
++		Priority:    *priority,
++		Notes:       *notes,
++	}
++	reg, err := openRegistry(stderr)
++	if err != nil {
++		return err
++	}
++	if err := reg.Add(p); err != nil {
++		if errors.Is(err, registry.ErrAlreadyExists) {
++			return fmt.Errorf("already exists: %s", slug)
++		}
++		return err // project.Validate() のメッセージをそのまま見せる
++	}
++	auditMutation(stderr, "yagura_register", slug, map[string]any{"via": "cli", "repository": repo})
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{"slug": slug, "created": true})
++	}
++	fmt.Fprintf(stdout, "registered %s\n", slug)
++	return nil
++}
++
++func cliUpdate(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("update", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	displayName := fs.String("display-name", "", "display name")
++	lang := fs.String("language", "", "language")
++	localPath := fs.String("local-path", "", "local path")
++	tags := fs.String("tags", "", "comma-separated tags")
++	dependsOn := fs.String("depends-on", "", "comma-separated dependency slugs")
++	stage := fs.String("stage", "", "stage")
++	priority := fs.Int("priority", 0, "priority 0-5")
++	notes := fs.String("notes", "", "notes")
++	pos, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	if len(pos) < 1 {
++		return fmt.Errorf("usage: yagura update <slug> [flags]")
++	}
++	slug := pos[0]
++	reg, err := openRegistry(stderr)
++	if err != nil {
++		return err
++	}
++	cur, err := reg.Get(slug)
++	if err != nil {
++		if errors.Is(err, registry.ErrNotFound) {
++			return fmt.Errorf("not found: %s", slug)
++		}
++		return err
++	}
++	// ユーザが明示的に指定した flag のみ適用(manual-metadata のみ。
++	// sensor フィールドは scanner 専用なので CLI からは触れない)。
++	set := map[string]bool{}
++	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
++	if set["display-name"] {
++		cur.DisplayName = *displayName
++	}
++	if set["language"] {
++		cur.Language = *lang
++	}
++	if set["local-path"] {
++		cur.LocalPath = *localPath
++	}
++	if set["tags"] {
++		cur.Tags = splitCSV(*tags)
++	}
++	if set["depends-on"] {
++		cur.DependsOn = splitCSV(*dependsOn)
++	}
++	if set["stage"] {
++		st := project.Stage(strings.ToLower(strings.TrimSpace(*stage)))
++		switch st {
++		case project.StageActive, project.StageMaintenance,
++			project.StagePaused, project.StageArchived:
++			cur.Stage = st
++		default:
++			return fmt.Errorf("stage must be one of active/maintenance/paused/archived")
++		}
++	}
++	if set["priority"] {
++		if *priority < 0 || *priority > 5 {
++			return fmt.Errorf("priority must be 0-5")
++		}
++		cur.Priority = *priority
++	}
++	if set["notes"] {
++		cur.Notes = *notes
++	}
++	if err := reg.Update(cur); err != nil {
++		return err
++	}
++	auditMutation(stderr, "yagura_update", slug, map[string]any{"via": "cli"})
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{"slug": slug, "updated": true})
++	}
++	fmt.Fprintf(stdout, "updated %s\n", slug)
++	return nil
++}
++
++func cliUnregister(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("unregister", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	pos, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	if len(pos) < 1 {
++		return fmt.Errorf("usage: yagura unregister <slug>")
++	}
++	slug := pos[0]
++	reg, err := openRegistry(stderr)
++	if err != nil {
++		return err
++	}
++	if err := reg.Delete(slug); err != nil {
++		if errors.Is(err, registry.ErrNotFound) {
++			return fmt.Errorf("not found: %s", slug)
++		}
++		return err
++	}
++	auditMutation(stderr, "yagura_unregister", slug, map[string]any{"via": "cli"})
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{"slug": slug, "deleted": true})
++	}
++	fmt.Fprintf(stdout, "unregistered %s\n", slug)
++	return nil
++}
++
++// ─── local scan commands ─────────────────────────────────────
++
++func cliSbom(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("sbom", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	summary := fs.Bool("summary", false, "summary only")
++	if err := fs.Parse(args); err != nil {
++		return errUsage
++	}
++	bom, err := sbom.New().Generate(mainModulePath, version)
++	if err != nil {
++		return err
++	}
++	if *summary {
++		s := bom.Summarize()
++		if *jsonOut {
++			return emitJSON(stdout, s)
++		}
++		humanSbomSummary(stdout, s)
++		return nil
++	}
++	if *jsonOut {
++		return emitJSON(stdout, bom)
++	}
++	humanSbom(stdout, bom)
++	return nil
++}
++
++func cliSecretScan(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("secretscan", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	slug := fs.String("slug", "", "scan only this project (default: all non-archived)")
++	minSev := fs.String("min-severity", "", "LOW/MEDIUM/HIGH/CRITICAL")
++	if err := fs.Parse(args); err != nil {
++		return errUsage
++	}
++	reg, err := openRegistry(stderr)
++	if err != nil {
++		return err
++	}
++	var toScan []*project.Project
++	if *slug != "" {
++		p, err := reg.Get(*slug)
++		if err != nil {
++			if errors.Is(err, registry.ErrNotFound) {
++				return fmt.Errorf("not found: %s", *slug)
++			}
++			return err
++		}
++		toScan = []*project.Project{p}
++	} else {
++		for _, p := range reg.List() {
++			if p.Stage != project.StageArchived {
++				toScan = append(toScan, p)
++			}
++		}
++	}
++	var items []secretscan.ScanItem
++	for _, p := range toScan {
++		items = append(items, projectScanItems(p)...)
++	}
++	result := secretscan.New().ScanBatch(items)
++	if *minSev != "" {
++		m := strings.ToUpper(*minSev)
++		if m != "LOW" && m != "MEDIUM" && m != "HIGH" && m != "CRITICAL" {
++			return fmt.Errorf("min-severity must be LOW/MEDIUM/HIGH/CRITICAL")
++		}
++		result = filterBySeverity(result, secretscan.Severity(m))
++	}
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{
++			"scanned_projects": len(toScan),
++			"sources_scanned":  len(items),
++			"total_findings":   result.Total,
++			"by_severity":      result.BySeverity,
++			"by_source":        result.BySource,
++			"source_order":     result.SourceOrder,
++		})
++	}
++	humanSecretScan(stdout, result, len(toScan), len(items))
++	return nil
++}
++
++func cliGhaAudit(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("gha-audit", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	dir := fs.String("dir", ".", "directory containing workflow YAML files")
++	summary := fs.Bool("summary", false, "summary only")
++	if err := fs.Parse(args); err != nil {
++		return errUsage
++	}
++	files, err := readWorkflowFiles(*dir)
++	if err != nil {
++		return err
++	}
++	results := ghaaudit.New().AuditDir(*dir, files)
++	if *summary {
++		s := ghaaudit.Summarize(results)
++		if *jsonOut {
++			return emitJSON(stdout, s)
++		}
++		humanGhaSummary(stdout, s)
++		return nil
++	}
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{"results": results, "summary": ghaaudit.Summarize(results)})
++	}
++	humanGhaAudit(stdout, results)
++	return nil
++}
++
++func cliPinDrift(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("pin-drift", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	dir := fs.String("dir", ".", "directory containing workflow YAML files")
++	concurrency := fs.Int("concurrency", 4, "parallel API checks")
++	if err := fs.Parse(args); err != nil {
++		return errUsage
++	}
++	// pin-drift だけ GitHub API が必須 → config.Load() で token を検証する。
++	cfg, err := config.Load()
++	if err != nil {
++		return fmt.Errorf("pin-drift requires YAGURA_GITHUB_TOKEN (GitHub API SHA verification): %w", err)
++	}
++	files, err := readWorkflowFiles(*dir)
++	if err != nil {
++		return err
++	}
++	var pins []pindrift.Pin
++	for path, content := range files {
++		pins = append(pins, pindrift.ExtractPins(path, content)...)
++	}
++	if len(pins) == 0 {
++		if *jsonOut {
++			return emitJSON(stdout, map[string]any{
++				"results": []pindrift.Result{},
++				"summary": pindrift.Summary{ByStatus: map[string]int{}},
++				"note":    "no SHA-pinned uses found (try gha-audit first)",
++			})
++		}
++		fmt.Fprintln(stdout, "no SHA-pinned uses found (try gha-audit first)")
++		return nil
++	}
++	gh := newGitHubClient(cfg)
++	checker := pindrift.New(gh)
++	checker.RateLimit = pindrift.NewRateLimitGuard(gh.LastRateLimit)
++	if *concurrency < 1 {
++		*concurrency = 1
++	}
++	results := checker.CheckPinsParallel(context.Background(), pins, *concurrency)
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{"results": results, "summary": pindrift.Summarize(results)})
++	}
++	humanPinDrift(stdout, results)
++	return nil
++}
++
++// ─── shared helpers ──────────────────────────────────────────
++
++// filterProjects は stage/tag/language/query で registry を絞り込む。
++// すべて空なら List()(全件)を返す。internal/mcp の search/list と同じ条件。
++func filterProjects(reg *registry.Registry, stage, tag, lang, query string) ([]*project.Project, error) {
++	var st project.Stage
++	if stage != "" {
++		st = project.Stage(strings.ToLower(strings.TrimSpace(stage)))
++		switch st {
++		case project.StageActive, project.StageMaintenance,
++			project.StagePaused, project.StageArchived:
++		default:
++			return nil, fmt.Errorf("stage must be one of active/maintenance/paused/archived")
++		}
++	}
++	if stage == "" && tag == "" && lang == "" && query == "" {
++		return reg.List(), nil
++	}
++	return reg.Filter(func(p *project.Project) bool {
++		if tag != "" && !p.HasTag(tag) {
++			return false
++		}
++		if lang != "" && !strings.EqualFold(p.Language, lang) {
++			return false
++		}
++		if stage != "" && p.Stage != st {
++			return false
++		}
++		if query != "" && !matchesQuery(p, query) {
++			return false
++		}
++		return true
++	}), nil
++}
++
++// matchesQuery は internal/mcp の同名 helper(unexported)と同じ部分一致判定。
++func matchesQuery(p *project.Project, q string) bool {
++	q = strings.ToLower(strings.TrimSpace(q))
++	if q == "" {
++		return true
++	}
++	if strings.Contains(strings.ToLower(p.Slug), q) ||
++		strings.Contains(strings.ToLower(p.DisplayName), q) ||
++		strings.Contains(strings.ToLower(p.Notes), q) ||
++		strings.Contains(strings.ToLower(p.Repository), q) {
++		return true
++	}
++	for _, t := range p.Tags {
++		if strings.Contains(strings.ToLower(t), q) {
++			return true
++		}
++	}
++	return false
++}
++
++// splitCSV は "a, b ,c" → ["a","b","c"]。空文字は nil。
++func splitCSV(s string) []string {
++	s = strings.TrimSpace(s)
++	if s == "" {
++		return nil
++	}
++	parts := strings.Split(s, ",")
++	out := make([]string, 0, len(parts))
++	for _, p := range parts {
++		if p = strings.TrimSpace(p); p != "" {
++			out = append(out, p)
++		}
++	}
++	return out
++}
++
++// projectScanItems は internal/mcp.projectFieldsAsScanItems と同じ変換
++// (Project のテキストフィールド → ScanItem)。
++func projectScanItems(p *project.Project) []secretscan.ScanItem {
++	var items []secretscan.ScanItem
++	add := func(field, text string) {
++		if strings.TrimSpace(text) == "" {
++			return
++		}
++		items = append(items, secretscan.ScanItem{Source: p.Slug + ":" + field, Text: text})
++	}
++	add("display_name", p.DisplayName)
++	add("notes", p.Notes)
++	add("tags", strings.Join(p.Tags, " "))
++	if p.Sprint != nil {
++		add("sprint.goal", p.Sprint.Goal)
++		for i, m := range p.Sprint.Milestones {
++			add(fmt.Sprintf("sprint.milestone[%d]", i), m.Title)
++		}
++	}
++	return items
++}
++
++// filterBySeverity は min 以上の severity だけを残した BatchResult を返す。
++// internal/mcp.filterFindingsBatch と同じロジック。
++func filterBySeverity(r secretscan.BatchResult, min secretscan.Severity) secretscan.BatchResult {
++	minRank := severityRank(min)
++	out := secretscan.BatchResult{
++		BySource:    map[string][]secretscan.Finding{},
++		SourceOrder: []string{},
++		BySeverity:  map[string]int{},
++	}
++	for _, src := range r.SourceOrder {
++		var keep []secretscan.Finding
++		for _, f := range r.BySource[src] {
++			if severityRank(f.Severity) >= minRank {
++				keep = append(keep, f)
++				out.BySeverity[string(f.Severity)]++
++				out.Total++
++			}
++		}
++		if len(keep) > 0 {
++			out.BySource[src] = keep
++			out.SourceOrder = append(out.SourceOrder, src)
++		}
++	}
++	return out
++}
++
++func severityRank(s secretscan.Severity) int {
++	switch s {
++	case secretscan.SeverityCritical:
++		return 4
++	case secretscan.SeverityHigh:
++		return 3
++	case secretscan.SeverityMedium:
++		return 2
++	case secretscan.SeverityLow:
++		return 1
++	default:
++		return 0
++	}
++}
++
++// readWorkflowFiles は dir 直下の *.yml / *.yaml を {filename: content} で読む。
++func readWorkflowFiles(dir string) (map[string]string, error) {
++	entries, err := os.ReadDir(dir)
++	if err != nil {
++		return nil, fmt.Errorf("read dir %s: %w", dir, err)
++	}
++	files := map[string]string{}
++	for _, e := range entries {
++		if e.IsDir() {
++			continue
++		}
++		name := e.Name()
++		if !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
++			continue
++		}
++		data, err := os.ReadFile(filepath.Join(dir, name))
++		if err != nil {
++			return nil, fmt.Errorf("read %s: %w", name, err)
++		}
++		files[name] = string(data)
++	}
++	return files, nil
++}
++
++// newGitHubClient は run() と同じ構成で GitHub client を組み立てる(pin-drift 用)。
++func newGitHubClient(cfg *config.Config) *github.Client {
++	ts := github.NewTokenStore(cfg.GitHubToken)
++	for owner, token := range cfg.GitHubTokens {
++		ts.AddOwnerToken(owner, token)
++	}
++	return github.NewClient(github.Config{
++		Tokens:  ts,
++		BaseURL: cfg.GitHubBase,
++		Timeout: cfg.ScanTimeout,
++	})
++}
++
++// auditMutation は registry 変更を audit log に best-effort で追記する。
++// CLAUDE.md の方針どおり、audit 失敗は warning に留めコマンド自体は失敗させない。
++func auditMutation(stderr io.Writer, kind, target string, fields map[string]any) {
++	sd, err := config.ResolveStateDir()
++	if err != nil {
++		fmt.Fprintf(stderr, "yagura: warning: audit skipped: %v\n", err)
++		return
++	}
++	log, err := audit.New(config.AuditDirFor(sd))
++	if err != nil {
++		fmt.Fprintf(stderr, "yagura: warning: audit unavailable: %v\n", err)
++		return
++	}
++	defer func() { _ = log.Close() }()
++	if err := log.Append(audit.Record{Kind: kind, Actor: "cli", Target: target, Fields: fields}); err != nil {
++		fmt.Fprintf(stderr, "yagura: warning: audit append failed: %v\n", err)
++	}
++}
+diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
+new file mode 100644
+index 0000000..b08fc82
+--- /dev/null
++++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
+@@ -0,0 +1,309 @@
++// cli_format.go: output formatters for CLI direct mode (v0.35.0).
++//
++// 2 つの出力経路:
++//   - emitJSON: MCP tool handler が返すのと同じ struct/map を indent 付き JSON で
++//     出す(--json)。既存 json タグを再利用するので shape は MCP と一致する。
++//   - human*: text/tabwriter による整列テキスト(デフォルト)。verify / secret
++//     subcommand と同じ「素朴で grep しやすい」世界観。
++
++package main
++
++import (
++	"encoding/json"
++	"fmt"
++	"io"
++	"sort"
++	"strings"
++	"text/tabwriter"
++	"time"
++
++	"github.com/shizukutanaka/yagura/internal/ghaaudit"
++	"github.com/shizukutanaka/yagura/internal/pindrift"
++	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/sbom"
++	"github.com/shizukutanaka/yagura/internal/secretscan"
++)
++
++// emitJSON は v を indent 付き JSON + 改行で書く。
++func emitJSON(w io.Writer, v any) error {
++	b, err := json.MarshalIndent(v, "", "  ")
++	if err != nil {
++		return fmt.Errorf("marshal json: %w", err)
++	}
++	_, err = fmt.Fprintln(w, string(b))
++	return err
++}
++
++// ─── list / search ───────────────────────────────────────────
++
++// cliListView は MCP listOut と同じ compact shape(--json 用)。
++type cliListView struct {
++	Slug            string `json:"slug"`
++	DisplayName     string `json:"display_name"`
++	Stage           string `json:"stage"`
++	Priority        int    `json:"priority"`
++	Language        string `json:"language"`
++	OpenPRs         int    `json:"open_prs"`
++	OpenIssues      int    `json:"open_issues"`
++	CIStatus        string `json:"ci_status"`
++	LatestVersion   string `json:"latest_version"`
++	DaysSinceCommit int    `json:"days_since_commit"`
++}
++
++func listPayload(projects []*project.Project, now time.Time) map[string]any {
++	out := make([]cliListView, 0, len(projects))
++	for _, p := range projects {
++		out = append(out, cliListView{
++			Slug:            p.Slug,
++			DisplayName:     p.DisplayName,
++			Stage:           string(p.Stage),
++			Priority:        p.Priority,
++			Language:        p.Language,
++			OpenPRs:         p.OpenPRs,
++			OpenIssues:      p.OpenIssues,
++			CIStatus:        string(p.CIStatus),
++			LatestVersion:   p.LatestVersion,
++			DaysSinceCommit: daysSince(p.LatestActivity, now),
++		})
++	}
++	return map[string]any{"count": len(out), "projects": out}
++}
++
++func humanList(w io.Writer, projects []*project.Project, now time.Time) {
++	if len(projects) == 0 {
++		fmt.Fprintln(w, "count: 0")
++		return
++	}
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	fmt.Fprintln(tw, "SLUG\tSTAGE\tPRI\tLANG\tCI\tPRS\tISSUES\tIDLE\tREPO")
++	for _, p := range projects {
++		idle := daysSince(p.LatestActivity, now)
++		idleStr := "-"
++		if idle >= 0 {
++			idleStr = fmt.Sprintf("%dd", idle)
++		}
++		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%d\t%d\t%s\t%s\n",
++			p.Slug, p.Stage, p.Priority, dash(p.Language), dash(string(p.CIStatus)),
++			p.OpenPRs, p.OpenIssues, idleStr, p.Repository)
++	}
++	_ = tw.Flush()
++	fmt.Fprintf(w, "count: %d\n", len(projects))
++}
++
++// ─── get ─────────────────────────────────────────────────────
++
++func humanProject(w io.Writer, p *project.Project) {
++	tw := tabwriter.NewWriter(w, 0, 2, 1, ' ', 0)
++	kv := func(k string, v any) { fmt.Fprintf(tw, "%s:\t%v\n", k, v) }
++	kv("slug", p.Slug)
++	kv("display_name", p.DisplayName)
++	kv("repository", p.Repository)
++	if p.LocalPath != "" {
++		kv("local_path", p.LocalPath)
++	}
++	if p.Language != "" {
++		kv("language", p.Language)
++	}
++	kv("stage", p.Stage)
++	kv("priority", p.Priority)
++	if len(p.Tags) > 0 {
++		kv("tags", strings.Join(p.Tags, ", "))
++	}
++	if len(p.DependsOn) > 0 {
++		kv("depends_on", strings.Join(p.DependsOn, ", "))
++	}
++	if p.CIStatus != "" {
++		kv("ci_status", p.CIStatus)
++	}
++	if p.LatestVersion != "" {
++		kv("latest_version", p.LatestVersion)
++	}
++	kv("open_prs", p.OpenPRs)
++	kv("open_issues", p.OpenIssues)
++	if p.Notes != "" {
++		kv("notes", p.Notes)
++	}
++	if !p.LatestActivity.IsZero() {
++		kv("latest_activity", p.LatestActivity.Format(time.RFC3339))
++	}
++	kv("created_at", p.CreatedAt.Format(time.RFC3339))
++	kv("updated_at", p.UpdatedAt.Format(time.RFC3339))
++	_ = tw.Flush()
++}
++
++// ─── stats ───────────────────────────────────────────────────
++
++// statsView は MCP yagura_stats と同じ集計 shape(--json 用)。
++type statsView struct {
++	Total            int            `json:"total"`
++	ByStage          map[string]int `json:"by_stage"`
++	ByCIStatus       map[string]int `json:"by_ci_status"`
++	ByLanguage       map[string]int `json:"by_language"`
++	TotalOpenPRs     int            `json:"total_open_prs"`
++	TotalOpenIssues  int            `json:"total_open_issues"`
++	StaleActiveCount int            `json:"stale_active_count"`
++	WithActiveSprint int            `json:"with_active_sprint"`
++	AvgPriority      float64        `json:"avg_priority"`
++	AsOf             string         `json:"as_of"`
++}
++
++func computeStats(projects []*project.Project, now time.Time) statsView {
++	st := statsView{
++		ByStage:    map[string]int{},
++		ByCIStatus: map[string]int{},
++		ByLanguage: map[string]int{},
++		Total:      len(projects),
++		AsOf:       now.Format(time.RFC3339),
++	}
++	var prioritySum, priorityN int
++	for _, p := range projects {
++		st.ByStage[string(p.Stage)]++
++		ciKey := string(p.CIStatus)
++		if ciKey == "" {
++			ciKey = "unknown"
++		}
++		st.ByCIStatus[ciKey]++
++		if p.Language != "" {
++			st.ByLanguage[p.Language]++
++		}
++		st.TotalOpenPRs += p.OpenPRs
++		st.TotalOpenIssues += p.OpenIssues
++		if p.Sprint != nil {
++			st.WithActiveSprint++
++		}
++		if p.Priority > 0 {
++			prioritySum += p.Priority
++			priorityN++
++		}
++		if p.Stage == project.StageActive && !p.LatestActivity.IsZero() &&
++			int(now.Sub(p.LatestActivity).Hours()/24) >= 14 {
++			st.StaleActiveCount++
++		}
++	}
++	if priorityN > 0 {
++		st.AvgPriority = float64(prioritySum) / float64(priorityN)
++	}
++	return st
++}
++
++func humanStats(w io.Writer, st statsView) {
++	fmt.Fprintf(w, "total: %d\n", st.Total)
++	fmt.Fprintf(w, "open PRs: %d   open issues: %d   stale active: %d   avg priority: %.2f\n",
++		st.TotalOpenPRs, st.TotalOpenIssues, st.StaleActiveCount, st.AvgPriority)
++	printCountMap(w, "by stage", st.ByStage)
++	printCountMap(w, "by ci_status", st.ByCIStatus)
++	printCountMap(w, "by language", st.ByLanguage)
++}
++
++func printCountMap(w io.Writer, title string, m map[string]int) {
++	if len(m) == 0 {
++		return
++	}
++	keys := make([]string, 0, len(m))
++	for k := range m {
++		keys = append(keys, k)
++	}
++	sort.Strings(keys)
++	fmt.Fprintf(w, "%s:\n", title)
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	for _, k := range keys {
++		fmt.Fprintf(tw, "  %s\t%d\n", k, m[k])
++	}
++	_ = tw.Flush()
++}
++
++// ─── secretscan ──────────────────────────────────────────────
++
++func humanSecretScan(w io.Writer, r secretscan.BatchResult, scanned, sources int) {
++	fmt.Fprintf(w, "scanned_projects: %d   sources_scanned: %d   total_findings: %d\n",
++		scanned, sources, r.Total)
++	if r.Total == 0 {
++		return
++	}
++	printCountMap(w, "by severity", r.BySeverity)
++	for _, src := range r.SourceOrder {
++		for _, f := range r.BySource[src] {
++			fmt.Fprintf(w, "  [%s] %s  %s  (entropy %.2f)\n", f.Severity, src, f.RuleID, f.Entropy)
++		}
++	}
++}
++
++// ─── sbom ────────────────────────────────────────────────────
++
++func humanSbom(w io.Writer, b *sbom.Bom) {
++	humanSbomSummary(w, b.Summarize())
++	if len(b.Components) == 0 {
++		return
++	}
++	fmt.Fprintln(w, "components:")
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	for _, c := range b.Components {
++		fmt.Fprintf(tw, "  %s\t%s\n", c.Name, c.Version)
++	}
++	_ = tw.Flush()
++}
++
++func humanSbomSummary(w io.Writer, s sbom.Summary) {
++	fmt.Fprintf(w, "%s %s (%s)\n", dash(s.Application), s.Version, dash(s.GoVersion))
++	fmt.Fprintf(w, "spec: CycloneDX %s   components: %d   generated_at: %s\n",
++		s.SpecVersion, s.TotalComponents, s.GeneratedAt)
++}
++
++// ─── gha-audit ───────────────────────────────────────────────
++
++func humanGhaAudit(w io.Writer, results map[string][]ghaaudit.Finding) {
++	s := ghaaudit.Summarize(results)
++	humanGhaSummary(w, s)
++	files := make([]string, 0, len(results))
++	for f := range results {
++		files = append(files, f)
++	}
++	sort.Strings(files)
++	for _, f := range files {
++		for _, fn := range results[f] {
++			fmt.Fprintf(w, "  [%s] %s:%d  %s  %s\n", fn.Severity, f, fn.Line, fn.RuleID, fn.Description)
++		}
++	}
++}
++
++func humanGhaSummary(w io.Writer, s ghaaudit.Summary) {
++	fmt.Fprintf(w, "files: %d   findings: %d\n", s.TotalFiles, s.TotalFindings)
++	printCountMap(w, "by severity", s.BySeverity)
++}
++
++// ─── pin-drift ───────────────────────────────────────────────
++
++func humanPinDrift(w io.Writer, results []pindrift.Result) {
++	s := pindrift.Summarize(results)
++	fmt.Fprintf(w, "total_pins: %d\n", s.TotalPins)
++	printCountMap(w, "by status", s.ByStatus)
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	for _, r := range results {
++		fmt.Fprintf(tw, "  %s\t%s/%s@%s\t%s\n",
++			r.Status, r.Pin.Owner, r.Pin.Repo, shortSHA(r.Pin.PinnedSHA), r.Detail)
++	}
++	_ = tw.Flush()
++}
++
++// ─── small helpers ───────────────────────────────────────────
++
++func daysSince(t, now time.Time) int {
++	if t.IsZero() {
++		return -1
++	}
++	return int(now.Sub(t).Hours() / 24)
++}
++
++func dash(s string) string {
++	if s == "" {
++		return "-"
++	}
++	return s
++}
++
++func shortSHA(s string) string {
++	if len(s) > 12 {
++		return s[:12]
++	}
++	return s
++}
+diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
+new file mode 100644
+index 0000000..ac15996
+--- /dev/null
++++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
+@@ -0,0 +1,294 @@
++package main
++
++import (
++	"bytes"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/audit"
++)
++
++// runCLICapture は YAGURA_STATE_DIR を tmp に向けて runCLI を実行し、出力を返す。
++func runCLICapture(t *testing.T, args ...string) (code int, stdout, stderr string) {
++	t.Helper()
++	var out, errBuf bytes.Buffer
++	verb := ""
++	rest := []string{}
++	if len(args) > 0 {
++		verb = args[0]
++		rest = args[1:]
++	}
++	code = runCLI(verb, rest, &out, &errBuf)
++	return code, out.String(), errBuf.String()
++}
++
++func TestCLI_RegisterListGetUnregister(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++
++	// empty list
++	code, out, _ := runCLICapture(t, "list")
++	if code != 0 || !strings.Contains(out, "count: 0") {
++		t.Fatalf("empty list: code=%d out=%q", code, out)
++	}
++
++	// register (flags trailing the positionals)
++	code, _, errs := runCLICapture(t, "register", "breeze", "shizukutanaka/breeze",
++		"--language", "go", "--priority", "3", "--tags", "rust,cli")
++	if code != 0 {
++		t.Fatalf("register: code=%d err=%q", code, errs)
++	}
++
++	// get shows the trailing flags were applied
++	code, out, _ = runCLICapture(t, "get", "breeze")
++	if code != 0 {
++		t.Fatalf("get: code=%d", code)
++	}
++	for _, want := range []string{"language: ", "go", "priority: ", "3", "rust, cli"} {
++		if !strings.Contains(out, want) {
++			t.Errorf("get output missing %q in:\n%s", want, out)
++		}
++	}
++
++	// list now has 1, json shape matches MCP
++	code, out, _ = runCLICapture(t, "list", "--json")
++	if code != 0 {
++		t.Fatalf("list --json: code=%d", code)
++	}
++	var payload struct {
++		Count    int `json:"count"`
++		Projects []struct {
++			Slug     string `json:"slug"`
++			Language string `json:"language"`
++			Priority int    `json:"priority"`
++		} `json:"projects"`
++	}
++	if err := json.Unmarshal([]byte(out), &payload); err != nil {
++		t.Fatalf("list --json invalid: %v\n%s", err, out)
++	}
++	if payload.Count != 1 || payload.Projects[0].Slug != "breeze" ||
++		payload.Projects[0].Language != "go" || payload.Projects[0].Priority != 3 {
++		t.Errorf("unexpected list payload: %+v", payload)
++	}
++
++	// unregister
++	code, _, _ = runCLICapture(t, "unregister", "breeze")
++	if code != 0 {
++		t.Fatalf("unregister: code=%d", code)
++	}
++	code, out, _ = runCLICapture(t, "list")
++	if !strings.Contains(out, "count: 0") {
++		t.Errorf("list after unregister: %q", out)
++	}
++}
++
++func TestCLI_RegisterErrors(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++
++	// missing repository
++	if code, _, _ := runCLICapture(t, "register", "onlyslug"); code == 0 {
++		t.Errorf("register without repository should fail")
++	}
++	// invalid slug (uppercase)
++	if code, _, _ := runCLICapture(t, "register", "Breeze", "o/r"); code == 0 {
++		t.Errorf("register with invalid slug should fail")
++	}
++	// duplicate
++	if code, _, _ := runCLICapture(t, "register", "breeze", "o/r"); code != 0 {
++		t.Fatalf("first register failed")
++	}
++	if code, _, errs := runCLICapture(t, "register", "breeze", "o/r"); code == 0 ||
++		!strings.Contains(errs, "already exists") {
++		t.Errorf("duplicate register should fail with already exists: code=%d err=%q", code, errs)
++	}
++}
++
++func TestCLI_UpdatePartialPreservesFields(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	if code, _, _ := runCLICapture(t, "register", "breeze", "o/r",
++		"--language", "go", "--priority", "3"); code != 0 {
++		t.Fatal("register failed")
++	}
++	// update only notes
++	if code, _, _ := runCLICapture(t, "update", "breeze", "--notes", "WIP"); code != 0 {
++		t.Fatal("update failed")
++	}
++	_, out, _ := runCLICapture(t, "get", "breeze")
++	if !strings.Contains(out, "WIP") {
++		t.Errorf("notes not updated: %s", out)
++	}
++	if !strings.Contains(out, "priority: ") || !strings.Contains(out, "3") ||
++		!strings.Contains(out, "go") {
++		t.Errorf("unmentioned fields not preserved: %s", out)
++	}
++	// unknown slug
++	if code, _, _ := runCLICapture(t, "update", "ghost", "--notes", "x"); code == 0 {
++		t.Errorf("update unknown slug should fail")
++	}
++	// invalid priority
++	if code, _, _ := runCLICapture(t, "update", "breeze", "--priority", "9"); code == 0 {
++		t.Errorf("update priority 9 should fail")
++	}
++}
++
++func TestCLI_MutationsAreAudited(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("YAGURA_STATE_DIR", dir)
++	if code, _, _ := runCLICapture(t, "register", "breeze", "o/r"); code != 0 {
++		t.Fatal("register failed")
++	}
++	results, err := audit.Verify(filepath.Join(dir, "audit"))
++	if err != nil {
++		t.Fatalf("audit verify: %v", err)
++	}
++	if len(results) == 0 || !results[0].OK || results[0].TotalRecords < 1 {
++		t.Fatalf("expected an OK audit record after register, got %+v", results)
++	}
++	// confirm the record is the cli-originated register
++	data, _ := os.ReadFile(results[0].File)
++	if !strings.Contains(string(data), "yagura_register") || !strings.Contains(string(data), `"actor":"cli"`) {
++		t.Errorf("audit record missing cli register marker:\n%s", data)
++	}
++}
++
++func TestCLI_SearchAndStats(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	runCLICapture(t, "register", "breeze", "o/breeze", "--language", "go", "--tags", "rust")
++	runCLICapture(t, "register", "otedama", "o/otedama", "--language", "python")
++
++	// search by tag
++	_, out, _ := runCLICapture(t, "search", "--tag", "rust", "--json")
++	var p struct {
++		Count int `json:"count"`
++	}
++	_ = json.Unmarshal([]byte(out), &p)
++	if p.Count != 1 {
++		t.Errorf("search --tag rust expected 1, got %d", p.Count)
++	}
++	// search by positional query (flag after positional)
++	_, out, _ = runCLICapture(t, "search", "breeze", "--json")
++	_ = json.Unmarshal([]byte(out), &p)
++	if p.Count != 1 {
++		t.Errorf("search breeze expected 1, got %d", p.Count)
++	}
++	// stats
++	_, out, _ = runCLICapture(t, "stats", "--json")
++	var st struct {
++		Total      int            `json:"total"`
++		ByLanguage map[string]int `json:"by_language"`
++	}
++	if err := json.Unmarshal([]byte(out), &st); err != nil {
++		t.Fatalf("stats json: %v", err)
++	}
++	if st.Total != 2 || st.ByLanguage["go"] != 1 || st.ByLanguage["python"] != 1 {
++		t.Errorf("unexpected stats: %+v", st)
++	}
++}
++
++func TestCLI_SecretScan(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	// empty registry → 0 findings
++	if code, out, _ := runCLICapture(t, "secretscan"); code != 0 || !strings.Contains(out, "total_findings: 0") {
++		t.Fatalf("empty secretscan: code=%d out=%q", code, out)
++	}
++	// plant a fake AWS key in notes
++	runCLICapture(t, "register", "breeze", "o/r", "--notes", "key AKIAIOSFODNN7EXAMPLE end")
++	_, out, _ := runCLICapture(t, "secretscan", "--slug", "breeze")
++	if !strings.Contains(out, "total_findings: 1") || !strings.Contains(out, "aws-access-key-id") {
++		t.Errorf("expected aws key finding, got:\n%s", out)
++	}
++	// min-severity filter removes nothing (CRITICAL >= HIGH)
++	if _, out, _ := runCLICapture(t, "secretscan", "--slug", "breeze", "--min-severity", "HIGH"); !strings.Contains(out, "total_findings: 1") {
++		t.Errorf("min-severity HIGH should keep the CRITICAL finding: %s", out)
++	}
++	// invalid severity
++	if code, _, _ := runCLICapture(t, "secretscan", "--min-severity", "BOGUS"); code == 0 {
++		t.Errorf("invalid min-severity should fail")
++	}
++	// unknown slug
++	if code, _, _ := runCLICapture(t, "secretscan", "--slug", "ghost"); code == 0 {
++		t.Errorf("secretscan unknown slug should fail")
++	}
++}
++
++func TestCLI_Sbom(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	if code, out, _ := runCLICapture(t, "sbom", "--summary"); code != 0 || !strings.Contains(out, "CycloneDX") {
++		t.Fatalf("sbom summary: code=%d out=%q", code, out)
++	}
++	code, out, _ := runCLICapture(t, "sbom", "--json")
++	if code != 0 {
++		t.Fatalf("sbom json: code=%d", code)
++	}
++	var bom struct {
++		BomFormat string `json:"bomFormat"`
++	}
++	if err := json.Unmarshal([]byte(out), &bom); err != nil || bom.BomFormat != "CycloneDX" {
++		t.Errorf("sbom json invalid: %v bom=%+v", err, bom)
++	}
++}
++
++func TestCLI_GhaAudit(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	wf := t.TempDir()
++	// a workflow with an unpinned action (mutable tag) → should produce a finding
++	content := "" +
++		"name: ci\n" +
++		"on: [push]\n" +
++		"jobs:\n" +
++		"  build:\n" +
++		"    runs-on: ubuntu-latest\n" +
++		"    steps:\n" +
++		"      - uses: actions/checkout@v4\n"
++	if err := os.WriteFile(filepath.Join(wf, "ci.yml"), []byte(content), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	code, out, _ := runCLICapture(t, "gha-audit", "--dir", wf)
++	if code != 0 {
++		t.Fatalf("gha-audit: code=%d", code)
++	}
++	if !strings.Contains(out, "files: 1") {
++		t.Errorf("expected 1 file audited, got:\n%s", out)
++	}
++	// empty dir → zero files, still exit 0
++	if code, out, _ := runCLICapture(t, "gha-audit", "--dir", t.TempDir()); code != 0 || !strings.Contains(out, "files: 0") {
++		t.Errorf("empty gha-audit: code=%d out=%q", code, out)
++	}
++}
++
++func TestCLI_PinDriftRequiresToken(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	t.Setenv("YAGURA_GITHUB_TOKEN", "") // ensure unset
++	code, _, errs := runCLICapture(t, "pin-drift", "--dir", t.TempDir())
++	if code == 0 || !strings.Contains(errs, "YAGURA_GITHUB_TOKEN") {
++		t.Errorf("pin-drift without token should fail with token hint: code=%d err=%q", code, errs)
++	}
++}
++
++func TestCLI_UsageAndUnknown(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	// unknown verb routed through runCLI
++	if code := runCLI("bogus", nil, &bytes.Buffer{}, &bytes.Buffer{}); code != 2 {
++		t.Errorf("unknown verb: want exit 2, got %d", code)
++	}
++	// bad flag → ContinueOnError, no panic, exit 2
++	if code, _, _ := runCLICapture(t, "list", "--nope"); code != 2 {
++		t.Errorf("bad flag: want exit 2, got %d", code)
++	}
++	// missing positional
++	if code, _, _ := runCLICapture(t, "get"); code != 1 {
++		t.Errorf("get without slug: want exit 1, got %d", code)
++	}
++}
++
++// TestCLI_DispatchRouting は dispatch() が CLI verb を runCLI に委譲することを確認。
++func TestCLI_DispatchRouting(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	var out, errBuf bytes.Buffer
++	code := dispatch([]string{"list"}, &out, &errBuf)
++	if code != 0 || !strings.Contains(out.String(), "count: 0") {
++		t.Errorf("dispatch list: code=%d out=%q", code, out.String())
++	}
++}
+diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
+index bd1fe39..305fd61 100644
+--- a/yagura-v0.35.0/cmd/yagura/main.go
++++ b/yagura-v0.35.0/cmd/yagura/main.go
+@@ -57,7 +57,7 @@ import (
+ 
+ const (
+ 	serviceName = "yagura"
+-	version     = "0.34.1"
++	version     = "0.35.0"
+ 
+ 	// graceful shutdown 関連
+ 	readyDrainGrace   = 5 * time.Second
+@@ -108,6 +108,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
+ 			}
+ 			return 0
+ 		}
++		// v0.35: CLI direct mode — registry CRUD + local scans without an MCP client.
++		if cliVerbs[args[0]] {
++			return runCLI(args[0], args[1:], stdout, stderr)
++		}
+ 	}
+ 	if err := run(); err != nil {
+ 		fmt.Fprintf(stderr, "yagura: %v\n", err)
+@@ -128,6 +132,13 @@ Usage:
+   yagura secret get <name>     Decrypt and print <name> to stdout
+   yagura secret delete <name>  Remove <name>
+ 
++CLI direct mode (no MCP client required):
++  yagura list|get|search|stats             Registry read ops
++  yagura register|update|unregister        Registry mutations (audited)
++  yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
++  Add --json to any of the above for machine-readable output.
++  pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
++
+ Set passphrase via YAGURA_SECRET_PASSPHRASE for set/get.
+ Configuration is via environment variables. See documentation.
+ `
+@@ -152,11 +163,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
+ 		return nil
+ 	}
+ 
+-	cfg, err := config.Load()
++	// secret store は state dir だけ必要(GitHub token は不要)。
++	stateDir, err := config.ResolveStateDir()
+ 	if err != nil {
+ 		return fmt.Errorf("config: %w", err)
+ 	}
+-	store, err := secrets.NewStore(cfg.SecretsPath())
++	store, err := secrets.NewStore(config.SecretsDirFor(stateDir))
+ 	if err != nil {
+ 		return fmt.Errorf("init store: %w", err)
+ 	}
+@@ -239,15 +251,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
+ // この関数は GITHUB_TOKEN を読まない — verify は通常運用とは独立して
+ // オフラインでも実行できる(disaster recovery を意識)。
+ func verifyAudit(out io.Writer) error {
+-	stateDir := os.Getenv("YAGURA_STATE_DIR")
+-	if stateDir == "" {
+-		home, err := os.UserHomeDir()
+-		if err != nil {
+-			return fmt.Errorf("could not resolve home dir: %w", err)
+-		}
+-		stateDir = filepath.Join(home, ".yagura")
++	// daemon と同じ state dir 解決を使う(以前は ~/.yagura を見ており、daemon が
++	// 書き込む ~/.yagura/state/audit と不一致だった)。
++	stateDir, err := config.ResolveStateDir()
++	if err != nil {
++		return fmt.Errorf("could not resolve state dir: %w", err)
+ 	}
+-	auditDir := filepath.Join(stateDir, "audit")
++	auditDir := config.AuditDirFor(stateDir)
+ 	results, err := audit.Verify(auditDir)
+ 	if err != nil {
+ 		return fmt.Errorf("verify: %w", err)
+diff --git a/yagura-v0.35.0/cmd/yagura/main_test.go b/yagura-v0.35.0/cmd/yagura/main_test.go
+index f923a14..5cdb82b 100644
+--- a/yagura-v0.35.0/cmd/yagura/main_test.go
++++ b/yagura-v0.35.0/cmd/yagura/main_test.go
+@@ -19,7 +19,7 @@ func TestDispatch_Version(t *testing.T) {
+ 	if code != 0 {
+ 		t.Errorf("expected 0, got %d", code)
+ 	}
+-	if !strings.Contains(out.String(), "yagura 0.34.1") {
++	if !strings.Contains(out.String(), "yagura 0.35.0") {
+ 		t.Errorf("expected version in stdout, got: %q", out.String())
+ 	}
+ 	if !strings.Contains(out.String(), "go") {
+diff --git a/yagura-v0.35.0/internal/config/config.go b/yagura-v0.35.0/internal/config/config.go
+index af23d66..6b601a7 100644
+--- a/yagura-v0.35.0/internal/config/config.go
++++ b/yagura-v0.35.0/internal/config/config.go
+@@ -80,15 +80,10 @@ func Load() (*Config, error) {
+ 
+ 	var errs []error
+ 
+-	// StateDir: default は ~/.yagura/state
+-	stateDir := os.Getenv("YAGURA_STATE_DIR")
+-	if stateDir == "" {
+-		home, err := os.UserHomeDir()
+-		if err != nil {
+-			errs = append(errs, fmt.Errorf("resolve $HOME: %w", err))
+-		} else {
+-			stateDir = filepath.Join(home, ".yagura", "state")
+-		}
++	// StateDir: token 不要な解決ロジックは ResolveStateDir に集約。
++	stateDir, sderr := ResolveStateDir()
++	if sderr != nil {
++		errs = append(errs, sderr)
+ 	}
+ 	c.StateDir = stateDir
+ 
+@@ -265,16 +260,40 @@ func envBool(key string) bool {
+ 	return false
+ }
+ 
++// ResolveStateDir は GitHub token を要求せずに state directory を解決する。
++// YAGURA_STATE_DIR があればそれを、無ければ ~/.yagura/state を返す。
++// token 不要な経路(CLI の registry CRUD / local scan、verify subcommand)が
++// config.Load() を経由せずに state dir を得るために使う。
++func ResolveStateDir() (string, error) {
++	if d := os.Getenv("YAGURA_STATE_DIR"); d != "" {
++		return d, nil
++	}
++	home, err := os.UserHomeDir()
++	if err != nil {
++		return "", fmt.Errorf("resolve $HOME: %w", err)
++	}
++	return filepath.Join(home, ".yagura", "state"), nil
++}
++
++// ProjectsDirFor は state dir 配下の projects ディレクトリを返す。
++func ProjectsDirFor(stateDir string) string { return filepath.Join(stateDir, "projects") }
++
++// AuditDirFor は state dir 配下の audit ディレクトリを返す。
++func AuditDirFor(stateDir string) string { return filepath.Join(stateDir, "audit") }
++
++// SecretsDirFor は state dir 配下の secrets ディレクトリを返す。
++func SecretsDirFor(stateDir string) string { return filepath.Join(stateDir, "secrets") }
++
+ // ProjectsDir は project state ファイル群の置き場を返す。
+ // 個別ファイルは <ProjectsDir>/<slug>.json として保存される。
+ func (c *Config) ProjectsDir() string {
+-	return filepath.Join(c.StateDir, "projects")
++	return ProjectsDirFor(c.StateDir)
+ }
+ 
+ // AuditPath は append-only audit log JSONL の保存先を返す。
+ // 1 ファイル / 日(YYYY-MM-DD.jsonl)。
+ func (c *Config) AuditPath() string {
+-	return filepath.Join(c.StateDir, "audit")
++	return AuditDirFor(c.StateDir)
+ }
+ 
+ // DraftsDir は Yagura が自動生成する PR/Issue draft の保存先を返す。
+@@ -287,7 +306,7 @@ func (c *Config) DraftsDir() string {
+ // 各 secret は <SecretsPath()>/<name>.enc に格納される。
+ // 操作は yagura secret サブコマンド経由のみ(daemon は触らない)。
+ func (c *Config) SecretsPath() string {
+-	return filepath.Join(c.StateDir, "secrets")
++	return SecretsDirFor(c.StateDir)
+ }
+ 
+ // envInt は環境変数を int として読む。未設定 or parse 失敗時は def を返す。
+diff --git a/yagura-v0.35.0/internal/dashboard/dashboard.go b/yagura-v0.35.0/internal/dashboard/dashboard.go
+index 6981102..8711b5c 100644
+--- a/yagura-v0.35.0/internal/dashboard/dashboard.go
++++ b/yagura-v0.35.0/internal/dashboard/dashboard.go
+@@ -653,7 +653,7 @@ a:focus-visible {
+   {{end}}
+   </main>
+ 
+-  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.34.1</footer>
++  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.35.0</footer>
+ </div>
+ </body>
+ </html>`
