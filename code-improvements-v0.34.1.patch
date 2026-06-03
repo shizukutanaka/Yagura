@@ -2909,7 +2909,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		}()
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/initps1/initps1.go fixed/yagura-v0.34.1/internal/initps1/initps1.go
 --- baseline/yagura-v0.34.1/internal/initps1/initps1.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/initps1/initps1.go	2026-06-03 04:24:21.704121756 +0000
++++ fixed/yagura-v0.34.1/internal/initps1/initps1.go	2026-06-03 07:37:24.224787139 +0000
 @@ -2,13 +2,14 @@
  // for long-running coding-agent sessions on Windows.
  //
@@ -2955,18 +2955,24 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  
  	WorkDir       string   // absolute Windows path (e.g. C:\dev\breeze)
  	Language      string   // go / node / python / rust
-@@ -211,7 +213,7 @@
+@@ -211,9 +213,11 @@
  
  // psQuote returns a PowerShell single-quoted literal.
  //
 -// PowerShell rule: inside '...', a single quote is doubled (''). Backticks
-+// PowerShell rule: inside '...', a single quote is doubled (”). Backticks
- // and $vars are taken literally (no interpolation). This is the safest
- // quoting for paths and arbitrary strings.
+-// and $vars are taken literally (no interpolation). This is the safest
+-// quoting for paths and arbitrary strings.
++// PowerShell rule: inside '...', a single quote is escaped by writing it
++// twice. Backticks and $vars are taken literally (no interpolation). This
++// is the safest quoting for paths and arbitrary strings. Example:
++//
++//	a'b -> 'a''b'
  func psQuote(s string) string {
+ 	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+ }
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/initsh/initsh.go fixed/yagura-v0.34.1/internal/initsh/initsh.go
 --- baseline/yagura-v0.34.1/internal/initsh/initsh.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/initsh/initsh.go	2026-06-03 04:24:21.720121756 +0000
++++ fixed/yagura-v0.34.1/internal/initsh/initsh.go	2026-06-03 07:37:26.108787205 +0000
 @@ -2,14 +2,15 @@
  // script from Anthropic's 2-agent long-running harness pattern.
  //
@@ -3004,12 +3010,15 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  
  	// Working directory (absolute). If empty, script uses $PWD.
  	WorkDir string
-@@ -199,7 +200,7 @@
+@@ -199,7 +200,10 @@
  
  // shQuote wraps s in single quotes, escaping any embedded single quotes.
  //
 -// POSIX-safe: 'a'\''b' → a'b literally.
-+// POSIX-safe: 'a'\”b' → a'b literally.
++// POSIX-safe idiom: close the quote, add a backslash-escaped literal
++// quote, then reopen the quote. Example:
++//
++//	a'b -> 'a'\''b'
  func shQuote(s string) string {
  	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
  }
