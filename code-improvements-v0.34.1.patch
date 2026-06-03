@@ -2092,8 +2092,8 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		got := compactDescription(in)
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools.go fixed/yagura-v0.34.1/internal/mcp/tools.go
 --- a/yagura-v0.34.1/internal/mcp/tools.go	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/mcp/tools.go	2026-06-03 05:09:24.848216874 +0000
-@@ -16,17 +16,14 @@
++++ b/yagura-v0.34.1/internal/mcp/tools.go	2026-06-03 05:28:43.392257642 +0000
+@@ -16,25 +16,18 @@
  	"sort"
  	"strings"
  	"time"
@@ -2107,14 +2107,22 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
 -	"github.com/shizukutanaka/yagura/internal/initps1"
 -	"github.com/shizukutanaka/yagura/internal/initsh"
 -	"github.com/shizukutanaka/yagura/internal/progressfile"
- 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+-	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 -	"github.com/shizukutanaka/yagura/internal/harness"
  	"github.com/shizukutanaka/yagura/internal/handoff"
 +	"github.com/shizukutanaka/yagura/internal/harness"
  	"github.com/shizukutanaka/yagura/internal/osv"
- 	"github.com/shizukutanaka/yagura/internal/pindrift"
+-	"github.com/shizukutanaka/yagura/internal/pindrift"
  	"github.com/shizukutanaka/yagura/internal/plantracker"
-@@ -54,10 +51,10 @@
+-	"github.com/shizukutanaka/yagura/internal/project"
+ 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
+ 	"github.com/shizukutanaka/yagura/internal/quotamonitor"
+ 	"github.com/shizukutanaka/yagura/internal/registry"
+-	"github.com/shizukutanaka/yagura/internal/sbom"
+ 	"github.com/shizukutanaka/yagura/internal/scorecard"
+ 	"github.com/shizukutanaka/yagura/internal/secretscan"
+ 	"github.com/shizukutanaka/yagura/internal/testcoverage"
+@@ -54,10 +47,10 @@
  	MainVersion    string           // SBOM 生成時のメイン version(例: "0.9.0")
  
  	// v0.13.0: agent handoff layer
@@ -2129,7 +2137,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  }
  
  // QuotaMonitor は両 agent の quota 状態を管理する interface。
-@@ -193,16 +190,16 @@
+@@ -193,16 +186,16 @@
  // ─── yagura_list ─────────────────────────────────────────────
  
  type listOut struct {
@@ -2156,7 +2164,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  }
  
  // ─── yagura_get ──────────────────────────────────────────────
-@@ -212,14 +209,14 @@
+@@ -212,14 +205,14 @@
  // ─── yagura_today ────────────────────────────────────────────
  
  type todayItem struct {
@@ -2179,87 +2187,373 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  }
  
  // ─── yagura_register ─────────────────────────────────────────
-@@ -244,16 +241,16 @@
+@@ -240,365 +233,6 @@
  
- func buildSecretScanTool(d Deps) *Tool {
- 	return &Tool{
+ // projectHealthSummary は 1 プロジェクトの security 状態を返す。
+ 
+-// ─── yagura_secretscan (S1.3 secret leak detection) ──────────
+-
+-func buildSecretScanTool(d Deps) *Tool {
+-	return &Tool{
 -		Name: "yagura_secretscan",
-+		Name:        "yagura_secretscan",
- 		Description: "[G] Secret scan: 12 patterns + entropy. Redacts hits.",
- 		InputSchema: map[string]any{
- 			"type": "object",
- 			"properties": map[string]any{
- 				"slug": map[string]any{
+-		Description: "[G] Secret scan: 12 patterns + entropy. Redacts hits.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"slug": map[string]any{
 -					"type":        "string",
-+					"type": "string",
- 				},
- 				"min_severity": map[string]any{
+-				},
+-				"min_severity": map[string]any{
 -					"type":        "string",
-+					"type": "string",
- 				},
- 			},
- 		},
-@@ -394,13 +391,13 @@
- 
- func buildSbomTool(d Deps) *Tool {
- 	return &Tool{
+-				},
+-			},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			if d.SecretScanner == nil {
+-				return nil, &ToolError{Code: "unavailable",
+-					Message: "secretscanner not configured at startup"}
+-			}
+-			var in struct {
+-				Slug        string `json:"slug"`
+-				MinSeverity string `json:"min_severity"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input", Message: "invalid args", Cause: err}
+-			}
+-
+-			// プロジェクト → ScanItem への変換
+-			projectsToScan := []*project.Project{}
+-			if in.Slug != "" {
+-				p, err := d.Registry.Get(in.Slug)
+-				if err != nil {
+-					return nil, &ToolError{Code: "not_found",
+-						Message: "project not found: " + in.Slug}
+-				}
+-				projectsToScan = []*project.Project{p}
+-			} else {
+-				for _, p := range d.Registry.List() {
+-					if p.Stage != project.StageArchived {
+-						projectsToScan = append(projectsToScan, p)
+-					}
+-				}
+-			}
+-
+-			items := make([]secretscan.ScanItem, 0, len(projectsToScan)*5)
+-			for _, p := range projectsToScan {
+-				items = append(items, projectFieldsAsScanItems(p)...)
+-			}
+-
+-			result := d.SecretScanner.ScanBatch(items)
+-
+-			// min_severity フィルタ
+-			if in.MinSeverity != "" {
+-				min := strings.ToUpper(in.MinSeverity)
+-				if min != "LOW" && min != "MEDIUM" && min != "HIGH" && min != "CRITICAL" {
+-					return nil, &ToolError{Code: "invalid_input",
+-						Message: "min_severity must be LOW/MEDIUM/HIGH/CRITICAL"}
+-				}
+-				filtered := filterFindingsBatch(result, secretscan.Severity(min))
+-				result = filtered
+-			}
+-
+-			return map[string]any{
+-				"scanned_projects": len(projectsToScan),
+-				"sources_scanned":  len(items),
+-				"total_findings":   result.Total,
+-				"by_severity":      result.BySeverity,
+-				"by_source":        result.BySource,
+-				"source_order":     result.SourceOrder,
+-				"scanned_at":       d.Now().Format(time.RFC3339),
+-			}, nil
+-		},
+-	}
+-}
+-
+-// projectFieldsAsScanItems は Project のテキストフィールドを ScanItem 配列にする。
+-// 各フィールド = 1 source として扱う(検出時にどのフィールドかを特定するため)。
+-//
+-// 空文字フィールドはスキップ(スキャン対象を減らして高速化)。
+-func projectFieldsAsScanItems(p *project.Project) []secretscan.ScanItem {
+-	items := []secretscan.ScanItem{}
+-	add := func(field, text string) {
+-		if strings.TrimSpace(text) == "" {
+-			return
+-		}
+-		items = append(items, secretscan.ScanItem{
+-			Source: p.Slug + ":" + field,
+-			Text:   text,
+-		})
+-	}
+-	add("display_name", p.DisplayName)
+-	add("notes", p.Notes)
+-	add("tags", strings.Join(p.Tags, " "))
+-	if p.Sprint != nil {
+-		add("sprint.goal", p.Sprint.Goal)
+-		for i, m := range p.Sprint.Milestones {
+-			add(fmt.Sprintf("sprint.milestone[%d]", i), m.Title)
+-		}
+-	}
+-	return items
+-}
+-
+-// filterFindingsBatch は min 以上の severity だけを残した新しい BatchResult を返す。
+-func filterFindingsBatch(r secretscan.BatchResult, min secretscan.Severity) secretscan.BatchResult {
+-	minRank := secretScanSeverityRank(min)
+-	out := secretscan.BatchResult{
+-		BySource:    map[string][]secretscan.Finding{},
+-		SourceOrder: []string{},
+-		BySeverity:  map[string]int{},
+-	}
+-	for _, src := range r.SourceOrder {
+-		var keep []secretscan.Finding
+-		for _, f := range r.BySource[src] {
+-			if secretScanSeverityRank(f.Severity) >= minRank {
+-				keep = append(keep, f)
+-				out.BySeverity[string(f.Severity)]++
+-				out.Total++
+-			}
+-		}
+-		if len(keep) > 0 {
+-			out.BySource[src] = keep
+-			out.SourceOrder = append(out.SourceOrder, src)
+-		}
+-	}
+-	return out
+-}
+-
+-func secretScanSeverityRank(s secretscan.Severity) int {
+-	switch s {
+-	case secretscan.SeverityCritical:
+-		return 4
+-	case secretscan.SeverityHigh:
+-		return 3
+-	case secretscan.SeverityMedium:
+-		return 2
+-	case secretscan.SeverityLow:
+-		return 1
+-	}
+-	return 0
+-}
+-
+-// ─── yagura_sbom (S1.4 SBOM continuous generation) ───────────
+-
+-// SbomGenerator は SBOM 生成インターフェース。
+-// 実装は internal/sbom.Generator。
+-type SbomGenerator interface {
+-	Generate(mainPath, mainVersion string) (*sbom.Bom, error)
+-}
+-
+-func buildSbomTool(d Deps) *Tool {
+-	return &Tool{
 -		Name: "yagura_sbom",
-+		Name:        "yagura_sbom",
- 		Description: "[G] yagura SBOM CycloneDX 1.5. Set summary_only for compact.",
- 		InputSchema: map[string]any{
- 			"type": "object",
- 			"properties": map[string]any{
- 				"summary_only": map[string]any{
+-		Description: "[G] yagura SBOM CycloneDX 1.5. Set summary_only for compact.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"summary_only": map[string]any{
 -					"type":        "boolean",
-+					"type": "boolean",
- 				},
- 			},
- 		},
-@@ -442,16 +439,16 @@
- 
- func buildGhaAuditTool(d Deps) *Tool {
- 	return &Tool{
+-				},
+-			},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			if d.Sbom == nil {
+-				return nil, &ToolError{Code: "unavailable",
+-					Message: "sbom generator not configured"}
+-			}
+-			var in struct {
+-				SummaryOnly bool `json:"summary_only"`
+-			}
+-			if len(args) > 0 {
+-				if err := json.Unmarshal(args, &in); err != nil {
+-					return nil, &ToolError{Code: "invalid_input",
+-						Message: "invalid arguments", Cause: err}
+-				}
+-			}
+-			bom, err := d.Sbom.Generate(d.MainModulePath, d.MainVersion)
+-			if err != nil {
+-				return nil, &ToolError{Code: "internal",
+-					Message: "sbom generation failed", Cause: err}
+-			}
+-			if in.SummaryOnly {
+-				return bom.Summarize(), nil
+-			}
+-			return bom, nil
+-		},
+-	}
+-}
+-
+-// ─── yagura_gha_audit (S1.5 GitHub Actions hardening audit) ──
+-
+-// GhaAuditor は GitHub Actions workflow YAML の静的解析インターフェース。
+-// 実装は internal/ghaaudit.Auditor。
+-type GhaAuditor interface {
+-	AuditFile(filePath, content string) []ghaaudit.Finding
+-	AuditDir(dir string, files map[string]string) map[string][]ghaaudit.Finding
+-}
+-
+-func buildGhaAuditTool(d Deps) *Tool {
+-	return &Tool{
 -		Name: "yagura_gha_audit",
-+		Name:        "yagura_gha_audit",
- 		Description: "[G] GHA workflow audit: 7 supply-chain risk patterns.",
- 		InputSchema: map[string]any{
- 			"type": "object",
- 			"properties": map[string]any{
- 				"files": map[string]any{
+-		Description: "[G] GHA workflow audit: 7 supply-chain risk patterns.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"files": map[string]any{
 -					"type":        "object",
-+					"type": "object",
- 				},
- 				"summary_only": map[string]any{
+-				},
+-				"summary_only": map[string]any{
 -					"type":        "boolean",
-+					"type": "boolean",
- 				},
- 			},
- 			"required": []string{"files"},
-@@ -496,19 +493,19 @@
- 
- func buildPinDriftTool(d Deps) *Tool {
- 	return &Tool{
+-				},
+-			},
+-			"required": []string{"files"},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			if d.Ghaaudit == nil {
+-				return nil, &ToolError{Code: "unavailable",
+-					Message: "gha auditor not configured"}
+-			}
+-			var in struct {
+-				Files       map[string]string `json:"files"`
+-				SummaryOnly bool              `json:"summary_only"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input",
+-					Message: "files map[string]string required", Cause: err}
+-			}
+-			if len(in.Files) == 0 {
+-				return nil, &ToolError{Code: "invalid_input",
+-					Message: "files must contain at least one file"}
+-			}
+-			results := d.Ghaaudit.AuditDir(".", in.Files)
+-			if in.SummaryOnly {
+-				return ghaaudit.Summarize(results), nil
+-			}
+-			return map[string]any{
+-				"results": results,
+-				"summary": ghaaudit.Summarize(results),
+-			}, nil
+-		},
+-	}
+-}
+-
+-// ─── yagura_pin_drift (S1.6 SHA pin drift detection) ─────────
+-
+-// PinDriftChecker は SHA pin の drift 検出インターフェース。
+-// 実装は internal/pindrift.Checker。
+-type PinDriftChecker interface {
+-	CheckPins(ctx context.Context, pins []pindrift.Pin) []pindrift.Result
+-	CheckPinsParallel(ctx context.Context, pins []pindrift.Pin, concurrency int) []pindrift.Result
+-}
+-
+-func buildPinDriftTool(d Deps) *Tool {
+-	return &Tool{
 -		Name: "yagura_pin_drift",
-+		Name:        "yagura_pin_drift",
- 		Description: "[G] GHA SHA pin verify via API. Detects drift/stale.",
- 		InputSchema: map[string]any{
- 			"type": "object",
- 			"properties": map[string]any{
- 				"files": map[string]any{
+-		Description: "[G] GHA SHA pin verify via API. Detects drift/stale.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"files": map[string]any{
 -					"type":        "object",
-+					"type": "object",
- 				},
- 				"summary_only": map[string]any{
+-				},
+-				"summary_only": map[string]any{
 -					"type":        "boolean",
-+					"type": "boolean",
- 				},
- 				"concurrency": map[string]any{
+-				},
+-				"concurrency": map[string]any{
 -					"type":        "integer",
-+					"type": "integer",
- 				},
- 			},
- 			"required": []string{"files"},
-@@ -611,7 +608,7 @@
+-				},
+-			},
+-			"required": []string{"files"},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			if d.PinDrift == nil {
+-				return nil, &ToolError{Code: "unavailable",
+-					Message: "pin drift checker not configured"}
+-			}
+-			var in struct {
+-				Files       map[string]string `json:"files"`
+-				SummaryOnly bool              `json:"summary_only"`
+-				Concurrency int               `json:"concurrency"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input",
+-					Message: "files map[string]string required", Cause: err}
+-			}
+-			if len(in.Files) == 0 {
+-				return nil, &ToolError{Code: "invalid_input",
+-					Message: "files must contain at least one file"}
+-			}
+-			// 全 file から pin を抽出
+-			var allPins []pindrift.Pin
+-			for path, content := range in.Files {
+-				allPins = append(allPins, pindrift.ExtractPins(path, content)...)
+-			}
+-			if len(allPins) == 0 {
+-				return map[string]any{
+-					"results": []pindrift.Result{},
+-					"summary": pindrift.Summary{ByStatus: map[string]int{}},
+-					"note":    "no SHA-pinned uses: found (try yagura_gha_audit first)",
+-				}, nil
+-			}
+-			// concurrency が指定されていれば並列実行(デフォルト 4)
+-			var results []pindrift.Result
+-			if in.Concurrency > 0 {
+-				results = d.PinDrift.CheckPinsParallel(ctx, allPins, in.Concurrency)
+-			} else if in.Concurrency == 0 {
+-				// 明示的に 0 指定または未指定の場合はデフォルト並列度 4 で実行
+-				results = d.PinDrift.CheckPinsParallel(ctx, allPins, 4)
+-			} else {
+-				// 負値は serial
+-				results = d.PinDrift.CheckPins(ctx, allPins)
+-			}
+-			if in.SummaryOnly {
+-				return pindrift.Summarize(results), nil
+-			}
+-			return map[string]any{
+-				"results": results,
+-				"summary": pindrift.Summarize(results),
+-			}, nil
+-		},
+-	}
+-}
+-
+-// ════════════════════════════════════════════════════════════════════════
+-// v0.13.0: Agent Handoff Layer
+-// ────────────────────────────────────────────────────────────────────────
+-//
+-// 5 つの MCP tool で Claude Code ↔ Windsurf の自動切替を実現する。
+-//
+-// Tool 一覧:
+-//   yagura_quota_report   — agent 側が残量を能動報告
+-//   yagura_agent_status   — 現在の状態と推奨 agent を取得
+-//   yagura_session_save   — handoff 用 session context を保存
+-//   yagura_session_load   — 保存済み context を読み込み
+-//   yagura_handoff        — 切替実行(save → MarkSwitched → launch)
+-//
+-// 使用フロー:
+-//   1. Claude Code が `/usage` で残量低下を検出
+-//   2. yagura_quota_report(agent="claude_code", remaining=15, source="auto")
+-//   3. yagura_agent_status を呼び ShouldHandoff=true を確認
+-//   4. yagura_session_save({workspace, branch, plan_md_step, ...})
+-//   5. yagura_handoff(target="windsurf") → Windsurf 起動 + state 更新
+-//   6. Cascade が起動後、yagura_session_load で context 取得して継続
+-// ════════════════════════════════════════════════════════════════════════
+-
+-// ─── yagura_quota_report ─────────────────────────────────────
+-
+-// ─── yagura_agent_status ─────────────────────────────────────
+-
+-// ─── yagura_session_save ─────────────────────────────────────
+-
+-// ─── yagura_session_load ─────────────────────────────────────
+-
+-// ─── yagura_handoff ──────────────────────────────────────────
+-
+-// ─── yagura_heartbeat (v0.14.0) ──────────────────────────────
+-
+ // ─── yagura_quota_forecast (v0.15.0) ─────────────────────────
+ 
+ // ─── yagura_usage_summary (v0.16.0) ──────────────────────────
+@@ -611,7 +245,7 @@
  // 外から注入する設計にする。
  func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
  	return &Tool{
@@ -2268,7 +2562,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[S] Per-tool byte counts since daemon start.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -645,7 +642,7 @@
+@@ -645,7 +279,7 @@
  }
  
  // ─── yagura_graph_neighbors / impact / stats (v0.18.0) ───────
@@ -2277,7 +2571,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  // Inspired by cortex (aircloset, 辻 2026/05) "Product Graph" 構想:
  // portfolio の depends_on を semantic graph として AI から探索可能にする。
  
-@@ -658,14 +655,14 @@
+@@ -658,14 +292,14 @@
  
  func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
  	return &Tool{
@@ -2296,7 +2590,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  				"summary_only": map[string]any{"type": "boolean"},
  			},
  		},
-@@ -709,13 +706,13 @@
+@@ -709,13 +343,13 @@
  // formatQualityResult is MCP-friendly output formatter.
  func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
  	out := map[string]any{
@@ -2317,7 +2611,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  	}
  	if !summaryOnly {
  		out["findings"] = res.Findings
-@@ -730,7 +727,7 @@
+@@ -730,7 +364,7 @@
  
  func buildHarnessRecommendTool(d Deps) *Tool {
  	return &Tool{
@@ -2326,7 +2620,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] Claude Code .claude/ scaffold by slug or language.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -765,7 +762,7 @@
+@@ -765,7 +399,7 @@
  
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -2335,7 +2629,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -791,7 +788,7 @@
+@@ -791,7 +425,7 @@
  
  func buildSubagentAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -2344,7 +2638,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] Subagent .md audit: prompt style, tools, description.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -822,7 +819,7 @@
+@@ -822,7 +456,7 @@
  
  func buildToolsCatalogTool(s *Server) *Tool {
  	return &Tool{
@@ -2353,7 +2647,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] Full tool details lookup. Use when compact mode hides info you need.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -836,7 +833,11 @@
+@@ -836,7 +470,11 @@
  				Name  string `json:"name"`
  				Query string `json:"query"`
  			}
@@ -2366,7 +2660,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  
  			s.mu.RLock()
  			defer s.mu.RUnlock()
-@@ -885,7 +886,7 @@
+@@ -885,7 +523,7 @@
  
  func buildDedupeStatsTool(s *Server) *Tool {
  	return &Tool{
@@ -2375,7 +2669,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -905,7 +906,7 @@
+@@ -905,7 +543,7 @@
  
  func buildPlanStatusTool(d Deps, cache plantracker.CacheLike) *Tool {
  	return &Tool{
@@ -2384,7 +2678,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] Plan.md progress for project. Parses checkboxes + required sections (目的/スコープ/フェーズ/DoD).",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -968,7 +969,7 @@
+@@ -968,7 +606,7 @@
  
  func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
  	return &Tool{
@@ -2393,7 +2687,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[S] Cross-project release readiness ranking. Aggregates Plan/CI/issues/quality/AI-risk.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1123,7 +1124,7 @@
+@@ -1123,7 +761,7 @@
  
  func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
  	return &Tool{
@@ -2402,7 +2696,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] AI code risk audit. 6 categories: auth/billing/data/external/crypto/secret. 2x multiplier inside AI-marker zones.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1222,7 +1223,7 @@
+@@ -1222,7 +860,7 @@
  
  func buildTestAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -2411,7 +2705,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] Source-test coverage detection. Go/TS/JS/Python/Rust/Java filename + Rust inline #[cfg(test)] + Python doctest.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1259,231 +1260,6 @@
+@@ -1259,231 +897,6 @@
  	}
  }
  
@@ -2643,7 +2937,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  // ─── v0.32.0: Bilateral harness — guides (feedforward) ────────────
  //
  // Martin Fowler's harness taxonomy: Computational × Inferential × Guide ×
-@@ -1492,14 +1268,14 @@
+@@ -1492,14 +905,14 @@
  
  func buildAgentsMdTool(d Deps) *Tool {
  	return &Tool{
@@ -2661,7 +2955,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  			},
  			"required": []string{"slug"},
  		},
-@@ -1578,7 +1354,7 @@
+@@ -1578,7 +991,7 @@
  
  func buildFeatureListTool(d Deps) *Tool {
  	return &Tool{
@@ -2670,7 +2964,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1643,7 +1419,7 @@
+@@ -1643,7 +1056,7 @@
  
  func buildHarnessCoverageTool(d Deps) *Tool {
  	return &Tool{
@@ -2679,7 +2973,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -1687,11 +1463,11 @@
+@@ -1687,11 +1100,11 @@
  				}
  			}
  			return map[string]any{
@@ -2695,7 +2989,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  			}, nil
  		},
  	}
-@@ -1825,317 +1601,6 @@
+@@ -1825,317 +1238,6 @@
  	return pin
  }
  
@@ -3990,6 +4284,386 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] Portfolio counts/totals/averages.",
  		InputSchema: map[string]any{
  			"type":       "object",
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_scan.go fixed/yagura-v0.34.1/internal/mcp/tools_scan.go
+--- a/yagura-v0.34.1/internal/mcp/tools_scan.go	1970-01-01 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_scan.go	2026-06-03 05:28:51.984257944 +0000
+@@ -0,0 +1,376 @@
++// tools_scan.go: cortex flywheel ② Review の scan 系 tools
++// (secretscan / sbom / gha_audit / pin_drift)。tools.go から分割(挙動非変更)。
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/shizukutanaka/yagura/internal/ghaaudit"
++	"github.com/shizukutanaka/yagura/internal/pindrift"
++	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/sbom"
++	"github.com/shizukutanaka/yagura/internal/secretscan"
++)
++
++// ─── yagura_secretscan (S1.3 secret leak detection) ──────────
++
++func buildSecretScanTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_secretscan",
++		Description: "[G] Secret scan: 12 patterns + entropy. Redacts hits.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"slug": map[string]any{
++					"type": "string",
++				},
++				"min_severity": map[string]any{
++					"type": "string",
++				},
++			},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			if d.SecretScanner == nil {
++				return nil, &ToolError{Code: "unavailable",
++					Message: "secretscanner not configured at startup"}
++			}
++			var in struct {
++				Slug        string `json:"slug"`
++				MinSeverity string `json:"min_severity"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Message: "invalid args", Cause: err}
++			}
++
++			// プロジェクト → ScanItem への変換
++			projectsToScan := []*project.Project{}
++			if in.Slug != "" {
++				p, err := d.Registry.Get(in.Slug)
++				if err != nil {
++					return nil, &ToolError{Code: "not_found",
++						Message: "project not found: " + in.Slug}
++				}
++				projectsToScan = []*project.Project{p}
++			} else {
++				for _, p := range d.Registry.List() {
++					if p.Stage != project.StageArchived {
++						projectsToScan = append(projectsToScan, p)
++					}
++				}
++			}
++
++			items := make([]secretscan.ScanItem, 0, len(projectsToScan)*5)
++			for _, p := range projectsToScan {
++				items = append(items, projectFieldsAsScanItems(p)...)
++			}
++
++			result := d.SecretScanner.ScanBatch(items)
++
++			// min_severity フィルタ
++			if in.MinSeverity != "" {
++				min := strings.ToUpper(in.MinSeverity)
++				if min != "LOW" && min != "MEDIUM" && min != "HIGH" && min != "CRITICAL" {
++					return nil, &ToolError{Code: "invalid_input",
++						Message: "min_severity must be LOW/MEDIUM/HIGH/CRITICAL"}
++				}
++				filtered := filterFindingsBatch(result, secretscan.Severity(min))
++				result = filtered
++			}
++
++			return map[string]any{
++				"scanned_projects": len(projectsToScan),
++				"sources_scanned":  len(items),
++				"total_findings":   result.Total,
++				"by_severity":      result.BySeverity,
++				"by_source":        result.BySource,
++				"source_order":     result.SourceOrder,
++				"scanned_at":       d.Now().Format(time.RFC3339),
++			}, nil
++		},
++	}
++}
++
++// projectFieldsAsScanItems は Project のテキストフィールドを ScanItem 配列にする。
++// 各フィールド = 1 source として扱う(検出時にどのフィールドかを特定するため)。
++//
++// 空文字フィールドはスキップ(スキャン対象を減らして高速化)。
++func projectFieldsAsScanItems(p *project.Project) []secretscan.ScanItem {
++	items := []secretscan.ScanItem{}
++	add := func(field, text string) {
++		if strings.TrimSpace(text) == "" {
++			return
++		}
++		items = append(items, secretscan.ScanItem{
++			Source: p.Slug + ":" + field,
++			Text:   text,
++		})
++	}
++	add("display_name", p.DisplayName)
++	add("notes", p.Notes)
++	add("tags", strings.Join(p.Tags, " "))
++	if p.Sprint != nil {
++		add("sprint.goal", p.Sprint.Goal)
++		for i, m := range p.Sprint.Milestones {
++			add(fmt.Sprintf("sprint.milestone[%d]", i), m.Title)
++		}
++	}
++	return items
++}
++
++// filterFindingsBatch は min 以上の severity だけを残した新しい BatchResult を返す。
++func filterFindingsBatch(r secretscan.BatchResult, min secretscan.Severity) secretscan.BatchResult {
++	minRank := secretScanSeverityRank(min)
++	out := secretscan.BatchResult{
++		BySource:    map[string][]secretscan.Finding{},
++		SourceOrder: []string{},
++		BySeverity:  map[string]int{},
++	}
++	for _, src := range r.SourceOrder {
++		var keep []secretscan.Finding
++		for _, f := range r.BySource[src] {
++			if secretScanSeverityRank(f.Severity) >= minRank {
++				keep = append(keep, f)
++				out.BySeverity[string(f.Severity)]++
++				out.Total++
++			}
++		}
++		if len(keep) > 0 {
++			out.BySource[src] = keep
++			out.SourceOrder = append(out.SourceOrder, src)
++		}
++	}
++	return out
++}
++
++func secretScanSeverityRank(s secretscan.Severity) int {
++	switch s {
++	case secretscan.SeverityCritical:
++		return 4
++	case secretscan.SeverityHigh:
++		return 3
++	case secretscan.SeverityMedium:
++		return 2
++	case secretscan.SeverityLow:
++		return 1
++	}
++	return 0
++}
++
++// ─── yagura_sbom (S1.4 SBOM continuous generation) ───────────
++
++// SbomGenerator は SBOM 生成インターフェース。
++// 実装は internal/sbom.Generator。
++type SbomGenerator interface {
++	Generate(mainPath, mainVersion string) (*sbom.Bom, error)
++}
++
++func buildSbomTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_sbom",
++		Description: "[G] yagura SBOM CycloneDX 1.5. Set summary_only for compact.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"summary_only": map[string]any{
++					"type": "boolean",
++				},
++			},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			if d.Sbom == nil {
++				return nil, &ToolError{Code: "unavailable",
++					Message: "sbom generator not configured"}
++			}
++			var in struct {
++				SummaryOnly bool `json:"summary_only"`
++			}
++			if len(args) > 0 {
++				if err := json.Unmarshal(args, &in); err != nil {
++					return nil, &ToolError{Code: "invalid_input",
++						Message: "invalid arguments", Cause: err}
++				}
++			}
++			bom, err := d.Sbom.Generate(d.MainModulePath, d.MainVersion)
++			if err != nil {
++				return nil, &ToolError{Code: "internal",
++					Message: "sbom generation failed", Cause: err}
++			}
++			if in.SummaryOnly {
++				return bom.Summarize(), nil
++			}
++			return bom, nil
++		},
++	}
++}
++
++// ─── yagura_gha_audit (S1.5 GitHub Actions hardening audit) ──
++
++// GhaAuditor は GitHub Actions workflow YAML の静的解析インターフェース。
++// 実装は internal/ghaaudit.Auditor。
++type GhaAuditor interface {
++	AuditFile(filePath, content string) []ghaaudit.Finding
++	AuditDir(dir string, files map[string]string) map[string][]ghaaudit.Finding
++}
++
++func buildGhaAuditTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_gha_audit",
++		Description: "[G] GHA workflow audit: 7 supply-chain risk patterns.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"files": map[string]any{
++					"type": "object",
++				},
++				"summary_only": map[string]any{
++					"type": "boolean",
++				},
++			},
++			"required": []string{"files"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			if d.Ghaaudit == nil {
++				return nil, &ToolError{Code: "unavailable",
++					Message: "gha auditor not configured"}
++			}
++			var in struct {
++				Files       map[string]string `json:"files"`
++				SummaryOnly bool              `json:"summary_only"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input",
++					Message: "files map[string]string required", Cause: err}
++			}
++			if len(in.Files) == 0 {
++				return nil, &ToolError{Code: "invalid_input",
++					Message: "files must contain at least one file"}
++			}
++			results := d.Ghaaudit.AuditDir(".", in.Files)
++			if in.SummaryOnly {
++				return ghaaudit.Summarize(results), nil
++			}
++			return map[string]any{
++				"results": results,
++				"summary": ghaaudit.Summarize(results),
++			}, nil
++		},
++	}
++}
++
++// ─── yagura_pin_drift (S1.6 SHA pin drift detection) ─────────
++
++// PinDriftChecker は SHA pin の drift 検出インターフェース。
++// 実装は internal/pindrift.Checker。
++type PinDriftChecker interface {
++	CheckPins(ctx context.Context, pins []pindrift.Pin) []pindrift.Result
++	CheckPinsParallel(ctx context.Context, pins []pindrift.Pin, concurrency int) []pindrift.Result
++}
++
++func buildPinDriftTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_pin_drift",
++		Description: "[G] GHA SHA pin verify via API. Detects drift/stale.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"files": map[string]any{
++					"type": "object",
++				},
++				"summary_only": map[string]any{
++					"type": "boolean",
++				},
++				"concurrency": map[string]any{
++					"type": "integer",
++				},
++			},
++			"required": []string{"files"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			if d.PinDrift == nil {
++				return nil, &ToolError{Code: "unavailable",
++					Message: "pin drift checker not configured"}
++			}
++			var in struct {
++				Files       map[string]string `json:"files"`
++				SummaryOnly bool              `json:"summary_only"`
++				Concurrency int               `json:"concurrency"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input",
++					Message: "files map[string]string required", Cause: err}
++			}
++			if len(in.Files) == 0 {
++				return nil, &ToolError{Code: "invalid_input",
++					Message: "files must contain at least one file"}
++			}
++			// 全 file から pin を抽出
++			var allPins []pindrift.Pin
++			for path, content := range in.Files {
++				allPins = append(allPins, pindrift.ExtractPins(path, content)...)
++			}
++			if len(allPins) == 0 {
++				return map[string]any{
++					"results": []pindrift.Result{},
++					"summary": pindrift.Summary{ByStatus: map[string]int{}},
++					"note":    "no SHA-pinned uses: found (try yagura_gha_audit first)",
++				}, nil
++			}
++			// concurrency が指定されていれば並列実行(デフォルト 4)
++			var results []pindrift.Result
++			if in.Concurrency > 0 {
++				results = d.PinDrift.CheckPinsParallel(ctx, allPins, in.Concurrency)
++			} else if in.Concurrency == 0 {
++				// 明示的に 0 指定または未指定の場合はデフォルト並列度 4 で実行
++				results = d.PinDrift.CheckPinsParallel(ctx, allPins, 4)
++			} else {
++				// 負値は serial
++				results = d.PinDrift.CheckPins(ctx, allPins)
++			}
++			if in.SummaryOnly {
++				return pindrift.Summarize(results), nil
++			}
++			return map[string]any{
++				"results": results,
++				"summary": pindrift.Summarize(results),
++			}, nil
++		},
++	}
++}
++
++// ════════════════════════════════════════════════════════════════════════
++// v0.13.0: Agent Handoff Layer
++// ────────────────────────────────────────────────────────────────────────
++//
++// 5 つの MCP tool で Claude Code ↔ Windsurf の自動切替を実現する。
++//
++// Tool 一覧:
++//   yagura_quota_report   — agent 側が残量を能動報告
++//   yagura_agent_status   — 現在の状態と推奨 agent を取得
++//   yagura_session_save   — handoff 用 session context を保存
++//   yagura_session_load   — 保存済み context を読み込み
++//   yagura_handoff        — 切替実行(save → MarkSwitched → launch)
++//
++// 使用フロー:
++//   1. Claude Code が `/usage` で残量低下を検出
++//   2. yagura_quota_report(agent="claude_code", remaining=15, source="auto")
++//   3. yagura_agent_status を呼び ShouldHandoff=true を確認
++//   4. yagura_session_save({workspace, branch, plan_md_step, ...})
++//   5. yagura_handoff(target="windsurf") → Windsurf 起動 + state 更新
++//   6. Cascade が起動後、yagura_session_load で context 取得して継続
++// ════════════════════════════════════════════════════════════════════════
++
++// ─── yagura_quota_report ─────────────────────────────────────
++
++// ─── yagura_agent_status ─────────────────────────────────────
++
++// ─── yagura_session_save ─────────────────────────────────────
++
++// ─── yagura_session_load ─────────────────────────────────────
++
++// ─── yagura_handoff ──────────────────────────────────────────
++
++// ─── yagura_heartbeat (v0.14.0) ──────────────────────────────
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_security.go fixed/yagura-v0.34.1/internal/mcp/tools_security.go
 --- a/yagura-v0.34.1/internal/mcp/tools_security.go	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/mcp/tools_security.go	2026-06-03 04:28:06.616129670 +0000
