@@ -57,8 +57,8 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +        run: go test -run='^$' -fuzz=FuzzAdd -fuzztime=10s ./internal/registry/
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/.golangci.yml fixed/yagura-v0.34.1/.golangci.yml
 --- baseline/yagura-v0.34.1/.golangci.yml	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/.golangci.yml	2026-06-03 07:25:59.014228807 +0000
-@@ -1,84 +1,72 @@
++++ fixed/yagura-v0.34.1/.golangci.yml	2026-06-03 08:11:53.136585210 +0000
+@@ -1,84 +1,84 @@
 -# golangci-lint configuration for Yagura.
 -# Covers OSPS-VM-06.02 (automated SAST evaluation policy).
 -version: '2'
@@ -99,7 +99,53 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 -    - prealloc       # slice prealloc hints
 -    - whitespace     # unnecessary blank lines
 -    - usestdlibvars  # use stdlib constants over magic strings
--  settings:
++    # --- correctness / bug catching ---
++    - govet
++    - ineffassign
++    - bodyclose          # HTTP response body の閉じ忘れ(github/osv/scorecard client)
++    - errorlint          # %w / errors.Is/As の誤用
++    - contextcheck
++    - containedctx
++    - durationcheck
++    - makezero           # make([]T, n) への append バグ
++    - wastedassign
++    - copyloopvar
++    - asasalint
++    - bidichk            # Unicode 双方向制御文字(trojan source)
++    - gocheckcompilerdirectives
++    - nilnil
++    - nilnesserr
++    - reassign
++    - rowserrcheck
++    - sqlclosecheck
++    - spancheck
++    - unconvert
++    - usetesting
++    - protogetter
++    - staticcheck         # SA(bug)/S1/ST 系。QF1001(De Morgan 書換)のみ除外(下記 settings)
++    - unused             # 未使用の型・関数・変数(dead code)
++    - mirror             # bytes/strings の不要な変換([]byte↔string のアロケ削減)
++    - canonicalheader    # 非正規な HTTP header キー文字列の検出
++    - perfsprint         # fmt.Sprintf/Errorf を strconv/errors.New/連結へ(無割当・高速)
++    - intrange           # Go 1.22 の for-range-int へ近代化
++    - usestdlibvars      # "GET"/"200" 等を http.MethodGet/StatusOK へ
++    - whitespace         # 関数本体先頭の不要な空行
++    # --- naming / API hygiene (低 false-positive) ---
++    - errname
++    - gochecknoinits     # init() 乱用の抑止(deterministic startup)
++    - predeclared        # builtin 名の shadowing
++    - goprintffuncname
++    - nosprintfhostport
++    # --- comments / strings ---
++    - misspell
++    - dupword
++    - nolintlint         # //nolint の濫用・誤記を検出
++    # --- test quality ---
++    - testableexamples
++    - thelper
++    - tparallel
++
+   settings:
 -    errcheck:
 -      check-blank: false
 -    gosec:
@@ -129,54 +175,18 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 -        - name: time-naming
 -        - name: unexported-return
 -        - name: var-declaration
--    staticcheck:
+     staticcheck:
 -      checks: ['all', '-ST1000']  # ST1000: at least one file in package has package comment
 -    gocritic:
 -      enabled-tags: [diagnostic, performance, style]
 -      disabled-checks:
 -        - ifElseChain
 -        - hugeParam
-+    # --- correctness / bug catching ---
-+    - govet
-+    - ineffassign
-+    - bodyclose          # HTTP response body の閉じ忘れ(github/osv/scorecard client)
-+    - errorlint          # %w / errors.Is/As の誤用
-+    - contextcheck
-+    - containedctx
-+    - durationcheck
-+    - makezero           # make([]T, n) への append バグ
-+    - wastedassign
-+    - copyloopvar
-+    - asasalint
-+    - bidichk            # Unicode 双方向制御文字(trojan source)
-+    - gocheckcompilerdirectives
-+    - nilnil
-+    - nilnesserr
-+    - reassign
-+    - rowserrcheck
-+    - sqlclosecheck
-+    - spancheck
-+    - unconvert
-+    - usetesting
-+    - protogetter
-+    - perfsprint         # fmt.Sprintf/Errorf を strconv/errors.New/連結へ(無割当・高速)
-+    - intrange           # Go 1.22 の for-range-int へ近代化
-+    - usestdlibvars      # "GET"/"200" 等を http.MethodGet/StatusOK へ
-+    - whitespace         # 関数本体先頭の不要な空行
-+    # --- naming / API hygiene (低 false-positive) ---
-+    - errname
-+    - gochecknoinits     # init() 乱用の抑止(deterministic startup)
-+    - predeclared        # builtin 名の shadowing
-+    - goprintffuncname
-+    - nosprintfhostport
-+    # --- comments / strings ---
-+    - misspell
-+    - dupword
-+    - nolintlint         # //nolint の濫用・誤記を検出
-+    # --- test quality ---
-+    - testableexamples
-+    - thelper
-+    - tparallel
++      # QF1001 (De Morgan 則での書換) は可読性がむしろ落ちる箇所があるため除外。
++      # それ以外の SA(バグ)/S1/ST 系はすべて有効。
++      checks:
++        - all
++        - -QF1001
 +
    exclusions:
 -    rules:
@@ -4321,14 +4331,13 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/cmd/yagura/httpapi_test.go fixed/yagura-v0.34.1/cmd/yagura/httpapi_test.go
 --- baseline/yagura-v0.34.1/cmd/yagura/httpapi_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/cmd/yagura/httpapi_test.go	2026-06-03 07:24:34.694225840 +0000
-@@ -2,13 +2,13 @@
++++ fixed/yagura-v0.34.1/cmd/yagura/httpapi_test.go	2026-06-03 08:11:41.216584790 +0000
+@@ -2,13 +2,12 @@
  
  import (
  	"bytes"
 +	"context"
  	"encoding/json"
-+	"errors"
  	"io"
  	"net/http"
  	"net/http/httptest"
@@ -4338,7 +4347,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	"testing"
  
  	"github.com/shizukutanaka/yagura/internal/ghaaudit"
-@@ -31,7 +31,6 @@
+@@ -31,7 +30,6 @@
  	return mux
  }
  
@@ -4346,7 +4355,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  // ─── GET /sbom ───────────────────────────────────────────────
  
  func TestHTTP_GETSBOM_NoAuth(t *testing.T) {
-@@ -44,7 +43,7 @@
+@@ -44,7 +42,7 @@
  		t.Fatal(err)
  	}
  	defer resp.Body.Close()
@@ -4355,7 +4364,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		t.Fatalf("status %d", resp.StatusCode)
  	}
  	body, _ := io.ReadAll(resp.Body)
-@@ -82,11 +81,31 @@
+@@ -82,11 +80,31 @@
  	mux := newTestHTTPMux(t, "")
  	srv := httptest.NewServer(mux)
  	defer srv.Close()
@@ -4388,7 +4397,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  }
  
  // ─── Auth ────────────────────────────────────────────────────
-@@ -97,25 +116,34 @@
+@@ -97,25 +115,34 @@
  	defer srv.Close()
  
  	// no auth → 401
@@ -4428,7 +4437,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	defer resp3.Body.Close()
  	if resp3.StatusCode != http.StatusOK {
  		t.Errorf("expected 200, got %d", resp3.StatusCode)
-@@ -146,7 +174,7 @@
+@@ -146,7 +173,7 @@
  		t.Fatal(err)
  	}
  	defer resp.Body.Close()
@@ -4437,7 +4446,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		buf, _ := io.ReadAll(resp.Body)
  		t.Fatalf("status %d: %s", resp.StatusCode, buf)
  	}
-@@ -163,7 +191,10 @@
+@@ -163,7 +190,10 @@
  	mux := newTestHTTPMux(t, "")
  	srv := httptest.NewServer(mux)
  	defer srv.Close()
@@ -4449,7 +4458,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	defer resp.Body.Close()
  	if resp.StatusCode != http.StatusBadRequest {
  		t.Errorf("expected 400, got %d", resp.StatusCode)
-@@ -174,7 +205,10 @@
+@@ -174,7 +204,10 @@
  	mux := newTestHTTPMux(t, "")
  	srv := httptest.NewServer(mux)
  	defer srv.Close()
@@ -4461,7 +4470,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	defer resp.Body.Close()
  	if resp.StatusCode != http.StatusBadRequest {
  		t.Errorf("expected 400 for wrong content-type, got %d", resp.StatusCode)
-@@ -198,7 +232,7 @@
+@@ -198,7 +231,7 @@
  		t.Fatal(err)
  	}
  	defer resp.Body.Close()
@@ -4470,7 +4479,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		t.Fatalf("status %d", resp.StatusCode)
  	}
  	out, _ := io.ReadAll(resp.Body)
-@@ -211,7 +245,10 @@
+@@ -211,7 +244,10 @@
  	mux := newTestHTTPMux(t, "")
  	srv := httptest.NewServer(mux)
  	defer srv.Close()
@@ -4482,6 +4491,15 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	defer resp.Body.Close()
  	if resp.StatusCode != http.StatusMethodNotAllowed {
  		t.Errorf("expected 405, got %d", resp.StatusCode)
+@@ -221,8 +257,6 @@
+ // nullGH は pindrift 用の no-op mock(全 SHA を 404 扱いで MISSING に)
+ type nullGH struct{}
+ 
+-var errAuth = errors.New("test: no api")
+-
+ func (n *nullGH) GetCommit(ctx context.Context, owner, repo, sha string) (*github.CommitInfo, error) {
+ 	return nil, github.ErrNotFound
+ }
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/cmd/yagura/integration_test.go fixed/yagura-v0.34.1/cmd/yagura/integration_test.go
 --- baseline/yagura-v0.34.1/cmd/yagura/integration_test.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/cmd/yagura/integration_test.go	2026-06-03 07:25:44.302228289 +0000
@@ -5828,6 +5846,26 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +	}
 +	noTempLeftover(t, dir)
 +}
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/audit/audit.go fixed/yagura-v0.34.1/internal/audit/audit.go
+--- baseline/yagura-v0.34.1/internal/audit/audit.go	2026-06-02 00:00:00.000000000 +0000
++++ fixed/yagura-v0.34.1/internal/audit/audit.go	2026-06-03 08:11:07.540583605 +0000
+@@ -15,6 +15,7 @@
+ package audit
+ 
+ import (
++	"bytes"
+ 	"crypto/sha256"
+ 	"encoding/hex"
+ 	"encoding/json"
+@@ -402,7 +403,7 @@
+ 	for len(buf) > 0 && buf[len(buf)-1] == '\n' {
+ 		buf = buf[:len(buf)-1]
+ 	}
+-	idx := strings.LastIndexByte(string(buf), '\n')
++	idx := bytes.LastIndexByte(buf, '\n')
+ 	var lastLine []byte
+ 	if idx >= 0 {
+ 		lastLine = buf[idx+1:]
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/audit/audit_bench_test.go fixed/yagura-v0.34.1/internal/audit/audit_bench_test.go
 --- baseline/yagura-v0.34.1/internal/audit/audit_bench_test.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/audit/audit_bench_test.go	2026-06-03 07:25:44.282228289 +0000
@@ -6193,7 +6231,25 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  import (
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go fixed/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go
 --- baseline/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go	2026-06-03 04:24:21.712121756 +0000
++++ fixed/yagura-v0.34.1/internal/ghaaudit/ghaaudit.go	2026-06-03 08:12:18.380586098 +0000
+@@ -159,7 +159,7 @@
+ 		}
+ 
+ 		// R7 toJson-secrets: ${{ toJson(secrets) }}
+-		if reToJsonSecrets.MatchString(raw) {
++		if reToJSONSecrets.MatchString(raw) {
+ 			findings = append(findings, Finding{
+ 				RuleID:      "tojson-secrets",
+ 				Description: "Exposes all secrets via toJson(secrets) — leaks credentials beyond intended scope",
+@@ -213,7 +213,7 @@
+ 	reTemplateInjection = regexp.MustCompile(`\$\{\{\s*github\.(event\.[a-zA-Z_]+\.(?:title|body|head_ref|description|name)|head_ref)`)
+ 
+ 	// `${{ toJson(secrets) }}` or `${{ secrets.*\.\* }}` 全 secret 渡し
+-	reToJsonSecrets = regexp.MustCompile(`\$\{\{\s*toJson\(\s*secrets\s*\)\s*\}\}`)
++	reToJSONSecrets = regexp.MustCompile(`\$\{\{\s*toJson\(\s*secrets\s*\)\s*\}\}`)
+ )
+ 
+ // reTriggerKey は trigger 名を YAML key として検出する正規表現を返す。
 @@ -233,11 +233,11 @@
  type refType int
  
@@ -6300,7 +6356,38 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	for in, want := range cases {
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/github/client.go fixed/yagura-v0.34.1/internal/github/client.go
 --- baseline/yagura-v0.34.1/internal/github/client.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/github/client.go	2026-06-03 04:24:21.708121756 +0000
++++ fixed/yagura-v0.34.1/internal/github/client.go	2026-06-03 08:10:51.408583038 +0000
+@@ -188,7 +188,7 @@
+ 		return fmt.Errorf("create request: %w", err)
+ 	}
+ 	req.Header.Set("Accept", "application/vnd.github+json")
+-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
++	req.Header.Set("X-Github-Api-Version", "2022-11-28")
+ 	req.Header.Set("User-Agent", "yagura-portfolio-orchestrator/0.1.0")
+ 	// S0.1: path から owner を抽出し、owner-specific token を使う(無ければ fallback)
+ 	if token := c.tokens.TokenForPath(path); token != "" {
+@@ -211,7 +211,7 @@
+ 	case http.StatusUnauthorized:
+ 		return fmt.Errorf("%w: %s", ErrUnauthorized, path)
+ 	case http.StatusForbidden:
+-		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
++		if resp.Header.Get("X-Ratelimit-Remaining") == "0" {
+ 			return fmt.Errorf("%w: %s", ErrRateLimited, path)
+ 		}
+ 		return fmt.Errorf("%w: %s", ErrForbidden, path)
+@@ -235,9 +235,9 @@
+ }
+ 
+ func (c *Client) updateRateLimit(h http.Header) {
+-	limit := parseIntHeader(h, "X-RateLimit-Limit")
+-	remaining := parseIntHeader(h, "X-RateLimit-Remaining")
+-	reset := parseIntHeader(h, "X-RateLimit-Reset")
++	limit := parseIntHeader(h, "X-Ratelimit-Limit")
++	remaining := parseIntHeader(h, "X-Ratelimit-Remaining")
++	reset := parseIntHeader(h, "X-Ratelimit-Reset")
+ 	if limit == 0 && remaining == 0 && reset == 0 {
+ 		return
+ 	}
 @@ -263,7 +263,7 @@
  // CommitInfo は GitHub API /repos/{owner}/{repo}/commits/{sha} の最小サブセット。
  // pin drift 検証 (S1.6) に必要なフィールドのみ。
@@ -6312,7 +6399,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  			Date string `json:"date"` // RFC3339
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/github/client_test.go fixed/yagura-v0.34.1/internal/github/client_test.go
 --- baseline/yagura-v0.34.1/internal/github/client_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/github/client_test.go	2026-06-03 07:25:09.238227055 +0000
++++ fixed/yagura-v0.34.1/internal/github/client_test.go	2026-06-03 08:10:57.168583240 +0000
 @@ -6,6 +6,7 @@
  	"fmt"
  	"net/http"
@@ -6321,15 +6408,28 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	"strings"
  	"testing"
  	"time"
-@@ -29,7 +30,7 @@
+@@ -27,9 +28,9 @@
+ 		if r.Header.Get("Authorization") != "Bearer ghp_test_token" {
+ 			t.Errorf("auth missing")
  		}
- 		w.Header().Set("X-RateLimit-Limit", "5000")
- 		w.Header().Set("X-RateLimit-Remaining", "4999")
+-		w.Header().Set("X-RateLimit-Limit", "5000")
+-		w.Header().Set("X-RateLimit-Remaining", "4999")
 -		w.Header().Set("X-RateLimit-Reset", fmt.Sprint(time.Now().Add(1*time.Hour).Unix()))
-+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(1*time.Hour).Unix(), 10))
++		w.Header().Set("X-Ratelimit-Limit", "5000")
++		w.Header().Set("X-Ratelimit-Remaining", "4999")
++		w.Header().Set("X-Ratelimit-Reset", strconv.FormatInt(time.Now().Add(1*time.Hour).Unix(), 10))
  		fmt.Fprintln(w, `{
  			"full_name": "shizukutanaka/mihari",
  			"default_branch": "main",
+@@ -80,7 +81,7 @@
+ 
+ func TestGetRepository_RateLimited(t *testing.T) {
+ 	_, c := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+-		w.Header().Set("X-RateLimit-Remaining", "0")
++		w.Header().Set("X-Ratelimit-Remaining", "0")
+ 		w.WriteHeader(http.StatusForbidden)
+ 	})
+ 	_, err := c.GetRepository(context.Background(), "x", "r")
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/github/tokens_test.go fixed/yagura-v0.34.1/internal/github/tokens_test.go
 --- baseline/yagura-v0.34.1/internal/github/tokens_test.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/github/tokens_test.go	2026-06-03 04:24:21.708121756 +0000
@@ -6529,7 +6629,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  // AuditSubagent は .claude/agents/*.md content を評価する。
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/harness/harness.go fixed/yagura-v0.34.1/internal/harness/harness.go
 --- baseline/yagura-v0.34.1/internal/harness/harness.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/harness/harness.go	2026-06-03 04:24:21.716121756 +0000
++++ fixed/yagura-v0.34.1/internal/harness/harness.go	2026-06-03 08:12:18.384586098 +0000
 @@ -2,14 +2,15 @@
  // 構造化データ + scaffolding generator として提供する。
  //
@@ -6582,6 +6682,15 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	Name        string   `json:"name"`
  	Description string   `json:"description"` // trigger 形式("Use proactively when ...")
  	Tools       []string `json:"tools"`       // allowlist
+@@ -273,7 +274,7 @@
+ func jsRecommendation() Recommendation {
+ 	r := tsRecommendation()
+ 	r.Language = "javascript"
+-	r.ClaudeMd = strings.Replace(r.ClaudeMd, "TypeScript", "JavaScript", -1)
++	r.ClaudeMd = strings.ReplaceAll(r.ClaudeMd, "TypeScript", "JavaScript")
+ 	return r
+ }
+ 
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/hookreceiver/receiver.go fixed/yagura-v0.34.1/internal/hookreceiver/receiver.go
 --- baseline/yagura-v0.34.1/internal/hookreceiver/receiver.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/hookreceiver/receiver.go	2026-06-03 04:56:14.808189074 +0000
@@ -6990,6 +7099,19 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  func psQuote(s string) string {
  	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
  }
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/initps1/initps1_test.go fixed/yagura-v0.34.1/internal/initps1/initps1_test.go
+--- baseline/yagura-v0.34.1/internal/initps1/initps1_test.go	2026-06-02 00:00:00.000000000 +0000
++++ fixed/yagura-v0.34.1/internal/initps1/initps1_test.go	2026-06-03 08:11:10.060583694 +0000
+@@ -277,7 +277,8 @@
+ }
+ 
+ func TestGenerate_Deterministic(t *testing.T) {
+-	if Generate(basic()) != Generate(basic()) {
++	first, second := Generate(basic()), Generate(basic())
++	if first != second {
+ 		t.Error("output must be deterministic for the same input")
+ 	}
+ }
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/initsh/initsh.go fixed/yagura-v0.34.1/internal/initsh/initsh.go
 --- baseline/yagura-v0.34.1/internal/initsh/initsh.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/initsh/initsh.go	2026-06-03 07:37:26.108787205 +0000
@@ -7041,6 +7163,19 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
 +//	a'b -> 'a'\''b'
  func shQuote(s string) string {
  	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+ }
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/initsh/initsh_test.go fixed/yagura-v0.34.1/internal/initsh/initsh_test.go
+--- baseline/yagura-v0.34.1/internal/initsh/initsh_test.go	2026-06-02 00:00:00.000000000 +0000
++++ fixed/yagura-v0.34.1/internal/initsh/initsh_test.go	2026-06-03 08:11:20.808584072 +0000
+@@ -271,7 +271,8 @@
+ }
+ 
+ func TestGenerate_Deterministic(t *testing.T) {
+-	if Generate(basic()) != Generate(basic()) {
++	first, second := Generate(basic()), Generate(basic())
++	if first != second {
+ 		t.Error("output must be deterministic for the same input")
+ 	}
  }
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/logging/logging.go fixed/yagura-v0.34.1/internal/logging/logging.go
 --- baseline/yagura-v0.34.1/internal/logging/logging.go	2026-06-02 00:00:00.000000000 +0000
@@ -13287,7 +13422,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  // NewRateLimitGuard は標準値で Guard を生成する。
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/pindrift/ratelimit_test.go fixed/yagura-v0.34.1/internal/pindrift/ratelimit_test.go
 --- baseline/yagura-v0.34.1/internal/pindrift/ratelimit_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/pindrift/ratelimit_test.go	2026-06-03 07:25:44.278228288 +0000
++++ fixed/yagura-v0.34.1/internal/pindrift/ratelimit_test.go	2026-06-03 08:11:43.772584880 +0000
 @@ -139,7 +139,7 @@
  	g.Clock = func() time.Time { return now }
  	g.Sleeper = func(ctx context.Context, d time.Duration) error { return nil }
@@ -13297,6 +13432,19 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		_ = g.Wait(context.Background())
  	}
  	waits, total := g.Stats()
+@@ -171,12 +171,6 @@
+ 
+ // ─── 統合: Checker と RateLimitGuard ──────────────────────────
+ 
+-// mockGHWithRateLimit は LastRateLimit を持つ mock
+-type mockGHWithRateLimit struct {
+-	mockGH
+-	calls int
+-}
+-
+ func TestChecker_UsesRateLimitGuard(t *testing.T) {
+ 	mock := &mockGH{
+ 		commits: map[string]*github.CommitInfo{},
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/plantracker/plantracker.go fixed/yagura-v0.34.1/internal/plantracker/plantracker.go
 --- baseline/yagura-v0.34.1/internal/plantracker/plantracker.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/plantracker/plantracker.go	2026-06-03 04:24:21.692121755 +0000
@@ -13425,7 +13573,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  // Rank は複数 project を readiness 降順で sort する。
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/plantracker/plantracker_test.go fixed/yagura-v0.34.1/internal/plantracker/plantracker_test.go
 --- baseline/yagura-v0.34.1/internal/plantracker/plantracker_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/plantracker/plantracker_test.go	2026-06-03 07:25:44.290228289 +0000
++++ fixed/yagura-v0.34.1/internal/plantracker/plantracker_test.go	2026-06-03 08:11:23.068584152 +0000
 @@ -380,11 +380,11 @@
  	// 1000 phases × 5 tasks = 5000 tasks の Plan
  	var sb strings.Builder
@@ -13453,6 +13601,16 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  }
  
  func newFakeCache() *fakeCache {
+@@ -518,7 +518,8 @@
+ }
+ 
+ func TestShortHash_StableForSameInput(t *testing.T) {
+-	if shortHash("hello") != shortHash("hello") {
++	first, second := shortHash("hello"), shortHash("hello")
++	if first != second {
+ 		t.Error("hash unstable")
+ 	}
+ }
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/progressfile/progressfile.go fixed/yagura-v0.34.1/internal/progressfile/progressfile.go
 --- baseline/yagura-v0.34.1/internal/progressfile/progressfile.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/progressfile/progressfile.go	2026-06-03 07:25:44.274228288 +0000
@@ -14369,8 +14527,42 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/scanner/scanner_test.go fixed/yagura-v0.34.1/internal/scanner/scanner_test.go
 --- baseline/yagura-v0.34.1/internal/scanner/scanner_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/scanner/scanner_test.go	2026-06-03 04:24:21.736121757 +0000
-@@ -265,20 +265,20 @@
++++ fixed/yagura-v0.34.1/internal/scanner/scanner_test.go	2026-06-03 08:11:37.196584649 +0000
+@@ -6,7 +6,6 @@
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"strings"
+-	"sync/atomic"
+ 	"testing"
+ 	"time"
+ 
+@@ -233,25 +232,6 @@
+ 	}
+ }
+ 
+-// concurrent counter for verifying max concurrency
+-type concMetrics struct {
+-	current atomic.Int32
+-	max     atomic.Int32
+-}
+-
+-func (c *concMetrics) IncScanned() {
+-	n := c.current.Add(1)
+-	for {
+-		m := c.max.Load()
+-		if n <= m || c.max.CompareAndSwap(m, n) {
+-			break
+-		}
+-	}
+-}
+-func (c *concMetrics) IncFailed()                        {}
+-func (c *concMetrics) SetLastScanDuration(time.Duration) {}
+-func (c *concMetrics) SetLastScanAt(time.Time)           {}
+-
+ // ─── helper / interface coverage ─────────────────────────────
+ 
+ func TestNoopMetrics(t *testing.T) {
+@@ -265,20 +245,20 @@
  
  func TestMapCIStatus_AllInputs(t *testing.T) {
  	tests := map[string]project.CIStatus{
@@ -14755,6 +14947,21 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  		_ = ShannonEntropy(s)
  	}
  }
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/secretscan/secretscan_test.go fixed/yagura-v0.34.1/internal/secretscan/secretscan_test.go
+--- baseline/yagura-v0.34.1/internal/secretscan/secretscan_test.go	2026-06-02 00:00:00.000000000 +0000
++++ fixed/yagura-v0.34.1/internal/secretscan/secretscan_test.go	2026-06-03 08:11:30.580584416 +0000
+@@ -338,9 +338,8 @@
+ 	if len(res.BySource["issue#42"]) != 1 {
+ 		t.Errorf("issue#42 should have 1 finding, got %d", len(res.BySource["issue#42"]))
+ 	}
+-	if _, exists := res.BySource["clean"]; exists {
+-		// clean source could have empty findings, that's OK; just don't crash
+-	}
++	// clean source may have no findings; accessing it must not panic.
++	_ = res.BySource["clean"]
+ 	// SourceOrder must be sorted
+ 	for i := 1; i < len(res.SourceOrder); i++ {
+ 		if res.SourceOrder[i] < res.SourceOrder[i-1] {
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/telemetry/telemetry.go fixed/yagura-v0.34.1/internal/telemetry/telemetry.go
 --- baseline/yagura-v0.34.1/internal/telemetry/telemetry.go	2026-06-02 00:00:00.000000000 +0000
 +++ fixed/yagura-v0.34.1/internal/telemetry/telemetry.go	2026-06-03 04:24:21.728121757 +0000
