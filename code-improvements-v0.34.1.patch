@@ -1,6 +1,6 @@
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/.github/workflows/ci.yml fixed/yagura-v0.34.1/.github/workflows/ci.yml
 --- a/yagura-v0.34.1/.github/workflows/ci.yml	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/.github/workflows/ci.yml	2026-06-03 04:28:21.456130192 +0000
++++ b/yagura-v0.34.1/.github/workflows/ci.yml	2026-06-03 04:56:36.940189853 +0000
 @@ -35,6 +35,16 @@
            go-version-file: go.mod
            cache: true
@@ -18,6 +18,16 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
        - name: go vet
          run: go vet ./...
  
+@@ -107,3 +117,9 @@
+ 
+       - name: Fuzz aiverify.Scan
+         run: go test -fuzz=FuzzScan -fuzztime=10s ./internal/aiverify/
++
++      - name: Fuzz audit.Verify
++        run: go test -run='^$' -fuzz=FuzzVerify -fuzztime=10s ./internal/audit/
++
++      - name: Fuzz registry.Add
++        run: go test -run='^$' -fuzz=FuzzAdd -fuzztime=10s ./internal/registry/
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/ARCHITECTURE.md fixed/yagura-v0.34.1/ARCHITECTURE.md
 --- a/yagura-v0.34.1/ARCHITECTURE.md	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/ARCHITECTURE.md	2026-06-03 04:28:48.624131148 +0000
@@ -1179,7 +1189,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  // Sink は audit log の書込先を抽象化する。
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/config/config.go fixed/yagura-v0.34.1/internal/config/config.go
 --- a/yagura-v0.34.1/internal/config/config.go	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/config/config.go	2026-06-03 04:24:49.344122728 +0000
++++ b/yagura-v0.34.1/internal/config/config.go	2026-06-03 04:55:53.232188315 +0000
 @@ -70,11 +70,11 @@
  // 複数エラーは errors.Join でまとめて返す。
  func Load() (*Config, error) {
@@ -1197,11 +1207,19 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		AuditKeepDays: envInt("YAGURA_AUDIT_KEEP_DAYS", 90),
  	}
  
-@@ -178,6 +178,12 @@
+@@ -178,6 +178,20 @@
  			"YAGURA_GITHUB_BASE must start with http:// or https://, got %q", c.GitHubBase))
  	}
  
-+	// AuditKeepDays: 負値は保持日数として無意味(誤設定の早期検出)
++	// AuditKeepDays: 設定されているのに int として解釈できない値は誤設定として検出。
++	// (envInt は best-effort で default に握り潰すため、Load 側で明示的に弾く)
++	if raw := strings.TrimSpace(os.Getenv("YAGURA_AUDIT_KEEP_DAYS")); raw != "" {
++		if _, perr := strconv.Atoi(raw); perr != nil {
++			errs = append(errs, fmt.Errorf(
++				"YAGURA_AUDIT_KEEP_DAYS invalid integer %q: %w", raw, perr))
++		}
++	}
++	// 負値は保持日数として無意味(誤設定の早期検出)
 +	if c.AuditKeepDays < 0 {
 +		errs = append(errs, fmt.Errorf(
 +			"YAGURA_AUDIT_KEEP_DAYS must be >= 0, got %d", c.AuditKeepDays))
@@ -1212,8 +1230,8 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  	if isPublicBind(c.Addr) && c.MCPToken == "" {
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/config/config_test.go fixed/yagura-v0.34.1/internal/config/config_test.go
 --- a/yagura-v0.34.1/internal/config/config_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/config/config_test.go	2026-06-03 04:26:36.348126494 +0000
-@@ -110,6 +110,16 @@
++++ b/yagura-v0.34.1/internal/config/config_test.go	2026-06-03 04:55:59.316188529 +0000
+@@ -110,6 +110,26 @@
  	}
  }
  
@@ -1224,6 +1242,16 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
 +	_, err := Load()
 +	if err == nil || !strings.Contains(err.Error(), "YAGURA_AUDIT_KEEP_DAYS") {
 +		t.Errorf("expected negative audit-keep-days error, got %v", err)
++	}
++}
++
++func TestLoad_InvalidAuditKeepDays(t *testing.T) {
++	clearAll(t)
++	t.Setenv("YAGURA_GITHUB_TOKEN", "ghp_x")
++	t.Setenv("YAGURA_AUDIT_KEEP_DAYS", "notanint")
++	_, err := Load()
++	if err == nil || !strings.Contains(err.Error(), "YAGURA_AUDIT_KEEP_DAYS") {
++		t.Errorf("expected invalid audit-keep-days error, got %v", err)
 +	}
 +}
 +
@@ -1719,7 +1747,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  	Tools       []string `json:"tools"`       // allowlist
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/hookreceiver/receiver.go fixed/yagura-v0.34.1/internal/hookreceiver/receiver.go
 --- a/yagura-v0.34.1/internal/hookreceiver/receiver.go	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/hookreceiver/receiver.go	2026-06-03 04:24:21.712121756 +0000
++++ b/yagura-v0.34.1/internal/hookreceiver/receiver.go	2026-06-03 04:56:14.808189074 +0000
 @@ -1,14 +1,15 @@
  // Package hookreceiver は Claude Code の HTTP hooks を受信する。
  //
@@ -1793,6 +1821,15 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  
  	NowFn func() time.Time
  }
+@@ -258,6 +259,8 @@
+ // pack する。
+ func (r *Receiver) parseEvent(raw map[string]json.RawMessage) Event {
+ 	e := Event{}
++	// best-effort 抽出: Claude Code の hook event は schema が異なるため、
++	// 個別フィールドの unmarshal 失敗は zero-value のまま許容する(意図的)。
+ 	unmarshalString := func(key string, dst *string) {
+ 		if v, ok := raw[key]; ok {
+ 			_ = json.Unmarshal(v, dst)
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/hookreceiver/receiver_test.go fixed/yagura-v0.34.1/internal/hookreceiver/receiver_test.go
 --- a/yagura-v0.34.1/internal/hookreceiver/receiver_test.go	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/hookreceiver/receiver_test.go	2026-06-03 04:24:21.704121756 +0000
@@ -3166,7 +3203,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  					"severity": []map[string]any{
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/pindrift/pindrift.go fixed/yagura-v0.34.1/internal/pindrift/pindrift.go
 --- a/yagura-v0.34.1/internal/pindrift/pindrift.go	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/pindrift/pindrift.go	2026-06-03 04:24:21.688121755 +0000
++++ b/yagura-v0.34.1/internal/pindrift/pindrift.go	2026-06-03 04:56:11.344188952 +0000
 @@ -45,7 +45,7 @@
  
  // Pin は workflow から抽出された SHA pin 1 件。
@@ -3208,6 +3245,40 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  }
  
  // Summarize は results から Summary を作成する。
+@@ -300,9 +300,14 @@
+ 
+ // ─── 並列化 (v0.11.0) ────────────────────────────────────────
+ 
++// defaultConcurrency は concurrency 未指定(<=0)時の既定並列度。
++// GitHub secondary rate limit を避けるため意図的に低めの 4 に固定している
++// (下記 CheckPinsParallel の rate limit 解説を参照)。
++const defaultConcurrency = 4
++
+ // CheckPinsParallel は worker pool で複数 pin を並列検証する。
+ //
+-// concurrency: 最大同時実行数。0 以下なら 4(デフォルト)。
++// concurrency: 最大同時実行数。0 以下なら defaultConcurrency。
+ //
+ // GitHub API authenticated rate limit は 5000 req/h ≈ 1.4 req/sec。
+ // 各 pin は 1〜2 API call 消費するので、concurrency=4 は約 8 req/sec で
+@@ -319,7 +324,7 @@
+ 
+ func (c *Checker) CheckPinsParallel(ctx context.Context, pins []Pin, concurrency int) []Result {
+ 	if concurrency <= 0 {
+-		concurrency = 4
++		concurrency = defaultConcurrency
+ 	}
+ 	if concurrency > len(pins) {
+ 		concurrency = len(pins)
+@@ -382,7 +387,7 @@
+ //	}
+ func (c *Checker) CheckPinsStream(ctx context.Context, pins []Pin, concurrency int) <-chan ResultEvent {
+ 	if concurrency <= 0 {
+-		concurrency = 4
++		concurrency = defaultConcurrency
+ 	}
+ 	if concurrency > len(pins) {
+ 		concurrency = len(pins)
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/pindrift/pindrift_test.go fixed/yagura-v0.34.1/internal/pindrift/pindrift_test.go
 --- a/yagura-v0.34.1/internal/pindrift/pindrift_test.go	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/pindrift/pindrift_test.go	2026-06-03 04:24:21.720121756 +0000
