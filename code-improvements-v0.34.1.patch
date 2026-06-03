@@ -1171,6 +1171,158 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  //
  // 設計判断:
  //   - audit.log と同じく O_APPEND な JSONL — 1 entry が atomic、corrupt-line
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/atomicfile/atomicfile_test.go fixed/yagura-v0.34.1/internal/atomicfile/atomicfile_test.go
+--- a/yagura-v0.34.1/internal/atomicfile/atomicfile_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/atomicfile/atomicfile_test.go	2026-06-03 05:32:13.140265022 +0000
+@@ -0,0 +1,148 @@
++package atomicfile
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++// noTempLeftover は dir に temp file (.atomic-*) が残っていないことを確認する。
++// Write は成功・失敗いずれの path でも temp を残さない契約。
++func noTempLeftover(t *testing.T, dir string) {
++	t.Helper()
++	entries, err := os.ReadDir(dir)
++	if err != nil {
++		t.Fatalf("ReadDir(%q): %v", dir, err)
++	}
++	for _, e := range entries {
++		if strings.HasPrefix(e.Name(), ".atomic-") {
++			t.Errorf("temp file left behind: %s", e.Name())
++		}
++	}
++}
++
++func TestWrite_CreatesFileWithContentAndMode(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "out.txt")
++	want := []byte("hello atomic")
++
++	if err := Write(path, want, 0o640); err != nil {
++		t.Fatalf("Write: %v", err)
++	}
++
++	got, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("ReadFile: %v", err)
++	}
++	if string(got) != string(want) {
++		t.Errorf("content = %q, want %q", got, want)
++	}
++
++	fi, err := os.Stat(path)
++	if err != nil {
++		t.Fatalf("Stat: %v", err)
++	}
++	if perm := fi.Mode().Perm(); perm != 0o640 {
++		t.Errorf("mode = %o, want 640", perm)
++	}
++	noTempLeftover(t, dir)
++}
++
++func TestWrite_OverwritesExisting(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "out.txt")
++
++	if err := Write(path, []byte("old content longer"), 0o644); err != nil {
++		t.Fatalf("first Write: %v", err)
++	}
++	if err := Write(path, []byte("new"), 0o644); err != nil {
++		t.Fatalf("second Write: %v", err)
++	}
++
++	got, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("ReadFile: %v", err)
++	}
++	// rename は古い完全ファイルを新しい完全ファイルで置換する(torn write 無し)。
++	if string(got) != "new" {
++		t.Errorf("content = %q, want %q", got, "new")
++	}
++	noTempLeftover(t, dir)
++}
++
++func TestWrite_CreatesParentDirs(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "a", "b", "c", "deep.txt")
++
++	if err := Write(path, []byte("x"), 0o644); err != nil {
++		t.Fatalf("Write: %v", err)
++	}
++	if _, err := os.Stat(path); err != nil {
++		t.Fatalf("expected file created in nested dirs: %v", err)
++	}
++}
++
++func TestWrite_ExecutableMode(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "init.sh")
++
++	if err := Write(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
++		t.Fatalf("Write: %v", err)
++	}
++	fi, err := os.Stat(path)
++	if err != nil {
++		t.Fatalf("Stat: %v", err)
++	}
++	if perm := fi.Mode().Perm(); perm != 0o755 {
++		t.Errorf("mode = %o, want 755", perm)
++	}
++}
++
++func TestWrite_EmptyData(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "empty.txt")
++
++	if err := Write(path, nil, 0o644); err != nil {
++		t.Fatalf("Write: %v", err)
++	}
++	fi, err := os.Stat(path)
++	if err != nil {
++		t.Fatalf("Stat: %v", err)
++	}
++	if fi.Size() != 0 {
++		t.Errorf("size = %d, want 0", fi.Size())
++	}
++}
++
++func TestWrite_CreateTempFailsInReadOnlyDir(t *testing.T) {
++	dir := t.TempDir()
++	roDir := filepath.Join(dir, "ro")
++	if err := os.Mkdir(roDir, 0o555); err != nil {
++		t.Fatalf("setup Mkdir: %v", err)
++	}
++	// cleanup が削除できるよう書き込み権限を戻す。
++	t.Cleanup(func() { _ = os.Chmod(roDir, 0o755) })
++
++	// roDir は存在するので MkdirAll は成功するが、temp 作成は権限不足で失敗する。
++	if err := Write(filepath.Join(roDir, "out.txt"), []byte("x"), 0o644); err == nil {
++		t.Fatal("expected error writing into read-only dir, got nil")
++	}
++}
++
++func TestWrite_ParentPathIsFile(t *testing.T) {
++	dir := t.TempDir()
++	// blocker を通常ファイルとして作成し、その配下を親に持つ path を要求する。
++	// MkdirAll は祖先が file の場合に失敗するため、Write は error を返し、
++	// かつ temp を残さないこと。
++	blocker := filepath.Join(dir, "blocker")
++	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
++		t.Fatalf("setup WriteFile: %v", err)
++	}
++	path := filepath.Join(blocker, "child", "out.txt")
++
++	if err := Write(path, []byte("y"), 0o644); err == nil {
++		t.Fatal("expected error when parent path is a regular file, got nil")
++	}
++	noTempLeftover(t, dir)
++}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/audit/sink.go fixed/yagura-v0.34.1/internal/audit/sink.go
 --- a/yagura-v0.34.1/internal/audit/sink.go	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/audit/sink.go	2026-06-03 04:24:21.704121756 +0000
