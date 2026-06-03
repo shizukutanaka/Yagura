@@ -2244,37 +2244,44 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		got := compactDescription(in)
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools.go fixed/yagura-v0.34.1/internal/mcp/tools.go
 --- a/yagura-v0.34.1/internal/mcp/tools.go	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/mcp/tools.go	2026-06-03 05:28:43.392257642 +0000
-@@ -16,25 +16,18 @@
++++ b/yagura-v0.34.1/internal/mcp/tools.go	2026-06-03 05:34:42.940270293 +0000
+@@ -10,34 +10,18 @@
+ import (
+ 	"context"
+ 	"encoding/json"
+-	"fmt"
+ 	"os"
+-	"path/filepath"
  	"sort"
  	"strings"
  	"time"
 -	"github.com/shizukutanaka/yagura/internal/aiverify"
-+
- 	"github.com/shizukutanaka/yagura/internal/agentmd"
+-	"github.com/shizukutanaka/yagura/internal/agentmd"
 -	"github.com/shizukutanaka/yagura/internal/alertfix"
-+	"github.com/shizukutanaka/yagura/internal/aiverify"
++
  	"github.com/shizukutanaka/yagura/internal/atomicfile"
- 	"github.com/shizukutanaka/yagura/internal/featurelist"
+-	"github.com/shizukutanaka/yagura/internal/featurelist"
 -	"github.com/shizukutanaka/yagura/internal/initps1"
 -	"github.com/shizukutanaka/yagura/internal/initsh"
 -	"github.com/shizukutanaka/yagura/internal/progressfile"
 -	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 -	"github.com/shizukutanaka/yagura/internal/harness"
  	"github.com/shizukutanaka/yagura/internal/handoff"
-+	"github.com/shizukutanaka/yagura/internal/harness"
  	"github.com/shizukutanaka/yagura/internal/osv"
 -	"github.com/shizukutanaka/yagura/internal/pindrift"
- 	"github.com/shizukutanaka/yagura/internal/plantracker"
+-	"github.com/shizukutanaka/yagura/internal/plantracker"
 -	"github.com/shizukutanaka/yagura/internal/project"
- 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
+-	"github.com/shizukutanaka/yagura/internal/qualitycheck"
  	"github.com/shizukutanaka/yagura/internal/quotamonitor"
  	"github.com/shizukutanaka/yagura/internal/registry"
 -	"github.com/shizukutanaka/yagura/internal/sbom"
  	"github.com/shizukutanaka/yagura/internal/scorecard"
  	"github.com/shizukutanaka/yagura/internal/secretscan"
- 	"github.com/shizukutanaka/yagura/internal/testcoverage"
-@@ -54,10 +47,10 @@
+-	"github.com/shizukutanaka/yagura/internal/testcoverage"
+ )
+ 
+ // Deps はツールが必要とする依存。
+@@ -54,10 +38,10 @@
  	MainVersion    string           // SBOM 生成時のメイン version(例: "0.9.0")
  
  	// v0.13.0: agent handoff layer
@@ -2289,7 +2296,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  }
  
  // QuotaMonitor は両 agent の quota 状態を管理する interface。
-@@ -193,16 +186,16 @@
+@@ -193,16 +177,16 @@
  // ─── yagura_list ─────────────────────────────────────────────
  
  type listOut struct {
@@ -2316,7 +2323,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  }
  
  // ─── yagura_get ──────────────────────────────────────────────
-@@ -212,14 +205,14 @@
+@@ -212,14 +196,14 @@
  // ─── yagura_today ────────────────────────────────────────────
  
  type todayItem struct {
@@ -2339,7 +2346,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  }
  
  // ─── yagura_register ─────────────────────────────────────────
-@@ -240,365 +233,6 @@
+@@ -240,365 +224,6 @@
  
  // projectHealthSummary は 1 プロジェクトの security 状態を返す。
  
@@ -2705,7 +2712,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  // ─── yagura_quota_forecast (v0.15.0) ─────────────────────────
  
  // ─── yagura_usage_summary (v0.16.0) ──────────────────────────
-@@ -611,7 +245,7 @@
+@@ -611,7 +236,7 @@
  // 外から注入する設計にする。
  func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
  	return &Tool{
@@ -2714,7 +2721,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[S] Per-tool byte counts since daemon start.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -645,7 +279,7 @@
+@@ -645,176 +270,10 @@
  }
  
  // ─── yagura_graph_neighbors / impact / stats (v0.18.0) ───────
@@ -2723,29 +2730,66 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  // Inspired by cortex (aircloset, 辻 2026/05) "Product Graph" 構想:
  // portfolio の depends_on を semantic graph として AI から探索可能にする。
  
-@@ -658,14 +292,14 @@
- 
- func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
- 	return &Tool{
+-// ─── yagura_quality_check (v0.19.0) ───────────────────────────
+-//
+-// cortex (aircloset 2026/05) 翻訳: 「逸脱を物理的に潰す」品質ゲート。
+-// `as any` / @ts-ignore / eslint-disable / TODO / FIXME 等を line-based
+-// regex で検出し、severity 別に集計する。CI で `prohibited > 0` なら fail
+-// するのが想定運用。
+-
+-func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
+-	return &Tool{
 -		Name: "yagura_quality_check",
-+		Name:        "yagura_quality_check",
- 		Description: "[G] Code lint: as any, ts-ignore, TODO. 3 severity tiers.",
- 		InputSchema: map[string]any{
- 			"type": "object",
- 			"properties": map[string]any{
+-		Description: "[G] Code lint: as any, ts-ignore, TODO. 3 severity tiers.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
 -				"files":    map[string]any{"type": "object"},
 -				"text":     map[string]any{"type": "string"},
 -				"language": map[string]any{"type": "string"},
-+				"files":        map[string]any{"type": "object"},
-+				"text":         map[string]any{"type": "string"},
-+				"language":     map[string]any{"type": "string"},
- 				"summary_only": map[string]any{"type": "boolean"},
- 			},
- 		},
-@@ -709,13 +343,13 @@
- // formatQualityResult is MCP-friendly output formatter.
- func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
- 	out := map[string]any{
+-				"summary_only": map[string]any{"type": "boolean"},
+-			},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			var in struct {
+-				Files       map[string]string `json:"files"`
+-				Text        string            `json:"text"`
+-				Language    string            `json:"language"`
+-				SummaryOnly bool              `json:"summary_only"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input", Cause: err}
+-			}
+-			if len(in.Files) == 0 && in.Text == "" {
+-				return nil, &ToolError{Code: "invalid_input",
+-					Message: "either 'files' or 'text' is required"}
+-			}
+-			rules := qualitycheck.DefaultRules()
+-
+-			if in.Text != "" {
+-				findings := qualitycheck.ScanText("<input>", in.Text, in.Language, rules)
+-				res := qualitycheck.Result{
+-					FilesScanned: 1,
+-					Findings:     findings,
+-					BySeverity:   map[qualitycheck.Severity]int{},
+-					ByRule:       map[string]int{},
+-				}
+-				for _, f := range findings {
+-					res.BySeverity[f.Severity]++
+-					res.ByRule[f.RuleID]++
+-				}
+-				return formatQualityResult(res, in.SummaryOnly), nil
+-			}
+-			// v0.23.0: cache 統合(content-hash で同 content の再 scan を skip)
+-			res := qualitycheck.ScanFilesCached(in.Files, rules, cache)
+-			return formatQualityResult(res, in.SummaryOnly), nil
+-		},
+-	}
+-}
+-
+-// formatQualityResult is MCP-friendly output formatter.
+-func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
+-	out := map[string]any{
 -		"files_scanned":   res.FilesScanned,
 -		"total_lines":     res.TotalLines,
 -		"finding_count":   len(res.Findings),
@@ -2753,44 +2797,109 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
 -		"by_rule":         res.ByRule,
 -		"has_prohibited":  res.HasProhibited(),
 -		"summary":         res.Summary(),
-+		"files_scanned":  res.FilesScanned,
-+		"total_lines":    res.TotalLines,
-+		"finding_count":  len(res.Findings),
-+		"by_severity":    res.BySeverity,
-+		"by_rule":        res.ByRule,
-+		"has_prohibited": res.HasProhibited(),
-+		"summary":        res.Summary(),
- 	}
- 	if !summaryOnly {
- 		out["findings"] = res.Findings
-@@ -730,7 +364,7 @@
- 
- func buildHarnessRecommendTool(d Deps) *Tool {
- 	return &Tool{
+-	}
+-	if !summaryOnly {
+-		out["findings"] = res.Findings
+-		if len(res.ByFile) > 0 {
+-			out["by_file"] = res.ByFile
+-		}
+-	}
+-	return out
+-}
+-
+-// ─── yagura_harness_recommend / skill_audit / subagent_audit (v0.19.0) ─
+-
+-func buildHarnessRecommendTool(d Deps) *Tool {
+-	return &Tool{
 -		Name: "yagura_harness_recommend",
-+		Name:        "yagura_harness_recommend",
- 		Description: "[G] Claude Code .claude/ scaffold by slug or language.",
- 		InputSchema: map[string]any{
- 			"type": "object",
-@@ -765,7 +399,7 @@
- 
- func buildSkillAuditTool(d Deps) *Tool {
- 	return &Tool{
+-		Description: "[G] Claude Code .claude/ scaffold by slug or language.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"slug":     map[string]any{"type": "string", "description": "project slug (looks up language from registry)"},
+-				"language": map[string]any{"type": "string", "description": "language override (go/typescript/python/rust/...)"},
+-			},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			var in struct {
+-				Slug     string `json:"slug"`
+-				Language string `json:"language"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input", Cause: err}
+-			}
+-			lang := in.Language
+-			if lang == "" && in.Slug != "" {
+-				p, err := d.Registry.Get(in.Slug)
+-				if err == nil && p != nil {
+-					lang = p.Language
+-				}
+-			}
+-			if lang == "" {
+-				return nil, &ToolError{Code: "invalid_input",
+-					Message: "either slug (with registered language) or language must be provided"}
+-			}
+-			return harness.RecommendForLanguage(lang), nil
+-		},
+-	}
+-}
+-
+-func buildSkillAuditTool(d Deps) *Tool {
+-	return &Tool{
 -		Name: "yagura_skill_audit",
-+		Name:        "yagura_skill_audit",
- 		Description: "[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score.",
- 		InputSchema: map[string]any{
- 			"type": "object",
-@@ -791,7 +425,7 @@
- 
- func buildSubagentAuditTool(d Deps) *Tool {
- 	return &Tool{
+-		Description: "[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"content": map[string]any{"type": "string", "description": "full SKILL.md text including frontmatter"},
+-			},
+-			"required": []string{"content"},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			var in struct {
+-				Content string `json:"content"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input", Cause: err}
+-			}
+-			if in.Content == "" {
+-				return nil, &ToolError{Code: "invalid_input", Message: "content required"}
+-			}
+-			return harness.AuditSkill(in.Content), nil
+-		},
+-	}
+-}
+-
+-func buildSubagentAuditTool(d Deps) *Tool {
+-	return &Tool{
 -		Name: "yagura_subagent_audit",
-+		Name:        "yagura_subagent_audit",
- 		Description: "[G] Subagent .md audit: prompt style, tools, description.",
- 		InputSchema: map[string]any{
- 			"type": "object",
-@@ -822,7 +456,7 @@
+-		Description: "[G] Subagent .md audit: prompt style, tools, description.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"content": map[string]any{"type": "string", "description": "full subagent .md text including frontmatter"},
+-			},
+-			"required": []string{"content"},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			var in struct {
+-				Content string `json:"content"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input", Cause: err}
+-			}
+-			if in.Content == "" {
+-				return nil, &ToolError{Code: "invalid_input", Message: "content required"}
+-			}
+-			return harness.AuditSubagent(in.Content), nil
+-		},
+-	}
+-}
+-
+ // ─── yagura_tools_catalog (v0.22.0) ──────────────────────────
+ //
+ // Compact mode の補完: 短縮 description で意味が掴めない場合の lazy detail fetch。
+@@ -822,7 +281,7 @@
  
  func buildToolsCatalogTool(s *Server) *Tool {
  	return &Tool{
@@ -2799,7 +2908,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] Full tool details lookup. Use when compact mode hides info you need.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -836,7 +470,11 @@
+@@ -836,7 +295,11 @@
  				Name  string `json:"name"`
  				Query string `json:"query"`
  			}
@@ -2812,7 +2921,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  
  			s.mu.RLock()
  			defer s.mu.RUnlock()
-@@ -885,7 +523,7 @@
+@@ -885,7 +348,7 @@
  
  func buildDedupeStatsTool(s *Server) *Tool {
  	return &Tool{
@@ -2821,46 +2930,372 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -905,7 +543,7 @@
- 
- func buildPlanStatusTool(d Deps, cache plantracker.CacheLike) *Tool {
- 	return &Tool{
--		Name: "yagura_plan_status",
-+		Name:        "yagura_plan_status",
- 		Description: "[G] Plan.md progress for project. Parses checkboxes + required sections (目的/スコープ/フェーズ/DoD).",
- 		InputSchema: map[string]any{
- 			"type": "object",
-@@ -968,7 +606,7 @@
- 
- func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
- 	return &Tool{
--		Name: "yagura_release_radar",
-+		Name:        "yagura_release_radar",
- 		Description: "[S] Cross-project release readiness ranking. Aggregates Plan/CI/issues/quality/AI-risk.",
- 		InputSchema: map[string]any{
- 			"type": "object",
-@@ -1123,7 +761,7 @@
- 
- func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
- 	return &Tool{
--		Name: "yagura_ai_verify",
-+		Name:        "yagura_ai_verify",
- 		Description: "[G] AI code risk audit. 6 categories: auth/billing/data/external/crypto/secret. 2x multiplier inside AI-marker zones.",
- 		InputSchema: map[string]any{
- 			"type": "object",
-@@ -1222,7 +860,7 @@
- 
- func buildTestAuditTool(d Deps) *Tool {
- 	return &Tool{
--		Name: "yagura_test_audit",
-+		Name:        "yagura_test_audit",
- 		Description: "[G] Source-test coverage detection. Go/TS/JS/Python/Rust/Java filename + Rust inline #[cfg(test)] + Python doctest.",
- 		InputSchema: map[string]any{
- 			"type": "object",
-@@ -1259,231 +897,6 @@
+@@ -897,806 +360,6 @@
  	}
  }
  
+-// ─── yagura_plan_status / yagura_release_radar (v0.24.0) ─────
+-//
+-// Plan.md aware portfolio orchestration. m's harness G1.P で defined された
+-// 必須記載項目 (目的/スコープ/フェーズ/DoD) を 23+ projects 横断で計測し、
+-// "次に release すべき project" を機械的にランク付け。
+-
+-func buildPlanStatusTool(d Deps, cache plantracker.CacheLike) *Tool {
+-	return &Tool{
+-		Name: "yagura_plan_status",
+-		Description: "[G] Plan.md progress for project. Parses checkboxes + required sections (目的/スコープ/フェーズ/DoD).",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"slug": map[string]any{"type": "string"},
+-			},
+-			"required": []string{"slug"},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			var in struct {
+-				Slug string `json:"slug"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input", Cause: err}
+-			}
+-			if in.Slug == "" {
+-				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
+-			}
+-			p, err := d.Registry.Get(in.Slug)
+-			if err != nil {
+-				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
+-			}
+-			content, path, err := loadPlanMd(p.LocalPath)
+-			if err != nil {
+-				return map[string]any{
+-					"slug":    in.Slug,
+-					"plan_md": "",
+-					"error":   err.Error(),
+-				}, nil
+-			}
+-			state, _ := plantracker.ParseCached(content, cache)
+-			return map[string]any{
+-				"slug":    in.Slug,
+-				"plan_md": path,
+-				"state":   state,
+-				"summary": state.Summary(),
+-			}, nil
+-		},
+-	}
+-}
+-
+-// loadPlanMd は LocalPath 配下から Plan.md / PLAN.md / plan.md を順に試行する。
+-//
+-// 戻り値: (content, found path, error)。LocalPath 空 or 全候補無し→ error。
+-// path traversal 防止: LocalPath は registry validate 済み(プロジェクトの project.Validate)、
+-// ファイル名は固定 list なので新たな攻撃ベクタなし。
+-func loadPlanMd(localPath string) (string, string, error) {
+-	if localPath == "" {
+-		return "", "", fmt.Errorf("project has no local_path")
+-	}
+-	candidates := []string{"Plan.md", "PLAN.md", "plan.md"}
+-	for _, name := range candidates {
+-		full := filepath.Join(localPath, name)
+-		if data, err := os.ReadFile(full); err == nil {
+-			return string(data), full, nil
+-		}
+-	}
+-	return "", "", fmt.Errorf("no Plan.md / PLAN.md / plan.md found in %s", localPath)
+-}
+-
+-func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
+-	return &Tool{
+-		Name: "yagura_release_radar",
+-		Description: "[S] Cross-project release readiness ranking. Aggregates Plan/CI/issues/quality/AI-risk.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"limit":     map[string]any{"type": "integer"},
+-				"scan_code": map[string]any{"type": "boolean"},
+-			},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			var in struct {
+-				Limit    int  `json:"limit"`
+-				ScanCode bool `json:"scan_code"` // v0.25: true なら aiverify scan
+-			}
+-			if len(args) > 0 {
+-				if err := json.Unmarshal(args, &in); err != nil {
+-					return nil, &ToolError{Code: "invalid_input",
+-						Message: "invalid arguments", Cause: err}
+-				}
+-			}
+-			if in.Limit <= 0 {
+-				in.Limit = 10
+-			}
+-			projects := d.Registry.List()
+-			items := make([]plantracker.RankedProject, 0, len(projects))
+-			for _, p := range projects {
+-				if p.LocalPath == "" {
+-					continue
+-				}
+-				content, _, err := loadPlanMd(p.LocalPath)
+-				if err != nil {
+-					continue
+-				}
+-				plan, _ := plantracker.ParseCached(content, cache)
+-				ciStatus := string(p.CIStatus)
+-				if ciStatus == "" {
+-					ciStatus = "unknown"
+-				}
+-				openCrit := p.VulnCritical
+-
+-				// v0.25.0: scan_code=true なら aiverify を呼んで AI risk を統合
+-				var aiResult aiverify.Result
+-				if in.ScanCode {
+-					aiResult = scanProjectAICode(p.LocalPath)
+-				}
+-
+-				readiness := plantracker.ReleaseReadinessExt(plan, ciStatus, openCrit,
+-					false, aiResult.RiskScore, aiResult.HasCritical)
+-				reason := pickReason(plan, ciStatus, openCrit, aiResult.HasCritical, aiResult.RiskScore)
+-				items = append(items, plantracker.RankedProject{
+-					Slug:               p.Slug,
+-					Readiness:          readiness,
+-					PlanProgressPct:    plan.ProgressPct,
+-					CurrentPhase:       plan.CurrentPhase,
+-					CIStatus:           ciStatus,
+-					OpenIssuesCritical: openCrit,
+-					AIRiskScore:        aiResult.RiskScore,
+-					AIHasCritical:      aiResult.HasCritical,
+-					AIGenLineCount:     aiResult.AIGenLines,
+-					Reason:             reason,
+-				})
+-			}
+-			ranked := plantracker.Rank(items)
+-			if len(ranked) > in.Limit {
+-				ranked = ranked[:in.Limit]
+-			}
+-			return map[string]any{
+-				"ranked":          ranked,
+-				"total_projects":  len(projects),
+-				"projects_scored": len(items),
+-				"scan_code":       in.ScanCode,
+-			}, nil
+-		},
+-	}
+-}
+-
+-// scanProjectAICode は LocalPath 配下の主要 source file を aiverify で scan する。
+-//
+-// 完全 walk は重いので、上位 N file (size 制限あり) のみ。
+-// 言語: Go / Python / TS / JS / Rust。
+-// 各 file 最大 256KB、合計 64 file まで(暴走防止)。
+-func scanProjectAICode(localPath string) aiverify.Result {
+-	const maxFiles = 64
+-	const maxFileSize = 256 * 1024
+-
+-	files := map[string]string{}
+-	walked := 0
+-	_ = filepath.Walk(localPath, func(path string, info os.FileInfo, err error) error {
+-		if err != nil || info == nil || info.IsDir() {
+-			return nil
+-		}
+-		if walked >= maxFiles {
+-			return filepath.SkipDir
+-		}
+-		// 隠しディレクトリと vendor / node_modules を skip
+-		base := filepath.Base(path)
+-		if strings.HasPrefix(base, ".") || base == "vendor" || base == "node_modules" {
+-			return nil
+-		}
+-		ext := filepath.Ext(path)
+-		switch ext {
+-		case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs":
+-		default:
+-			return nil
+-		}
+-		if info.Size() > maxFileSize {
+-			return nil
+-		}
+-		data, rerr := os.ReadFile(path)
+-		if rerr != nil {
+-			return nil
+-		}
+-		rel, _ := filepath.Rel(localPath, path)
+-		files[rel] = string(data)
+-		walked++
+-		return nil
+-	})
+-	if len(files) == 0 {
+-		return aiverify.Result{}
+-	}
+-	return aiverify.Scan(files)
+-}
+-
+-// pickReason は readiness 阻害の最大要因を 1 文で返す。
+-func pickReason(plan plantracker.PlanState, ciStatus string, openCrit int,
+-	aiCritical bool, aiRisk int) string {
+-	if aiCritical {
+-		return "AI-generated critical risk (review required)"
+-	}
+-	if openCrit > 0 {
+-		return fmt.Sprintf("%d critical issues blocking", openCrit)
+-	}
+-	if strings.EqualFold(ciStatus, "failing") {
+-		return "CI failing"
+-	}
+-	if !plan.IsHealthy {
+-		return "Plan.md missing required sections"
+-	}
+-	if plan.ProgressPct < 100 {
+-		return fmt.Sprintf("plan %d%% remaining", 100-plan.ProgressPct)
+-	}
+-	return "ready to release"
+-}
+-
+-// ─── yagura_ai_verify (v0.25.0) ──────────────────────────────
+-//
+-// AI-generated コードの risk pattern を検出する。m's harness G0.7 INVARIANT
+-// 「AI出力検証義務」への直接対応。
+-//
+-// Veracode 2025: 45% of AI code ships OWASP Top-10
+-// Apiiro Fortune 50: 322% privilege-escalation paths, 40% secrets exposure
+-// CodeRabbit: 1.7× issue multiplier — AI zone 内 finding は score 2x。
+-
+-func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
+-	return &Tool{
+-		Name: "yagura_ai_verify",
+-		Description: "[G] AI code risk audit. 6 categories: auth/billing/data/external/crypto/secret. 2x multiplier inside AI-marker zones.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"files":        map[string]any{"type": "object"},
+-				"text":         map[string]any{"type": "string"},
+-				"path":         map[string]any{"type": "string"},
+-				"summary_only": map[string]any{"type": "boolean"},
+-			},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			var in struct {
+-				Files       map[string]string `json:"files"`
+-				Text        string            `json:"text"`
+-				Path        string            `json:"path"`
+-				SummaryOnly bool              `json:"summary_only"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input", Cause: err}
+-			}
+-			if len(in.Files) == 0 && in.Text == "" {
+-				return nil, &ToolError{Code: "invalid_input",
+-					Message: "either 'files' or 'text' is required"}
+-			}
+-
+-			var res aiverify.Result
+-			if in.Text != "" {
+-				path := in.Path
+-				if path == "" {
+-					path = "<input>"
+-				}
+-				res = aiverify.Scan(map[string]string{path: in.Text})
+-			} else if cache != nil {
+-				res = aiverify.ScanCached(in.Files, cache)
+-			} else {
+-				res = aiverify.Scan(in.Files)
+-			}
+-
+-			// v0.26.0: testcoverage と結合し untested AI 生成を flag (+5/file)
+-			// files が複数与えられた場合のみ意味があるので text mode は skip
+-			if len(in.Files) > 0 {
+-				tcRes := testcoverage.Audit(in.Files)
+-				hasTestMap := make(map[string]bool, len(in.Files))
+-				// untested ではない source を has_test 認定
+-				untestedSet := make(map[string]bool, len(tcRes.UntestedFiles))
+-				for _, p := range tcRes.UntestedFiles {
+-					untestedSet[p] = true
+-				}
+-				for p := range in.Files {
+-					if testcoverage.IsTestFile(p) {
+-						continue
+-					}
+-					if !untestedSet[p] {
+-						hasTestMap[p] = true
+-					}
+-				}
+-				res = aiverify.AnnotateUntested(res, in.Files, func(p string) bool {
+-					return hasTestMap[p]
+-				})
+-			}
+-
+-			return formatAIVerifyResult(res, in.SummaryOnly), nil
+-		},
+-	}
+-}
+-
+-func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
+-	out := map[string]any{
+-		"files_scanned": res.FilesScanned,
+-		"total_lines":   res.TotalLines,
+-		"ai_gen_lines":  res.AIGenLines,
+-		"finding_count": len(res.Findings),
+-		"risk_score":    res.RiskScore,
+-		"has_critical":  res.HasCritical,
+-		"by_severity":   res.BySeverity,
+-		"by_category":   res.ByCategory,
+-		"summary":       res.Summary(),
+-	}
+-	if len(res.AIGenWithoutTests) > 0 {
+-		out["ai_gen_without_tests"] = res.AIGenWithoutTests
+-	}
+-	if !summaryOnly {
+-		out["findings"] = res.Findings
+-	}
+-	if res.CacheHits > 0 || res.CacheMisses > 0 {
+-		out["cache_hits"] = res.CacheHits
+-		out["cache_misses"] = res.CacheMisses
+-	}
+-	return out
+-}
+-
+-// ─── yagura_test_audit + ai_verify との結合 (v0.26.0) ───────
+-//
+-// m's harness G0.7 「テスト通過 + 人間確認が必須」への直接対応。
+-// language-aware な test file 検出 + AI 生成 untested risk 強化。
+-
+-func buildTestAuditTool(d Deps) *Tool {
+-	return &Tool{
+-		Name: "yagura_test_audit",
+-		Description: "[G] Source-test coverage detection. Go/TS/JS/Python/Rust/Java filename + Rust inline #[cfg(test)] + Python doctest.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"files":         map[string]any{"type": "object"},
+-				"untested_only": map[string]any{"type": "boolean"},
+-			},
+-			"required": []string{"files"},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			var in struct {
+-				Files        map[string]string `json:"files"`
+-				UntestedOnly bool              `json:"untested_only"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input", Cause: err}
+-			}
+-			if len(in.Files) == 0 {
+-				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+-			}
+-			res := testcoverage.Audit(in.Files)
+-			out := map[string]any{
+-				"files_scanned":     res.FilesScanned,
+-				"source_files":      res.SourceFiles,
+-				"test_files":        res.TestFiles,
+-				"sources_with_test": res.SourcesWithTest,
+-				"sources_no_test":   res.SourcesNoTest,
+-				"coverage_ratio":    res.CoverageRatio,
+-				"untested_files":    res.UntestedFiles,
+-				"by_language":       res.ByLanguage,
+-			}
+-			return out, nil
+-		},
+-	}
+-}
+-
 -// ─── yagura_alert_fix (v0.27.0) ──────────────────────────────
 -//
 -// cortex flywheel ④ Alert-Fix の yagura 実装。
@@ -3086,65 +3521,340 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
 -	}
 -}
 -
- // ─── v0.32.0: Bilateral harness — guides (feedforward) ────────────
- //
- // Martin Fowler's harness taxonomy: Computational × Inferential × Guide ×
-@@ -1492,14 +905,14 @@
- 
- func buildAgentsMdTool(d Deps) *Tool {
- 	return &Tool{
+-// ─── v0.32.0: Bilateral harness — guides (feedforward) ────────────
+-//
+-// Martin Fowler's harness taxonomy: Computational × Inferential × Guide ×
+-// Sensor. yagura v0.31 had 8 sensors but 0 guides (feedback-only). These
+-// tools add the missing Inferential Guide axis.
+-
+-func buildAgentsMdTool(d Deps) *Tool {
+-	return &Tool{
 -		Name: "yagura_agents_md",
-+		Name:        "yagura_agents_md",
- 		Description: "[G] Generate AGENTS.md for a registered project from Plan.md + registry facts. Cross-tool: Claude Code / Codex / Cursor.",
- 		InputSchema: map[string]any{
- 			"type": "object",
- 			"properties": map[string]any{
+-		Description: "[G] Generate AGENTS.md for a registered project from Plan.md + registry facts. Cross-tool: Claude Code / Codex / Cursor.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
 -				"slug":         map[string]any{"type": "string"},
-+				"slug":          map[string]any{"type": "string"},
- 				"include_rules": map[string]any{"type": "boolean", "description": "Include house rules section (default true)"},
+-				"include_rules": map[string]any{"type": "boolean", "description": "Include house rules section (default true)"},
 -				"write":        map[string]any{"type": "boolean", "description": "Also write to {local_path}/AGENTS.md (v0.33.0)"},
-+				"write":         map[string]any{"type": "boolean", "description": "Also write to {local_path}/AGENTS.md (v0.33.0)"},
- 			},
- 			"required": []string{"slug"},
- 		},
-@@ -1578,7 +991,7 @@
- 
- func buildFeatureListTool(d Deps) *Tool {
- 	return &Tool{
+-			},
+-			"required": []string{"slug"},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			var in struct {
+-				Slug         string `json:"slug"`
+-				IncludeRules *bool  `json:"include_rules"`
+-				Write        bool   `json:"write"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input", Cause: err}
+-			}
+-			if in.Slug == "" {
+-				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
+-			}
+-			p, err := d.Registry.Get(in.Slug)
+-			if err != nil {
+-				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
+-			}
+-			facts := agentmd.ProjectFacts{
+-				Slug:         p.Slug,
+-				DisplayName:  p.DisplayName,
+-				Repository:   p.Repository,
+-				Language:     p.Language,
+-				Stage:        string(p.Stage),
+-				LocalPath:    p.LocalPath,
+-				Tags:         p.Tags,
+-				DependsOn:    p.DependsOn,
+-				CIStatus:     string(p.CIStatus),
+-				OpenIssues:   p.OpenIssues,
+-				OpenPRs:      p.OpenPRs,
+-				VulnCritical: p.VulnCritical,
+-				VulnHigh:     p.VulnHigh,
+-				GeneratedBy:  "yagura " + version(),
+-			}
+-			// Plan.md があれば parse して description/phases を埋める
+-			// (DoD / Purpose / Scope の細粒度抽出は plantracker 拡張待ち)
+-			if p.LocalPath != "" {
+-				if content, _, err := loadPlanMd(p.LocalPath); err == nil {
+-					state := plantracker.Parse(content)
+-					// plantracker は全 ## を Phase とみなすので、
+-					// "フェーズ" / "Phase" header 配下の項目のみを真の phase
+-					// として扱う。それ以外は description/scope/DoD で拾う。
+-					for _, ph := range state.Phases {
+-						lower := strings.ToLower(ph.Name)
+-						if !strings.Contains(lower, "phase") &&
+-							!strings.Contains(ph.Name, "フェーズ") {
+-							continue
+-						}
+-						facts.Phases = append(facts.Phases,
+-							fmt.Sprintf("%s (%d/%d)", ph.Name, ph.CompletedTasks, ph.TotalTasks))
+-					}
+-					facts.Description = extractSection(content, []string{"目的", "Purpose"})
+-					facts.Scope = extractSection(content, []string{"スコープ", "Scope"})
+-					facts.DoD = extractDoDItems(content)
+-				}
+-			}
+-			body := agentmd.Generate(facts)
+-			result := map[string]any{
+-				"slug":     in.Slug,
+-				"body":     body,
+-				"length":   len(body),
+-				"filename": "AGENTS.md",
+-			}
+-			if in.Write && p.LocalPath != "" {
+-				path := filepath.Join(p.LocalPath, "AGENTS.md")
+-				if err := atomicWriteFile(path, []byte(body), 0o644); err != nil {
+-					return nil, &ToolError{Code: "write_failed", Message: err.Error()}
+-				}
+-				result["written_to"] = path
+-			}
+-			return result, nil
+-		},
+-	}
+-}
+-
+-func buildFeatureListTool(d Deps) *Tool {
+-	return &Tool{
 -		Name: "yagura_feature_list",
-+		Name:        "yagura_feature_list",
- 		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
- 		InputSchema: map[string]any{
- 			"type": "object",
-@@ -1643,7 +1056,7 @@
- 
- func buildHarnessCoverageTool(d Deps) *Tool {
- 	return &Tool{
+-		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
+-		InputSchema: map[string]any{
+-			"type": "object",
+-			"properties": map[string]any{
+-				"slug":  map[string]any{"type": "string"},
+-				"write": map[string]any{"type": "boolean", "description": "Also write to {local_path}/feature-list.json (v0.33.0)"},
+-			},
+-			"required": []string{"slug"},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			var in struct {
+-				Slug  string `json:"slug"`
+-				Write bool   `json:"write"`
+-			}
+-			if err := json.Unmarshal(args, &in); err != nil {
+-				return nil, &ToolError{Code: "invalid_input", Cause: err}
+-			}
+-			if in.Slug == "" {
+-				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
+-			}
+-			p, err := d.Registry.Get(in.Slug)
+-			if err != nil {
+-				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
+-			}
+-			if p.LocalPath == "" {
+-				return nil, &ToolError{Code: "invalid_input", Message: "project has no local_path; cannot read Plan.md"}
+-			}
+-			content, _, err := loadPlanMd(p.LocalPath)
+-			if err != nil {
+-				return nil, &ToolError{Code: "not_found", Message: "Plan.md not found", Cause: err}
+-			}
+-			state := plantracker.Parse(content)
+-			pin := planStateToFeatureInput(in.Slug, content, state)
+-			fl := featurelist.Build(pin, nil)
+-			result := map[string]any{
+-				"slug":         in.Slug,
+-				"feature_list": fl,
+-				"stats":        fl.Stats,
+-				"filename":     "feature-list.json",
+-			}
+-			if in.Write {
+-				raw, err := featurelist.Marshal(fl)
+-				if err != nil {
+-					return nil, &ToolError{Code: "write_failed", Message: err.Error()}
+-				}
+-				path := filepath.Join(p.LocalPath, "feature-list.json")
+-				if err := atomicWriteFile(path, raw, 0o644); err != nil {
+-					return nil, &ToolError{Code: "write_failed", Message: err.Error()}
+-				}
+-				result["written_to"] = path
+-			}
+-			return result, nil
+-		},
+-	}
+-}
+-
+-// ─── v0.32.0: Harness coverage self-audit ────────────────────────
+-//
+-// Fowler taxonomy: report which Computational × Inferential × Guide × Sensor
+-// quadrants yagura covers for this portfolio. Surfaces the formerly hidden
+-// "yagura has 0 guides" gap — and confirms it's resolved.
+-
+-func buildHarnessCoverageTool(d Deps) *Tool {
+-	return &Tool{
 -		Name: "yagura_harness_coverage",
-+		Name:        "yagura_harness_coverage",
- 		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
- 		InputSchema: map[string]any{
- 			"type":       "object",
-@@ -1687,11 +1100,11 @@
- 				}
- 			}
- 			return map[string]any{
+-		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
+-		InputSchema: map[string]any{
+-			"type":       "object",
+-			"properties": map[string]any{},
+-		},
+-		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			// 自分自身が提供する harness 要素を列挙する。
+-			// 既存 MCP tool を taxonomy にマップ:
+-			matrix := map[string]map[string][]string{
+-				"guide": {
+-					"computational": {
+-						"yagura_feature_list (Plan.md → feature-list.json scaffold)",
+-					},
+-					"inferential": {
+-						"yagura_agents_md (AGENTS.md scaffold for Claude Code/Codex/Cursor)",
+-						"yagura_harness_recommend (per-project guidance)",
+-						"yagura_skill_audit / yagura_subagent_audit (skill scaffolding)",
+-					},
+-				},
+-				"sensor": {
+-					"computational": {
+-						"yagura_quality_check (static code analysis)",
+-						"yagura_secretscan (secret detection)",
+-						"yagura_gha_audit (workflow audit)",
+-						"yagura_pin_drift (dep pin drift)",
+-						"yagura_ai_verify (AI-generated code patterns)",
+-						"yagura_test_audit (source-test coverage)",
+-						"yagura_vulns (OSV.dev)",
+-						"yagura_scorecard (OpenSSF)",
+-						"yagura_sbom (CycloneDX)",
+-					},
+-					"inferential": {
+-						"(intentionally none — ADR-0001 zero-dep precludes LLM-as-judge in-process)",
+-					},
+-				},
+-			}
+-			counts := map[string]int{}
+-			for axis, ci := range matrix {
+-				for kind, tools := range ci {
+-					counts[axis+"_"+kind] = len(tools)
+-				}
+-			}
+-			return map[string]any{
 -				"taxonomy_source":      "https://martinfowler.com/articles/harness-engineering.html",
 -				"matrix":               matrix,
 -				"counts":               counts,
-+				"taxonomy_source":       "https://martinfowler.com/articles/harness-engineering.html",
-+				"matrix":                matrix,
-+				"counts":                counts,
- 				"feedback_only_warning": false, // v0.32 で解消
+-				"feedback_only_warning": false, // v0.32 で解消
 -				"note": "yagura intentionally leaves the inferential-sensor quadrant empty (LLM-as-judge would violate ADR-0001 zero-deps). External Claude/GPT review can be plugged in via Claude Code subagents and reported back via /hooks/claude-code.",
-+				"note":                  "yagura intentionally leaves the inferential-sensor quadrant empty (LLM-as-judge would violate ADR-0001 zero-deps). External Claude/GPT review can be plugged in via Claude Code subagents and reported back via /hooks/claude-code.",
- 			}, nil
- 		},
- 	}
-@@ -1825,317 +1238,6 @@
- 	return pin
+-			}, nil
+-		},
+-	}
+-}
+-
+ // version returns the running yagura version. main.go reflects its own
+ // version into a package-level var via SetVersion at init.
+ var serverVersion = "unknown"
+@@ -1711,431 +374,6 @@
+ 	return serverVersion
  }
  
+-// extractSection は Plan.md の本文から `## <header>` 直下の段落(空行か次の
+-// ## まで)を抜き出す。複数候補があれば最初に見つかった方を返す。
+-//
+-// v0.32 で agentmd が Purpose/Scope を埋めるために必要。plantracker は
+-// section の有無 (HasPurpose/HasScope) のみ持ち、本文は持っていなかった。
+-func extractSection(content string, headers []string) string {
+-	lines := strings.Split(content, "\n")
+-	for _, h := range headers {
+-		for i, line := range lines {
+-			ts := strings.TrimSpace(line)
+-			if !strings.HasPrefix(ts, "##") {
+-				continue
+-			}
+-			rest := strings.TrimSpace(strings.TrimLeft(ts, "#"))
+-			if !strings.EqualFold(rest, h) {
+-				continue
+-			}
+-			// 次の ## まで集める
+-			var body []string
+-			for j := i + 1; j < len(lines); j++ {
+-				if strings.HasPrefix(strings.TrimSpace(lines[j]), "##") {
+-					break
+-				}
+-				body = append(body, lines[j])
+-			}
+-			out := strings.TrimSpace(strings.Join(body, "\n"))
+-			if out != "" {
+-				return out
+-			}
+-		}
+-	}
+-	return ""
+-}
+-
+-// extractDoDItems は DoD / 完了定義 / Definition of Done section の bullet を
+-// list で返す。featurelist の acceptance_criteria + agentmd の DoD 表示に使う。
+-func extractDoDItems(content string) []string {
+-	body := extractSection(content, []string{"完了定義", "Definition of Done", "DoD"})
+-	if body == "" {
+-		return nil
+-	}
+-	var out []string
+-	for _, line := range strings.Split(body, "\n") {
+-		ts := strings.TrimSpace(line)
+-		// "- [ ] xxx", "- [x] xxx", "- xxx" 全て対象
+-		if !strings.HasPrefix(ts, "- ") && !strings.HasPrefix(ts, "* ") {
+-			continue
+-		}
+-		item := strings.TrimSpace(ts[2:])
+-		// checkbox を除去
+-		if strings.HasPrefix(item, "[ ]") || strings.HasPrefix(item, "[x]") || strings.HasPrefix(item, "[X]") {
+-			item = strings.TrimSpace(item[3:])
+-		}
+-		if item != "" {
+-			out = append(out, item)
+-		}
+-	}
+-	return out
+-}
+-
+-// planStateToFeatureInput は plantracker.PlanState + 元 content から
+-// featurelist.PlanInput を組み立てる。
+-//
+-// plantracker は phase 単位の集計のみ持ち、個別 task title は捨てているので、
+-// content を再 scan して checkbox 行を拾う。
+-//
+-// "フェーズ" / "Phase" header の子のみを feature とみなす(他の section の
+-// checkbox は features にしない — DoD は acceptance_criteria 側に集約済)。
+-func planStateToFeatureInput(project, content string, state plantracker.PlanState) featurelist.PlanInput {
+-	pin := featurelist.PlanInput{
+-		Project: project,
+-		DoD:     extractDoDItems(content),
+-	}
+-	lines := strings.Split(content, "\n")
+-	for i, ph := range state.Phases {
+-		lower := strings.ToLower(ph.Name)
+-		isPhaseSection := strings.Contains(lower, "phase") || strings.Contains(ph.Name, "フェーズ")
+-		if !isPhaseSection {
+-			continue
+-		}
+-		startLine := ph.LineStart // 1-indexed (plantracker convention)
+-		endLine := len(lines)
+-		if i+1 < len(state.Phases) {
+-			endLine = state.Phases[i+1].LineStart - 1
+-		}
+-		phIn := featurelist.PhaseInput{Name: ph.Name}
+-		for j := startLine; j < endLine && j < len(lines); j++ {
+-			ts := strings.TrimSpace(lines[j])
+-			if !strings.HasPrefix(ts, "- [") && !strings.HasPrefix(ts, "* [") {
+-				continue
+-			}
+-			done := false
+-			var item string
+-			if strings.HasPrefix(ts, "- [x]") || strings.HasPrefix(ts, "* [x]") ||
+-				strings.HasPrefix(ts, "- [X]") || strings.HasPrefix(ts, "* [X]") {
+-				done = true
+-				item = strings.TrimSpace(ts[5:])
+-			} else if strings.HasPrefix(ts, "- [ ]") || strings.HasPrefix(ts, "* [ ]") {
+-				item = strings.TrimSpace(ts[5:])
+-			} else {
+-				continue
+-			}
+-			if item == "" {
+-				continue
+-			}
+-			phIn.Tasks = append(phIn.Tasks, featurelist.TaskInput{Title: item, Done: done})
+-		}
+-		if len(phIn.Tasks) > 0 {
+-			pin.Phases = append(pin.Phases, phIn)
+-		}
+-	}
+-	return pin
+-}
+-
 -// ─── v0.33.0: closing the loop — disk write + hook query ─────────
 -
 -// buildHookTimelineTool exposes Claude Code hook events via MCP query.
@@ -3971,6 +4681,442 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  				},
  			},
  		},
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_harness.go fixed/yagura-v0.34.1/internal/mcp/tools_harness.go
+--- a/yagura-v0.34.1/internal/mcp/tools_harness.go	1970-01-01 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_harness.go	2026-06-03 05:34:42.940270293 +0000
+@@ -0,0 +1,432 @@
++// tools_harness.go: v0.32 bilateral harness guides + skill/subagent audit
++// (harness_recommend / skill_audit / subagent_audit / agents_md / feature_list / harness_coverage)。tools.go から分割。
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"path/filepath"
++	"strings"
++
++	"github.com/shizukutanaka/yagura/internal/agentmd"
++	"github.com/shizukutanaka/yagura/internal/featurelist"
++	"github.com/shizukutanaka/yagura/internal/harness"
++	"github.com/shizukutanaka/yagura/internal/plantracker"
++)
++
++// ─── yagura_harness_recommend / skill_audit / subagent_audit (v0.19.0) ─
++
++func buildHarnessRecommendTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_harness_recommend",
++		Description: "[G] Claude Code .claude/ scaffold by slug or language.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"slug":     map[string]any{"type": "string", "description": "project slug (looks up language from registry)"},
++				"language": map[string]any{"type": "string", "description": "language override (go/typescript/python/rust/...)"},
++			},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Slug     string `json:"slug"`
++				Language string `json:"language"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			lang := in.Language
++			if lang == "" && in.Slug != "" {
++				p, err := d.Registry.Get(in.Slug)
++				if err == nil && p != nil {
++					lang = p.Language
++				}
++			}
++			if lang == "" {
++				return nil, &ToolError{Code: "invalid_input",
++					Message: "either slug (with registered language) or language must be provided"}
++			}
++			return harness.RecommendForLanguage(lang), nil
++		},
++	}
++}
++
++func buildSkillAuditTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_skill_audit",
++		Description: "[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"content": map[string]any{"type": "string", "description": "full SKILL.md text including frontmatter"},
++			},
++			"required": []string{"content"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Content string `json:"content"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if in.Content == "" {
++				return nil, &ToolError{Code: "invalid_input", Message: "content required"}
++			}
++			return harness.AuditSkill(in.Content), nil
++		},
++	}
++}
++
++func buildSubagentAuditTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_subagent_audit",
++		Description: "[G] Subagent .md audit: prompt style, tools, description.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"content": map[string]any{"type": "string", "description": "full subagent .md text including frontmatter"},
++			},
++			"required": []string{"content"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Content string `json:"content"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if in.Content == "" {
++				return nil, &ToolError{Code: "invalid_input", Message: "content required"}
++			}
++			return harness.AuditSubagent(in.Content), nil
++		},
++	}
++}
++
++// ─── v0.32.0: Bilateral harness — guides (feedforward) ────────────
++//
++// Martin Fowler's harness taxonomy: Computational × Inferential × Guide ×
++// Sensor. yagura v0.31 had 8 sensors but 0 guides (feedback-only). These
++// tools add the missing Inferential Guide axis.
++
++func buildAgentsMdTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_agents_md",
++		Description: "[G] Generate AGENTS.md for a registered project from Plan.md + registry facts. Cross-tool: Claude Code / Codex / Cursor.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"slug":          map[string]any{"type": "string"},
++				"include_rules": map[string]any{"type": "boolean", "description": "Include house rules section (default true)"},
++				"write":         map[string]any{"type": "boolean", "description": "Also write to {local_path}/AGENTS.md (v0.33.0)"},
++			},
++			"required": []string{"slug"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Slug         string `json:"slug"`
++				IncludeRules *bool  `json:"include_rules"`
++				Write        bool   `json:"write"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if in.Slug == "" {
++				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
++			}
++			p, err := d.Registry.Get(in.Slug)
++			if err != nil {
++				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
++			}
++			facts := agentmd.ProjectFacts{
++				Slug:         p.Slug,
++				DisplayName:  p.DisplayName,
++				Repository:   p.Repository,
++				Language:     p.Language,
++				Stage:        string(p.Stage),
++				LocalPath:    p.LocalPath,
++				Tags:         p.Tags,
++				DependsOn:    p.DependsOn,
++				CIStatus:     string(p.CIStatus),
++				OpenIssues:   p.OpenIssues,
++				OpenPRs:      p.OpenPRs,
++				VulnCritical: p.VulnCritical,
++				VulnHigh:     p.VulnHigh,
++				GeneratedBy:  "yagura " + version(),
++			}
++			// Plan.md があれば parse して description/phases を埋める
++			// (DoD / Purpose / Scope の細粒度抽出は plantracker 拡張待ち)
++			if p.LocalPath != "" {
++				if content, _, err := loadPlanMd(p.LocalPath); err == nil {
++					state := plantracker.Parse(content)
++					// plantracker は全 ## を Phase とみなすので、
++					// "フェーズ" / "Phase" header 配下の項目のみを真の phase
++					// として扱う。それ以外は description/scope/DoD で拾う。
++					for _, ph := range state.Phases {
++						lower := strings.ToLower(ph.Name)
++						if !strings.Contains(lower, "phase") &&
++							!strings.Contains(ph.Name, "フェーズ") {
++							continue
++						}
++						facts.Phases = append(facts.Phases,
++							fmt.Sprintf("%s (%d/%d)", ph.Name, ph.CompletedTasks, ph.TotalTasks))
++					}
++					facts.Description = extractSection(content, []string{"目的", "Purpose"})
++					facts.Scope = extractSection(content, []string{"スコープ", "Scope"})
++					facts.DoD = extractDoDItems(content)
++				}
++			}
++			body := agentmd.Generate(facts)
++			result := map[string]any{
++				"slug":     in.Slug,
++				"body":     body,
++				"length":   len(body),
++				"filename": "AGENTS.md",
++			}
++			if in.Write && p.LocalPath != "" {
++				path := filepath.Join(p.LocalPath, "AGENTS.md")
++				if err := atomicWriteFile(path, []byte(body), 0o644); err != nil {
++					return nil, &ToolError{Code: "write_failed", Message: err.Error()}
++				}
++				result["written_to"] = path
++			}
++			return result, nil
++		},
++	}
++}
++
++func buildFeatureListTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_feature_list",
++		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"slug":  map[string]any{"type": "string"},
++				"write": map[string]any{"type": "boolean", "description": "Also write to {local_path}/feature-list.json (v0.33.0)"},
++			},
++			"required": []string{"slug"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Slug  string `json:"slug"`
++				Write bool   `json:"write"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if in.Slug == "" {
++				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
++			}
++			p, err := d.Registry.Get(in.Slug)
++			if err != nil {
++				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
++			}
++			if p.LocalPath == "" {
++				return nil, &ToolError{Code: "invalid_input", Message: "project has no local_path; cannot read Plan.md"}
++			}
++			content, _, err := loadPlanMd(p.LocalPath)
++			if err != nil {
++				return nil, &ToolError{Code: "not_found", Message: "Plan.md not found", Cause: err}
++			}
++			state := plantracker.Parse(content)
++			pin := planStateToFeatureInput(in.Slug, content, state)
++			fl := featurelist.Build(pin, nil)
++			result := map[string]any{
++				"slug":         in.Slug,
++				"feature_list": fl,
++				"stats":        fl.Stats,
++				"filename":     "feature-list.json",
++			}
++			if in.Write {
++				raw, err := featurelist.Marshal(fl)
++				if err != nil {
++					return nil, &ToolError{Code: "write_failed", Message: err.Error()}
++				}
++				path := filepath.Join(p.LocalPath, "feature-list.json")
++				if err := atomicWriteFile(path, raw, 0o644); err != nil {
++					return nil, &ToolError{Code: "write_failed", Message: err.Error()}
++				}
++				result["written_to"] = path
++			}
++			return result, nil
++		},
++	}
++}
++
++// ─── v0.32.0: Harness coverage self-audit ────────────────────────
++//
++// Fowler taxonomy: report which Computational × Inferential × Guide × Sensor
++// quadrants yagura covers for this portfolio. Surfaces the formerly hidden
++// "yagura has 0 guides" gap — and confirms it's resolved.
++
++func buildHarnessCoverageTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_harness_coverage",
++		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
++		InputSchema: map[string]any{
++			"type":       "object",
++			"properties": map[string]any{},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			// 自分自身が提供する harness 要素を列挙する。
++			// 既存 MCP tool を taxonomy にマップ:
++			matrix := map[string]map[string][]string{
++				"guide": {
++					"computational": {
++						"yagura_feature_list (Plan.md → feature-list.json scaffold)",
++					},
++					"inferential": {
++						"yagura_agents_md (AGENTS.md scaffold for Claude Code/Codex/Cursor)",
++						"yagura_harness_recommend (per-project guidance)",
++						"yagura_skill_audit / yagura_subagent_audit (skill scaffolding)",
++					},
++				},
++				"sensor": {
++					"computational": {
++						"yagura_quality_check (static code analysis)",
++						"yagura_secretscan (secret detection)",
++						"yagura_gha_audit (workflow audit)",
++						"yagura_pin_drift (dep pin drift)",
++						"yagura_ai_verify (AI-generated code patterns)",
++						"yagura_test_audit (source-test coverage)",
++						"yagura_vulns (OSV.dev)",
++						"yagura_scorecard (OpenSSF)",
++						"yagura_sbom (CycloneDX)",
++					},
++					"inferential": {
++						"(intentionally none — ADR-0001 zero-dep precludes LLM-as-judge in-process)",
++					},
++				},
++			}
++			counts := map[string]int{}
++			for axis, ci := range matrix {
++				for kind, tools := range ci {
++					counts[axis+"_"+kind] = len(tools)
++				}
++			}
++			return map[string]any{
++				"taxonomy_source":       "https://martinfowler.com/articles/harness-engineering.html",
++				"matrix":                matrix,
++				"counts":                counts,
++				"feedback_only_warning": false, // v0.32 で解消
++				"note":                  "yagura intentionally leaves the inferential-sensor quadrant empty (LLM-as-judge would violate ADR-0001 zero-deps). External Claude/GPT review can be plugged in via Claude Code subagents and reported back via /hooks/claude-code.",
++			}, nil
++		},
++	}
++}
++
++// extractSection は Plan.md の本文から `## <header>` 直下の段落(空行か次の
++// ## まで)を抜き出す。複数候補があれば最初に見つかった方を返す。
++//
++// v0.32 で agentmd が Purpose/Scope を埋めるために必要。plantracker は
++// section の有無 (HasPurpose/HasScope) のみ持ち、本文は持っていなかった。
++func extractSection(content string, headers []string) string {
++	lines := strings.Split(content, "\n")
++	for _, h := range headers {
++		for i, line := range lines {
++			ts := strings.TrimSpace(line)
++			if !strings.HasPrefix(ts, "##") {
++				continue
++			}
++			rest := strings.TrimSpace(strings.TrimLeft(ts, "#"))
++			if !strings.EqualFold(rest, h) {
++				continue
++			}
++			// 次の ## まで集める
++			var body []string
++			for j := i + 1; j < len(lines); j++ {
++				if strings.HasPrefix(strings.TrimSpace(lines[j]), "##") {
++					break
++				}
++				body = append(body, lines[j])
++			}
++			out := strings.TrimSpace(strings.Join(body, "\n"))
++			if out != "" {
++				return out
++			}
++		}
++	}
++	return ""
++}
++
++// extractDoDItems は DoD / 完了定義 / Definition of Done section の bullet を
++// list で返す。featurelist の acceptance_criteria + agentmd の DoD 表示に使う。
++func extractDoDItems(content string) []string {
++	body := extractSection(content, []string{"完了定義", "Definition of Done", "DoD"})
++	if body == "" {
++		return nil
++	}
++	var out []string
++	for _, line := range strings.Split(body, "\n") {
++		ts := strings.TrimSpace(line)
++		// "- [ ] xxx", "- [x] xxx", "- xxx" 全て対象
++		if !strings.HasPrefix(ts, "- ") && !strings.HasPrefix(ts, "* ") {
++			continue
++		}
++		item := strings.TrimSpace(ts[2:])
++		// checkbox を除去
++		if strings.HasPrefix(item, "[ ]") || strings.HasPrefix(item, "[x]") || strings.HasPrefix(item, "[X]") {
++			item = strings.TrimSpace(item[3:])
++		}
++		if item != "" {
++			out = append(out, item)
++		}
++	}
++	return out
++}
++
++// planStateToFeatureInput は plantracker.PlanState + 元 content から
++// featurelist.PlanInput を組み立てる。
++//
++// plantracker は phase 単位の集計のみ持ち、個別 task title は捨てているので、
++// content を再 scan して checkbox 行を拾う。
++//
++// "フェーズ" / "Phase" header の子のみを feature とみなす(他の section の
++// checkbox は features にしない — DoD は acceptance_criteria 側に集約済)。
++func planStateToFeatureInput(project, content string, state plantracker.PlanState) featurelist.PlanInput {
++	pin := featurelist.PlanInput{
++		Project: project,
++		DoD:     extractDoDItems(content),
++	}
++	lines := strings.Split(content, "\n")
++	for i, ph := range state.Phases {
++		lower := strings.ToLower(ph.Name)
++		isPhaseSection := strings.Contains(lower, "phase") || strings.Contains(ph.Name, "フェーズ")
++		if !isPhaseSection {
++			continue
++		}
++		startLine := ph.LineStart // 1-indexed (plantracker convention)
++		endLine := len(lines)
++		if i+1 < len(state.Phases) {
++			endLine = state.Phases[i+1].LineStart - 1
++		}
++		phIn := featurelist.PhaseInput{Name: ph.Name}
++		for j := startLine; j < endLine && j < len(lines); j++ {
++			ts := strings.TrimSpace(lines[j])
++			if !strings.HasPrefix(ts, "- [") && !strings.HasPrefix(ts, "* [") {
++				continue
++			}
++			done := false
++			var item string
++			if strings.HasPrefix(ts, "- [x]") || strings.HasPrefix(ts, "* [x]") ||
++				strings.HasPrefix(ts, "- [X]") || strings.HasPrefix(ts, "* [X]") {
++				done = true
++				item = strings.TrimSpace(ts[5:])
++			} else if strings.HasPrefix(ts, "- [ ]") || strings.HasPrefix(ts, "* [ ]") {
++				item = strings.TrimSpace(ts[5:])
++			} else {
++				continue
++			}
++			if item == "" {
++				continue
++			}
++			phIn.Tasks = append(phIn.Tasks, featurelist.TaskInput{Title: item, Done: done})
++		}
++		if len(phIn.Tasks) > 0 {
++			pin.Phases = append(pin.Phases, phIn)
++		}
++	}
++	return pin
++}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_hooks.go fixed/yagura-v0.34.1/internal/mcp/tools_hooks.go
 --- a/yagura-v0.34.1/internal/mcp/tools_hooks.go	1970-01-01 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/mcp/tools_hooks.go	2026-06-03 05:09:24.828216874 +0000
@@ -4436,6 +5582,483 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		Description: "[G] Portfolio counts/totals/averages.",
  		InputSchema: map[string]any{
  			"type":       "object",
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_quality.go fixed/yagura-v0.34.1/internal/mcp/tools_quality.go
+--- a/yagura-v0.34.1/internal/mcp/tools_quality.go	1970-01-01 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_quality.go	2026-06-03 05:34:42.892270292 +0000
+@@ -0,0 +1,286 @@
++// tools_quality.go: cortex flywheel ② Review の quality 系 tools
++// (quality_check / ai_verify / test_audit)。tools.go から分割(挙動非変更)。
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++
++	"github.com/shizukutanaka/yagura/internal/aiverify"
++	"github.com/shizukutanaka/yagura/internal/qualitycheck"
++	"github.com/shizukutanaka/yagura/internal/testcoverage"
++)
++
++// ─── yagura_quality_check (v0.19.0) ───────────────────────────
++//
++// cortex (aircloset 2026/05) 翻訳: 「逸脱を物理的に潰す」品質ゲート。
++// `as any` / @ts-ignore / eslint-disable / TODO / FIXME 等を line-based
++// regex で検出し、severity 別に集計する。CI で `prohibited > 0` なら fail
++// するのが想定運用。
++
++func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
++	return &Tool{
++		Name:        "yagura_quality_check",
++		Description: "[G] Code lint: as any, ts-ignore, TODO. 3 severity tiers.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"files":        map[string]any{"type": "object"},
++				"text":         map[string]any{"type": "string"},
++				"language":     map[string]any{"type": "string"},
++				"summary_only": map[string]any{"type": "boolean"},
++			},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Files       map[string]string `json:"files"`
++				Text        string            `json:"text"`
++				Language    string            `json:"language"`
++				SummaryOnly bool              `json:"summary_only"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if len(in.Files) == 0 && in.Text == "" {
++				return nil, &ToolError{Code: "invalid_input",
++					Message: "either 'files' or 'text' is required"}
++			}
++			rules := qualitycheck.DefaultRules()
++
++			if in.Text != "" {
++				findings := qualitycheck.ScanText("<input>", in.Text, in.Language, rules)
++				res := qualitycheck.Result{
++					FilesScanned: 1,
++					Findings:     findings,
++					BySeverity:   map[qualitycheck.Severity]int{},
++					ByRule:       map[string]int{},
++				}
++				for _, f := range findings {
++					res.BySeverity[f.Severity]++
++					res.ByRule[f.RuleID]++
++				}
++				return formatQualityResult(res, in.SummaryOnly), nil
++			}
++			// v0.23.0: cache 統合(content-hash で同 content の再 scan を skip)
++			res := qualitycheck.ScanFilesCached(in.Files, rules, cache)
++			return formatQualityResult(res, in.SummaryOnly), nil
++		},
++	}
++}
++
++// formatQualityResult is MCP-friendly output formatter.
++func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
++	out := map[string]any{
++		"files_scanned":  res.FilesScanned,
++		"total_lines":    res.TotalLines,
++		"finding_count":  len(res.Findings),
++		"by_severity":    res.BySeverity,
++		"by_rule":        res.ByRule,
++		"has_prohibited": res.HasProhibited(),
++		"summary":        res.Summary(),
++	}
++	if !summaryOnly {
++		out["findings"] = res.Findings
++		if len(res.ByFile) > 0 {
++			out["by_file"] = res.ByFile
++		}
++	}
++	return out
++}
++
++// scanProjectAICode は LocalPath 配下の主要 source file を aiverify で scan する。
++//
++// 完全 walk は重いので、上位 N file (size 制限あり) のみ。
++// 言語: Go / Python / TS / JS / Rust。
++// 各 file 最大 256KB、合計 64 file まで(暴走防止)。
++func scanProjectAICode(localPath string) aiverify.Result {
++	const maxFiles = 64
++	const maxFileSize = 256 * 1024
++
++	files := map[string]string{}
++	walked := 0
++	_ = filepath.Walk(localPath, func(path string, info os.FileInfo, err error) error {
++		if err != nil || info == nil || info.IsDir() {
++			return nil
++		}
++		if walked >= maxFiles {
++			return filepath.SkipDir
++		}
++		// 隠しディレクトリと vendor / node_modules を skip
++		base := filepath.Base(path)
++		if strings.HasPrefix(base, ".") || base == "vendor" || base == "node_modules" {
++			return nil
++		}
++		ext := filepath.Ext(path)
++		switch ext {
++		case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs":
++		default:
++			return nil
++		}
++		if info.Size() > maxFileSize {
++			return nil
++		}
++		data, rerr := os.ReadFile(path)
++		if rerr != nil {
++			return nil
++		}
++		rel, _ := filepath.Rel(localPath, path)
++		files[rel] = string(data)
++		walked++
++		return nil
++	})
++	if len(files) == 0 {
++		return aiverify.Result{}
++	}
++	return aiverify.Scan(files)
++}
++
++// ─── yagura_ai_verify (v0.25.0) ──────────────────────────────
++//
++// AI-generated コードの risk pattern を検出する。m's harness G0.7 INVARIANT
++// 「AI出力検証義務」への直接対応。
++//
++// Veracode 2025: 45% of AI code ships OWASP Top-10
++// Apiiro Fortune 50: 322% privilege-escalation paths, 40% secrets exposure
++// CodeRabbit: 1.7× issue multiplier — AI zone 内 finding は score 2x。
++
++func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
++	return &Tool{
++		Name:        "yagura_ai_verify",
++		Description: "[G] AI code risk audit. 6 categories: auth/billing/data/external/crypto/secret. 2x multiplier inside AI-marker zones.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"files":        map[string]any{"type": "object"},
++				"text":         map[string]any{"type": "string"},
++				"path":         map[string]any{"type": "string"},
++				"summary_only": map[string]any{"type": "boolean"},
++			},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Files       map[string]string `json:"files"`
++				Text        string            `json:"text"`
++				Path        string            `json:"path"`
++				SummaryOnly bool              `json:"summary_only"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if len(in.Files) == 0 && in.Text == "" {
++				return nil, &ToolError{Code: "invalid_input",
++					Message: "either 'files' or 'text' is required"}
++			}
++
++			var res aiverify.Result
++			if in.Text != "" {
++				path := in.Path
++				if path == "" {
++					path = "<input>"
++				}
++				res = aiverify.Scan(map[string]string{path: in.Text})
++			} else if cache != nil {
++				res = aiverify.ScanCached(in.Files, cache)
++			} else {
++				res = aiverify.Scan(in.Files)
++			}
++
++			// v0.26.0: testcoverage と結合し untested AI 生成を flag (+5/file)
++			// files が複数与えられた場合のみ意味があるので text mode は skip
++			if len(in.Files) > 0 {
++				tcRes := testcoverage.Audit(in.Files)
++				hasTestMap := make(map[string]bool, len(in.Files))
++				// untested ではない source を has_test 認定
++				untestedSet := make(map[string]bool, len(tcRes.UntestedFiles))
++				for _, p := range tcRes.UntestedFiles {
++					untestedSet[p] = true
++				}
++				for p := range in.Files {
++					if testcoverage.IsTestFile(p) {
++						continue
++					}
++					if !untestedSet[p] {
++						hasTestMap[p] = true
++					}
++				}
++				res = aiverify.AnnotateUntested(res, in.Files, func(p string) bool {
++					return hasTestMap[p]
++				})
++			}
++
++			return formatAIVerifyResult(res, in.SummaryOnly), nil
++		},
++	}
++}
++
++func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
++	out := map[string]any{
++		"files_scanned": res.FilesScanned,
++		"total_lines":   res.TotalLines,
++		"ai_gen_lines":  res.AIGenLines,
++		"finding_count": len(res.Findings),
++		"risk_score":    res.RiskScore,
++		"has_critical":  res.HasCritical,
++		"by_severity":   res.BySeverity,
++		"by_category":   res.ByCategory,
++		"summary":       res.Summary(),
++	}
++	if len(res.AIGenWithoutTests) > 0 {
++		out["ai_gen_without_tests"] = res.AIGenWithoutTests
++	}
++	if !summaryOnly {
++		out["findings"] = res.Findings
++	}
++	if res.CacheHits > 0 || res.CacheMisses > 0 {
++		out["cache_hits"] = res.CacheHits
++		out["cache_misses"] = res.CacheMisses
++	}
++	return out
++}
++
++// ─── yagura_test_audit + ai_verify との結合 (v0.26.0) ───────
++//
++// m's harness G0.7 「テスト通過 + 人間確認が必須」への直接対応。
++// language-aware な test file 検出 + AI 生成 untested risk 強化。
++
++func buildTestAuditTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_test_audit",
++		Description: "[G] Source-test coverage detection. Go/TS/JS/Python/Rust/Java filename + Rust inline #[cfg(test)] + Python doctest.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"files":         map[string]any{"type": "object"},
++				"untested_only": map[string]any{"type": "boolean"},
++			},
++			"required": []string{"files"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Files        map[string]string `json:"files"`
++				UntestedOnly bool              `json:"untested_only"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if len(in.Files) == 0 {
++				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
++			}
++			res := testcoverage.Audit(in.Files)
++			out := map[string]any{
++				"files_scanned":     res.FilesScanned,
++				"source_files":      res.SourceFiles,
++				"test_files":        res.TestFiles,
++				"sources_with_test": res.SourcesWithTest,
++				"sources_no_test":   res.SourcesNoTest,
++				"coverage_ratio":    res.CoverageRatio,
++				"untested_files":    res.UntestedFiles,
++				"by_language":       res.ByLanguage,
++			}
++			return out, nil
++		},
++	}
++}
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_release.go fixed/yagura-v0.34.1/internal/mcp/tools_release.go
+--- a/yagura-v0.34.1/internal/mcp/tools_release.go	1970-01-01 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_release.go	2026-06-03 05:34:42.916270293 +0000
+@@ -0,0 +1,183 @@
++// tools_release.go: cortex flywheel ③ Release の Plan.md aware tools
++// (plan_status / release_radar)。tools.go から分割(挙動非変更)。
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++
++	"github.com/shizukutanaka/yagura/internal/aiverify"
++	"github.com/shizukutanaka/yagura/internal/plantracker"
++)
++
++// ─── yagura_plan_status / yagura_release_radar (v0.24.0) ─────
++//
++// Plan.md aware portfolio orchestration. m's harness G1.P で defined された
++// 必須記載項目 (目的/スコープ/フェーズ/DoD) を 23+ projects 横断で計測し、
++// "次に release すべき project" を機械的にランク付け。
++
++func buildPlanStatusTool(d Deps, cache plantracker.CacheLike) *Tool {
++	return &Tool{
++		Name:        "yagura_plan_status",
++		Description: "[G] Plan.md progress for project. Parses checkboxes + required sections (目的/スコープ/フェーズ/DoD).",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"slug": map[string]any{"type": "string"},
++			},
++			"required": []string{"slug"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Slug string `json:"slug"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if in.Slug == "" {
++				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
++			}
++			p, err := d.Registry.Get(in.Slug)
++			if err != nil {
++				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
++			}
++			content, path, err := loadPlanMd(p.LocalPath)
++			if err != nil {
++				return map[string]any{
++					"slug":    in.Slug,
++					"plan_md": "",
++					"error":   err.Error(),
++				}, nil
++			}
++			state, _ := plantracker.ParseCached(content, cache)
++			return map[string]any{
++				"slug":    in.Slug,
++				"plan_md": path,
++				"state":   state,
++				"summary": state.Summary(),
++			}, nil
++		},
++	}
++}
++
++// loadPlanMd は LocalPath 配下から Plan.md / PLAN.md / plan.md を順に試行する。
++//
++// 戻り値: (content, found path, error)。LocalPath 空 or 全候補無し→ error。
++// path traversal 防止: LocalPath は registry validate 済み(プロジェクトの project.Validate)、
++// ファイル名は固定 list なので新たな攻撃ベクタなし。
++func loadPlanMd(localPath string) (string, string, error) {
++	if localPath == "" {
++		return "", "", fmt.Errorf("project has no local_path")
++	}
++	candidates := []string{"Plan.md", "PLAN.md", "plan.md"}
++	for _, name := range candidates {
++		full := filepath.Join(localPath, name)
++		if data, err := os.ReadFile(full); err == nil {
++			return string(data), full, nil
++		}
++	}
++	return "", "", fmt.Errorf("no Plan.md / PLAN.md / plan.md found in %s", localPath)
++}
++
++func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
++	return &Tool{
++		Name:        "yagura_release_radar",
++		Description: "[S] Cross-project release readiness ranking. Aggregates Plan/CI/issues/quality/AI-risk.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"limit":     map[string]any{"type": "integer"},
++				"scan_code": map[string]any{"type": "boolean"},
++			},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Limit    int  `json:"limit"`
++				ScanCode bool `json:"scan_code"` // v0.25: true なら aiverify scan
++			}
++			if len(args) > 0 {
++				if err := json.Unmarshal(args, &in); err != nil {
++					return nil, &ToolError{Code: "invalid_input",
++						Message: "invalid arguments", Cause: err}
++				}
++			}
++			if in.Limit <= 0 {
++				in.Limit = 10
++			}
++			projects := d.Registry.List()
++			items := make([]plantracker.RankedProject, 0, len(projects))
++			for _, p := range projects {
++				if p.LocalPath == "" {
++					continue
++				}
++				content, _, err := loadPlanMd(p.LocalPath)
++				if err != nil {
++					continue
++				}
++				plan, _ := plantracker.ParseCached(content, cache)
++				ciStatus := string(p.CIStatus)
++				if ciStatus == "" {
++					ciStatus = "unknown"
++				}
++				openCrit := p.VulnCritical
++
++				// v0.25.0: scan_code=true なら aiverify を呼んで AI risk を統合
++				var aiResult aiverify.Result
++				if in.ScanCode {
++					aiResult = scanProjectAICode(p.LocalPath)
++				}
++
++				readiness := plantracker.ReleaseReadinessExt(plan, ciStatus, openCrit,
++					false, aiResult.RiskScore, aiResult.HasCritical)
++				reason := pickReason(plan, ciStatus, openCrit, aiResult.HasCritical, aiResult.RiskScore)
++				items = append(items, plantracker.RankedProject{
++					Slug:               p.Slug,
++					Readiness:          readiness,
++					PlanProgressPct:    plan.ProgressPct,
++					CurrentPhase:       plan.CurrentPhase,
++					CIStatus:           ciStatus,
++					OpenIssuesCritical: openCrit,
++					AIRiskScore:        aiResult.RiskScore,
++					AIHasCritical:      aiResult.HasCritical,
++					AIGenLineCount:     aiResult.AIGenLines,
++					Reason:             reason,
++				})
++			}
++			ranked := plantracker.Rank(items)
++			if len(ranked) > in.Limit {
++				ranked = ranked[:in.Limit]
++			}
++			return map[string]any{
++				"ranked":          ranked,
++				"total_projects":  len(projects),
++				"projects_scored": len(items),
++				"scan_code":       in.ScanCode,
++			}, nil
++		},
++	}
++}
++
++// pickReason は readiness 阻害の最大要因を 1 文で返す。
++func pickReason(plan plantracker.PlanState, ciStatus string, openCrit int,
++	aiCritical bool, aiRisk int) string {
++	if aiCritical {
++		return "AI-generated critical risk (review required)"
++	}
++	if openCrit > 0 {
++		return fmt.Sprintf("%d critical issues blocking", openCrit)
++	}
++	if strings.EqualFold(ciStatus, "failing") {
++		return "CI failing"
++	}
++	if !plan.IsHealthy {
++		return "Plan.md missing required sections"
++	}
++	if plan.ProgressPct < 100 {
++		return fmt.Sprintf("plan %d%% remaining", 100-plan.ProgressPct)
++	}
++	return "ready to release"
++}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_scan.go fixed/yagura-v0.34.1/internal/mcp/tools_scan.go
 --- a/yagura-v0.34.1/internal/mcp/tools_scan.go	1970-01-01 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/mcp/tools_scan.go	2026-06-03 05:28:51.984257944 +0000
