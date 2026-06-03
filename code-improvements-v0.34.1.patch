@@ -275,6 +275,170 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  │   ├── mcp/                 # MCP server, tool registration
  │   ├── registry/            # Project registry (JSON file per project)
  │   ├── scanner/             # Background sensor loop (24 h)
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/cmd/yagura/helpers_test.go fixed/yagura-v0.34.1/cmd/yagura/helpers_test.go
+--- a/yagura-v0.34.1/cmd/yagura/helpers_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/cmd/yagura/helpers_test.go	2026-06-03 06:30:20.019451127 +0000
+@@ -0,0 +1,160 @@
++package main
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/hookreceiver"
++	"github.com/shizukutanaka/yagura/internal/mcp"
++	"github.com/shizukutanaka/yagura/internal/metrics"
++	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/registry"
++)
++
++// writeJSONPretty は 2-space indent の JSON を Content-Type 付きで返す。
++func TestWriteJSONPretty(t *testing.T) {
++	w := httptest.NewRecorder()
++	writeJSONPretty(w, http.StatusCreated, map[string]string{"k": "v"})
++
++	if w.Code != http.StatusCreated {
++		t.Errorf("status = %d, want 201", w.Code)
++	}
++	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
++		t.Errorf("content-type = %q", ct)
++	}
++	body := w.Body.String()
++	if !strings.Contains(body, "{\n  \"k\": \"v\"\n}") {
++		t.Errorf("body not pretty-printed: %q", body)
++	}
++	// valid JSON であることも確認。
++	var got map[string]string
++	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got["k"] != "v" {
++		t.Errorf("invalid JSON: %v (%q)", err, body)
++	}
++}
++
++// clientAddr は X-Forwarded-For を優先し、複数なら先頭 IP、無ければ RemoteAddr。
++func TestClientAddr(t *testing.T) {
++	cases := []struct {
++		name   string
++		xff    string
++		remote string
++		want   string
++	}{
++		{"no xff", "", "10.0.0.1:1234", "10.0.0.1:1234"},
++		{"single xff", "203.0.113.5", "10.0.0.1:1234", "203.0.113.5"},
++		{"multi xff", "203.0.113.5, 70.41.3.18", "10.0.0.1:1234", "203.0.113.5"},
++		{"xff spaces", "  198.51.100.7  ", "10.0.0.1:1234", "198.51.100.7"},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			r := httptest.NewRequest(http.MethodGet, "/", nil)
++			r.RemoteAddr = tc.remote
++			if tc.xff != "" {
++				r.Header.Set("X-Forwarded-For", tc.xff)
++			}
++			if got := clientAddr(r); got != tc.want {
++				t.Errorf("clientAddr = %q, want %q", got, tc.want)
++			}
++		})
++	}
++}
++
++// scannerMetricsAdapter は metrics counter/gauge に転送する。
++func TestScannerMetricsAdapter(t *testing.T) {
++	reg := metrics.NewRegistry()
++	a := &scannerMetricsAdapter{
++		scanned:  reg.NewCounter("s", "scanned"),
++		failed:   reg.NewCounter("f", "failed"),
++		duration: reg.NewGauge("d", "dur"),
++		lastAt:   reg.NewGauge("l", "last"),
++	}
++	a.IncScanned()
++	a.IncScanned()
++	a.IncFailed()
++	if a.scanned.Value() != 2 {
++		t.Errorf("scanned = %d, want 2", a.scanned.Value())
++	}
++	if a.failed.Value() != 1 {
++		t.Errorf("failed = %d, want 1", a.failed.Value())
++	}
++}
++
++// statusRecorder.Flush は下層が Flusher を実装していれば forward する(httptest は実装済み)。
++func TestStatusRecorderFlush(t *testing.T) {
++	rec := httptest.NewRecorder()
++	sr := &statusRecorder{ResponseWriter: rec, status: 200}
++	sr.WriteHeader(http.StatusAccepted)
++	sr.Flush() // panic しないこと
++	if sr.status != http.StatusAccepted {
++		t.Errorf("status = %d, want 202", sr.status)
++	}
++	if !rec.Flushed {
++		t.Error("underlying recorder should have been flushed")
++	}
++}
++
++// registryLookup.ResolveByPath は LocalPath prefix で slug を解決する。
++func TestRegistryLookupResolveByPath(t *testing.T) {
++	reg, err := registry.New(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := reg.Add(&project.Project{
++		Slug:        "alpha",
++		DisplayName: "Alpha",
++		Repository:  "owner/alpha",
++		LocalPath:   "/home/dev/alpha",
++	}); err != nil {
++		t.Fatal(err)
++	}
++	l := &registryLookup{reg: reg}
++
++	if slug, ok := l.ResolveByPath("/home/dev/alpha/cmd/x"); !ok || slug != "alpha" {
++		t.Errorf("prefix match = (%q,%v), want (alpha,true)", slug, ok)
++	}
++	if _, ok := l.ResolveByPath("/somewhere/else"); ok {
++		t.Error("non-matching path should not resolve")
++	}
++	if _, ok := l.ResolveByPath(""); ok {
++		t.Error("empty cwd should not resolve")
++	}
++	var nilLookup *registryLookup
++	if _, ok := nilLookup.ResolveByPath("/x"); ok {
++		t.Error("nil lookup should not resolve")
++	}
++}
++
++// collectYaguraMetrics は MCP / hook / alert の状態を Prometheus collection 化する。
++func TestCollectYaguraMetrics(t *testing.T) {
++	srv := mcp.New("", nil)
++
++	// hr nil / alert store nil: base の tool collection 4 種が出る。
++	base := collectYaguraMetrics(srv, nil)
++	names := map[string]bool{}
++	for _, c := range base {
++		names[c.Name] = true
++	}
++	for _, want := range []string{
++		"yagura_mcp_tool_calls_total",
++		"yagura_mcp_tool_request_bytes_total",
++		"yagura_mcp_tool_response_bytes_total",
++		"yagura_mcp_tool_errors_total",
++	} {
++		if !names[want] {
++			t.Errorf("missing collection %q", want)
++		}
++	}
++
++	// hr 非 nil 経路も通す(event 無しでも分岐に入る)。
++	hr, err := hookreceiver.NewReceiver(t.TempDir()+"/hooks.jsonl", &registryLookup{}, 100)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if out := collectYaguraMetrics(srv, hr); len(out) < 4 {
++		t.Errorf("with hr: got %d collections, want >=4", len(out))
++	}
++}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/cmd/yagura/httpapi.go fixed/yagura-v0.34.1/cmd/yagura/httpapi.go
 --- a/yagura-v0.34.1/cmd/yagura/httpapi.go	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/cmd/yagura/httpapi.go	2026-06-03 04:29:00.364131561 +0000
