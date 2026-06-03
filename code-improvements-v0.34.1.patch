@@ -1,6 +1,6 @@
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/.github/workflows/ci.yml fixed/yagura-v0.34.1/.github/workflows/ci.yml
 --- a/yagura-v0.34.1/.github/workflows/ci.yml	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/.github/workflows/ci.yml	2026-06-03 04:56:36.940189853 +0000
++++ b/yagura-v0.34.1/.github/workflows/ci.yml	2026-06-03 05:47:55.516298183 +0000
 @@ -35,6 +35,16 @@
            go-version-file: go.mod
            cache: true
@@ -18,7 +18,34 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
        - name: go vet
          run: go vet ./...
  
-@@ -107,3 +117,9 @@
+@@ -47,6 +57,26 @@
+           echo "Coverage: ${COV}%"
+           awk -v c="$COV" 'BEGIN { if (c < 75.0) exit 1 }'
+ 
++  lint:
++    name: golangci-lint (staged)
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++
++      - name: Set up Go
++        uses: actions/setup-go@v5
++        with:
++          go-version-file: go.mod
++          cache: true
++
++      # 段階導入: .golangci.yml で「導入時点 finding=0」の linter のみ有効。
++      # 既存の指摘で即赤にはせず、今後の新規 regression を検出する。
++      # version は再現性のため pin する(ローカル検証と一致)。
++      - name: golangci-lint
++        uses: golangci/golangci-lint-action@v7
++        with:
++          version: v2.1.6
++
+   reproducible-build:
+     name: Reproducible build
+     runs-on: ubuntu-latest
+@@ -107,3 +137,9 @@
  
        - name: Fuzz aiverify.Scan
          run: go test -fuzz=FuzzScan -fuzztime=10s ./internal/aiverify/
@@ -28,6 +55,151 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
 +
 +      - name: Fuzz registry.Add
 +        run: go test -run='^$' -fuzz=FuzzAdd -fuzztime=10s ./internal/registry/
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/.golangci.yml fixed/yagura-v0.34.1/.golangci.yml
+--- a/yagura-v0.34.1/.golangci.yml	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/.golangci.yml	2026-06-03 05:45:04.460292164 +0000
+@@ -1,84 +1,68 @@
+-# golangci-lint configuration for Yagura.
+-# Covers OSPS-VM-06.02 (automated SAST evaluation policy).
+-version: '2'
++# golangci-lint config (schema v2).
++#
++# 段階導入(staged rollout): 既存コードに違反 0 の linter のみを有効化する。
++# 目的は「既存の指摘でCIを即赤にしない」一方で「今後の新規 regression は
++# 確実に検出して落とす」こと。ここで有効な linter は導入時点で finding=0。
++#
++# 将来、より厳格な linter(wsl / varnamelen / mnd / lll 等)を足す場合は、
++# 既存違反を解消してから enable に追加すること。
++version: "2"
+ 
+ run:
+   timeout: 5m
++  # zero-dep / reproducible build を壊さないよう、テスト含め全 package を対象。
+   tests: true
+-  go: '1.22'
+ 
+ linters:
++  # default: none で「明示的に列挙した linter だけ」を有効化する。
+   default: none
+   enable:
+-    - errcheck       # unchecked errors are a common bug source
+-    - gosec          # security-focused issues
+-    - govet          # vet built-in
+-    - ineffassign    # ineffectual assignments
+-    - misspell       # misspellings in comments
+-    - revive         # general-purpose linter
+-    - staticcheck    # comprehensive static analysis
+-    - unconvert      # redundant type conversions
+-    - unused         # unused symbols
+-    - bodyclose      # response.Body must be closed
+-    - errorlint      # proper errors.Is / errors.As
+-    - gocritic       # opinionated style checks
+-    - copyloopvar    # loop variable capture (Go 1.22+)
+-    - nilerr         # returning nil after !=nil check
+-    - prealloc       # slice prealloc hints
+-    - whitespace     # unnecessary blank lines
+-    - usestdlibvars  # use stdlib constants over magic strings
+-  settings:
+-    errcheck:
+-      check-blank: false
+-    gosec:
+-      excludes:
+-        - G115  # integer overflow conversion uint64 -> int64 in metrics (intended)
+-        - G304  # file inclusion via variable (controlled paths only)
+-    govet:
+-      enable-all: true
+-      disable:
+-        - fieldalignment  # too aggressive for readability
+-        - shadow          # idiomatic in some cases
+-    revive:
+-      rules:
+-        - name: exported
+-          arguments: [{ checkPrivateReceivers: false }]
+-        - name: var-naming
+-        - name: unused-parameter
+-          arguments: [{ allowRegex: '^_' }]
+-        - name: package-comments
+-        - name: context-as-argument
+-        - name: error-naming
+-        - name: error-return
+-        - name: errorf
+-        - name: increment-decrement
+-        - name: range
+-        - name: receiver-naming
+-        - name: time-naming
+-        - name: unexported-return
+-        - name: var-declaration
+-    staticcheck:
+-      checks: ['all', '-ST1000']  # ST1000: at least one file in package has package comment
+-    gocritic:
+-      enabled-tags: [diagnostic, performance, style]
+-      disabled-checks:
+-        - ifElseChain
+-        - hugeParam
++    # --- correctness / bug catching ---
++    - govet
++    - ineffassign
++    - bodyclose          # HTTP response body の閉じ忘れ(github/osv/scorecard client)
++    - errorlint          # %w / errors.Is/As の誤用
++    - contextcheck
++    - containedctx
++    - durationcheck
++    - makezero           # make([]T, n) への append バグ
++    - wastedassign
++    - copyloopvar
++    - asasalint
++    - bidichk            # Unicode 双方向制御文字(trojan source)
++    - gocheckcompilerdirectives
++    - nilnil
++    - nilnesserr
++    - reassign
++    - rowserrcheck
++    - sqlclosecheck
++    - spancheck
++    - unconvert
++    - usetesting
++    - protogetter
++    # --- naming / API hygiene (低 false-positive) ---
++    - errname
++    - gochecknoinits     # init() 乱用の抑止(deterministic startup)
++    - predeclared        # builtin 名の shadowing
++    - goprintffuncname
++    - nosprintfhostport
++    # --- comments / strings ---
++    - misspell
++    - dupword
++    - nolintlint         # //nolint の濫用・誤記を検出
++    # --- test quality ---
++    - testableexamples
++    - thelper
++    - tparallel
++
+   exclusions:
+-    rules:
+-      # Tests can use t.TempDir() without explicit cleanup, and may have
+-      # less stringent error handling than production code
+-      - path: _test\.go
+-        linters: [errcheck, gosec, gocritic, revive]
+-      # cmd/main can use fmt.Print* freely
+-      - path: cmd/
+-        linters: [forbidigo]
++    generated: lax
++    presets:
++      - comments
++      - common-false-positives
++      - legacy
++      - std-error-handling
+ 
+ formatters:
+-  enable:
+-    - gofmt
+-    - goimports
+-
+-issues:
+-  max-issues-per-linter: 0
+-  max-same-issues: 0
++  # gofmt は Makefile / CI の fmt-check 側で担保しているため、ここでは無効。
++  enable: []
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/ARCHITECTURE.md fixed/yagura-v0.34.1/ARCHITECTURE.md
 --- a/yagura-v0.34.1/ARCHITECTURE.md	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/ARCHITECTURE.md	2026-06-03 04:28:48.624131148 +0000
@@ -4171,7 +4343,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  // 0o755 (executable) for init.sh.
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_alert.go fixed/yagura-v0.34.1/internal/mcp/tools_alert.go
 --- a/yagura-v0.34.1/internal/mcp/tools_alert.go	1970-01-01 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/mcp/tools_alert.go	2026-06-03 05:08:23.068214701 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_alert.go	2026-06-03 05:45:59.720294108 +0000
 @@ -0,0 +1,243 @@
 +// tools_alert.go: cortex flywheel ④ Alert-Fix tools (yagura_alert_fix / yagura_alert_resolve).
 +// tools.go から分割(挙動非変更): topic 別ファイル化 roadmap #1。
@@ -4332,11 +4504,11 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
 +// filterBySeverity は severity_min 以上のみ残す。
 +//
 +// "critical" → critical only / "high" → critical+high / "medium" → critical+high+medium 等。
-+func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
++func filterBySeverity(r alertfix.Report, minSev string) alertfix.Report {
 +	rank := map[string]int{
 +		"critical": 0, "high": 1, "medium": 2, "low": 3,
 +	}
-+	maxRank, ok := rank[strings.ToLower(min)]
++	maxRank, ok := rank[strings.ToLower(minSev)]
 +	if !ok {
 +		return r
 +	}
@@ -6061,7 +6233,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
 +}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_scan.go fixed/yagura-v0.34.1/internal/mcp/tools_scan.go
 --- a/yagura-v0.34.1/internal/mcp/tools_scan.go	1970-01-01 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/mcp/tools_scan.go	2026-06-03 05:28:51.984257944 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_scan.go	2026-06-03 05:46:20.896294853 +0000
 @@ -0,0 +1,376 @@
 +// tools_scan.go: cortex flywheel ② Review の scan 系 tools
 +// (secretscan / sbom / gha_audit / pin_drift)。tools.go から分割(挙動非変更)。
@@ -6137,12 +6309,12 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
 +
 +			// min_severity フィルタ
 +			if in.MinSeverity != "" {
-+				min := strings.ToUpper(in.MinSeverity)
-+				if min != "LOW" && min != "MEDIUM" && min != "HIGH" && min != "CRITICAL" {
++				minSev := strings.ToUpper(in.MinSeverity)
++				if minSev != "LOW" && minSev != "MEDIUM" && minSev != "HIGH" && minSev != "CRITICAL" {
 +					return nil, &ToolError{Code: "invalid_input",
 +						Message: "min_severity must be LOW/MEDIUM/HIGH/CRITICAL"}
 +				}
-+				filtered := filterFindingsBatch(result, secretscan.Severity(min))
++				filtered := filterFindingsBatch(result, secretscan.Severity(minSev))
 +				result = filtered
 +			}
 +
@@ -6186,9 +6358,9 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
 +	return items
 +}
 +
-+// filterFindingsBatch は min 以上の severity だけを残した新しい BatchResult を返す。
-+func filterFindingsBatch(r secretscan.BatchResult, min secretscan.Severity) secretscan.BatchResult {
-+	minRank := secretScanSeverityRank(min)
++// filterFindingsBatch は minSev 以上の severity だけを残した新しい BatchResult を返す。
++func filterFindingsBatch(r secretscan.BatchResult, minSev secretscan.Severity) secretscan.BatchResult {
++	minRank := secretScanSeverityRank(minSev)
 +	out := secretscan.BatchResult{
 +		BySource:    map[string][]secretscan.Finding{},
 +		SourceOrder: []string{},
@@ -6441,7 +6613,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
 +// ─── yagura_heartbeat (v0.14.0) ──────────────────────────────
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/tools_security.go fixed/yagura-v0.34.1/internal/mcp/tools_security.go
 --- a/yagura-v0.34.1/internal/mcp/tools_security.go	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/mcp/tools_security.go	2026-06-03 04:28:06.616129670 +0000
++++ b/yagura-v0.34.1/internal/mcp/tools_security.go	2026-06-03 05:46:18.872294782 +0000
 @@ -11,6 +11,7 @@
  	"errors"
  	"strings"
@@ -6468,6 +6640,24 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  				},
  			},
  		},
+@@ -91,14 +92,14 @@
+ 			}
+ 
+ 			if in.MinSeverity != "" {
+-				min := osv.SeverityRank(osv.Severity(strings.ToUpper(in.MinSeverity)))
+-				if min == 0 && strings.ToUpper(in.MinSeverity) != "UNKNOWN" {
++				minRank := osv.SeverityRank(osv.Severity(strings.ToUpper(in.MinSeverity)))
++				if minRank == 0 && strings.ToUpper(in.MinSeverity) != "UNKNOWN" {
+ 					return nil, &ToolError{Code: "invalid_input",
+ 						Message: "min_severity must be one of LOW/MEDIUM/HIGH/CRITICAL"}
+ 				}
+ 				filtered := vulns[:0]
+ 				for _, v := range vulns {
+-					if osv.SeverityRank(v.Severity) >= min {
++					if osv.SeverityRank(v.Severity) >= minRank {
+ 						filtered = append(filtered, v)
+ 					}
+ 				}
 @@ -127,7 +128,7 @@
  
  func buildScorecardTool(d Deps) *Tool {
@@ -7787,8 +7977,16 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  type wireRepo struct {
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/scorecard/scorecard_test.go fixed/yagura-v0.34.1/internal/scorecard/scorecard_test.go
 --- a/yagura-v0.34.1/internal/scorecard/scorecard_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/scorecard/scorecard_test.go	2026-06-03 04:24:21.712121756 +0000
-@@ -14,16 +14,16 @@
++++ b/yagura-v0.34.1/internal/scorecard/scorecard_test.go	2026-06-03 05:45:57.348294025 +0000
+@@ -3,6 +3,7 @@
+ import (
+ 	"context"
+ 	"encoding/json"
++	"errors"
+ 	"net/http"
+ 	"net/http/httptest"
+ 	"strings"
+@@ -14,16 +15,16 @@
  
  func TestNormalizeRepo(t *testing.T) {
  	tests := map[string]string{
@@ -7815,7 +8013,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  	}
  	for in, want := range tests {
  		if got := normalizeRepo(in); got != want {
-@@ -91,7 +91,7 @@
+@@ -91,7 +92,7 @@
  				"commit": "abc123def456",
  			},
  			"scorecard": map[string]string{"version": "v5.0.0"},
@@ -7824,6 +8022,15 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  			"checks": []map[string]any{
  				{
  					"name":   "Branch-Protection",
+@@ -152,7 +153,7 @@
+ 	if err == nil {
+ 		t.Fatal("expected error")
+ 	}
+-	if err != ErrNotScored {
++	if !errors.Is(err, ErrNotScored) {
+ 		t.Errorf("expected ErrNotScored, got %v", err)
+ 	}
+ }
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/secrets/secrets.go fixed/yagura-v0.34.1/internal/secrets/secrets.go
 --- a/yagura-v0.34.1/internal/secrets/secrets.go	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/secrets/secrets.go	2026-06-03 04:24:21.728121757 +0000
@@ -7868,7 +8075,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/secrets/secrets_test.go fixed/yagura-v0.34.1/internal/secrets/secrets_test.go
 --- a/yagura-v0.34.1/internal/secrets/secrets_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ b/yagura-v0.34.1/internal/secrets/secrets_test.go	2026-06-03 04:24:21.740121757 +0000
++++ b/yagura-v0.34.1/internal/secrets/secrets_test.go	2026-06-03 05:46:23.616294949 +0000
 @@ -97,9 +97,9 @@
  	tests := [][]byte{
  		[]byte(""),
@@ -7882,7 +8089,26 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  	}
  	for i, in := range tests {
  		_, err := Decrypt(in, "correct-passphrase-1")
-@@ -194,16 +194,16 @@
+@@ -177,10 +177,14 @@
+ }
+ 
+ func TestSHA256Available(t *testing.T) {
+-	// Smoke test ensuring our pbkdf2 produces 32-byte output consistent with sha256
+-	h := sha256.Sum256([]byte("test"))
+-	if len(h) != 32 {
+-		t.Fatal("sha256 broken")
++	// pbkdf2 が依存する sha256 が決定論的な非ゼロ digest を返すことの smoke test。
++	h1 := sha256.Sum256([]byte("test"))
++	h2 := sha256.Sum256([]byte("test"))
++	if h1 != h2 {
++		t.Fatal("sha256 not deterministic")
++	}
++	if h1 == ([32]byte{}) {
++		t.Fatal("sha256 returned zero digest")
+ 	}
+ }
+ 
+@@ -194,16 +198,16 @@
  		}
  	}
  	invalid := []string{
