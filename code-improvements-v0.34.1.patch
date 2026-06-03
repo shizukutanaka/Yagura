@@ -1582,6 +1582,84 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  func TestValidateAddr(t *testing.T) {
  	cases := []struct {
  		input string
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/dashboard/agent_panel_test.go fixed/yagura-v0.34.1/internal/dashboard/agent_panel_test.go
+--- a/yagura-v0.34.1/internal/dashboard/agent_panel_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/dashboard/agent_panel_test.go	2026-06-03 06:26:18.203442618 +0000
+@@ -0,0 +1,74 @@
++package dashboard
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/shizukutanaka/yagura/internal/quotamonitor"
++)
++
++// buildSparklinePath: <2 サンプルは空、>=2 で polyline 文字列、範囲外は clamp。
++func TestBuildSparklinePath(t *testing.T) {
++	if buildSparklinePath(nil) != "" {
++		t.Error("nil samples should give empty path")
++	}
++	if buildSparklinePath([]quotamonitor.ReportEvent{{RemainingPercent: 50}}) != "" {
++		t.Error("single sample should give empty path")
++	}
++
++	got := buildSparklinePath([]quotamonitor.ReportEvent{
++		{RemainingPercent: 100}, // y=0 (top)
++		{RemainingPercent: 0},   // y=30 (bottom)
++	})
++	// 2 点 → x は 0 と 100、y は 0.0 と 30.0。
++	if got != "0.0,0.0 100.0,30.0" {
++		t.Fatalf("path = %q, want \"0.0,0.0 100.0,30.0\"", got)
++	}
++
++	// 範囲外 (負/100超) は [0,30] に clamp される。
++	clamped := buildSparklinePath([]quotamonitor.ReportEvent{
++		{RemainingPercent: 200}, // y<0 → 0
++		{RemainingPercent: -50}, // y>30 → 30
++	})
++	if !strings.Contains(clamped, "0.0,0.0") || !strings.HasSuffix(clamped, ",30.0") {
++		t.Errorf("clamped path = %q", clamped)
++	}
++}
++
++// SetAgentStatusProvider + ServeHTTP の agent panel 分岐を実 Monitor で網羅。
++func TestServeHTTP_WithAgentPanel(t *testing.T) {
++	h, _ := setupHandler(t)
++
++	mon := quotamonitor.New()
++	// 2 サンプル投入で usage history(sparkline)が出る。
++	if err := mon.Report(quotamonitor.AgentClaudeCode, 90, "auto", time.Time{}, time.Time{}); err != nil {
++		t.Fatal(err)
++	}
++	if err := mon.Report(quotamonitor.AgentClaudeCode, 80, "auto", time.Time{}, time.Time{}); err != nil {
++		t.Fatal(err)
++	}
++	h.SetAgentStatusProvider(mon)
++
++	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
++	w := httptest.NewRecorder()
++	h.ServeHTTP(w, req)
++
++	if w.Code != http.StatusOK {
++		t.Fatalf("status = %d, want 200", w.Code)
++	}
++	body := w.Body.String()
++	if !strings.Contains(strings.ToLower(body), "claude") {
++		t.Error("agent panel should mention the reporting agent")
++	}
++
++	// nil で panel を無効化しても 200 で描画される。
++	h.SetAgentStatusProvider(nil)
++	w2 := httptest.NewRecorder()
++	h.ServeHTTP(w2, httptest.NewRequest(http.MethodGet, "/dashboard", nil))
++	if w2.Code != http.StatusOK {
++		t.Errorf("status after disabling panel = %d, want 200", w2.Code)
++	}
++}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/dashboard/dashboard.go fixed/yagura-v0.34.1/internal/dashboard/dashboard.go
 --- a/yagura-v0.34.1/internal/dashboard/dashboard.go	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/dashboard/dashboard.go	2026-06-03 04:24:21.716121756 +0000
@@ -8244,6 +8322,35 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  func extractName(modulePath string) string {
  	if i := strings.LastIndex(modulePath, "/"); i >= 0 {
  		return modulePath[i+1:]
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/sbom/sbom_test.go fixed/yagura-v0.34.1/internal/sbom/sbom_test.go
+--- a/yagura-v0.34.1/internal/sbom/sbom_test.go	2026-06-02 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/sbom/sbom_test.go	2026-06-03 06:26:40.615443407 +0000
+@@ -240,3 +240,25 @@
+ 		t.Errorf("default serial: %q", bom.SerialNumber)
+ 	}
+ }
++
++// Generate("", ...) は BuildInfo の Main.Path に fallback する。
++func TestGenerate_DefaultMainPath(t *testing.T) {
++	g := New()
++	g.NowFn = func() time.Time { return time.Date(2026, 5, 13, 0, 0, 0, 0, time.UTC) }
++	g.SerialFn = func() string { return "urn:uuid:00000000-0000-4000-8000-000000000000" }
++
++	bom, err := g.Generate("", "")
++	if err != nil {
++		t.Fatalf("Generate: %v", err)
++	}
++	if bom.Metadata.Component == nil {
++		t.Fatal("main component is nil")
++	}
++	// テストバイナリの module path に fallback するので空にはならない。
++	if bom.Metadata.Component.Name == "" {
++		t.Error("main component name should fall back to build-info module path")
++	}
++	if bom.Metadata.Component.BomRef == "" {
++		t.Error("main component bom-ref should be populated")
++	}
++}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/scanner/scanner_leak_test.go fixed/yagura-v0.34.1/internal/scanner/scanner_leak_test.go
 --- a/yagura-v0.34.1/internal/scanner/scanner_leak_test.go	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/scanner/scanner_leak_test.go	2026-06-03 04:24:21.696121755 +0000
