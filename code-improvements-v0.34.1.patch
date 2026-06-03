@@ -2339,6 +2339,321 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  func asJSONError(err error) json.RawMessage {
  	var te *ToolError
  	if !errors.As(err, &te) {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/helpers_test.go fixed/yagura-v0.34.1/internal/mcp/helpers_test.go
+--- a/yagura-v0.34.1/internal/mcp/helpers_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/helpers_test.go	2026-06-03 06:08:10.399404340 +0000
+@@ -0,0 +1,311 @@
++package mcp
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/aiverify"
++	"github.com/shizukutanaka/yagura/internal/alertfix"
++	"github.com/shizukutanaka/yagura/internal/plantracker"
++	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/qualitycheck"
++)
++
++// version() / SetVersion() の往復。
++func TestSetVersionRoundTrip(t *testing.T) {
++	orig := version()
++	t.Cleanup(func() { SetVersion(orig) })
++
++	SetVersion("v9.9.9-test")
++	if got := version(); got != "v9.9.9-test" {
++		t.Fatalf("version() = %q, want v9.9.9-test", got)
++	}
++}
++
++// atomicWriteFile が内容・モードどおりに書き、親ディレクトリを自動生成する。
++func TestAtomicWriteFile(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "nested", "out.sh")
++
++	if err := atomicWriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
++		t.Fatalf("atomicWriteFile: %v", err)
++	}
++	got, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("ReadFile: %v", err)
++	}
++	if string(got) != "#!/bin/sh\n" {
++		t.Errorf("content = %q", got)
++	}
++	info, err := os.Stat(path)
++	if err != nil {
++		t.Fatalf("Stat: %v", err)
++	}
++	if info.Mode().Perm() != 0o755 {
++		t.Errorf("mode = %v, want 0755", info.Mode().Perm())
++	}
++}
++
++// filterBySeverity は閾値以上の Alert のみ残し、未知の閾値では無変更で返す。
++func TestFilterBySeverity(t *testing.T) {
++	report := alertfix.Report{
++		Alerts: []alertfix.Alert{
++			{Severity: alertfix.SevCritical},
++			{Severity: alertfix.SevHigh},
++			{Severity: alertfix.SevMedium},
++			{Severity: alertfix.SevLow},
++		},
++		Total: 4,
++	}
++
++	high := filterBySeverity(report, "high")
++	if high.Total != 2 || len(high.Alerts) != 2 {
++		t.Fatalf("high: Total=%d len=%d, want 2/2", high.Total, len(high.Alerts))
++	}
++	for _, a := range high.Alerts {
++		if a.Severity != alertfix.SevCritical && a.Severity != alertfix.SevHigh {
++			t.Errorf("unexpected severity kept: %q", a.Severity)
++		}
++	}
++
++	crit := filterBySeverity(report, "CRITICAL") // case-insensitive
++	if crit.Total != 1 {
++		t.Errorf("critical: Total=%d, want 1", crit.Total)
++	}
++
++	unchanged := filterBySeverity(report, "bogus")
++	if unchanged.Total != 4 {
++		t.Errorf("bogus threshold should not filter: Total=%d, want 4", unchanged.Total)
++	}
++}
++
++// projectToSnapshot は registry 値を alertfix snapshot に写す。
++func TestProjectToSnapshot(t *testing.T) {
++	p := project.Project{
++		Slug:           "alpha",
++		Repository:     "owner/alpha",
++		VulnCritical:   2,
++		VulnHigh:       3,
++		CIStatus:       project.CIStatusFailing,
++		ScorecardScore: 7.5,
++		OpenIssues:     4,
++		OpenPRs:        1,
++	}
++	snap := projectToSnapshot(p)
++	if snap.Slug != "alpha" || snap.Repository != "owner/alpha" {
++		t.Errorf("identity not copied: %+v", snap)
++	}
++	if snap.VulnCritical != 2 || snap.VulnHigh != 3 {
++		t.Errorf("vuln counts wrong: %+v", snap)
++	}
++	if snap.CIStatus != "failing" {
++		t.Errorf("CIStatus = %q, want failing", snap.CIStatus)
++	}
++	if snap.ScorecardScore != 7.5 || snap.OpenIssues != 4 || snap.OpenPRs != 1 {
++		t.Errorf("metrics not copied: %+v", snap)
++	}
++}
++
++// pickReason は最も重い阻害要因を優先順に 1 文で返す。
++func TestPickReason(t *testing.T) {
++	healthy := plantracker.PlanState{IsHealthy: true, ProgressPct: 100}
++	cases := []struct {
++		name       string
++		plan       plantracker.PlanState
++		ci         string
++		openCrit   int
++		aiCritical bool
++		aiRisk     int
++		want       string
++	}{
++		{"ai critical wins", healthy, "passing", 5, true, 99, "AI-generated critical risk (review required)"},
++		{"open crit", healthy, "passing", 3, false, 0, "3 critical issues blocking"},
++		{"ci failing", healthy, "FAILING", 0, false, 0, "CI failing"},
++		{"plan unhealthy", plantracker.PlanState{IsHealthy: false, ProgressPct: 100}, "passing", 0, false, 0, "Plan.md missing required sections"},
++		{"progress remaining", plantracker.PlanState{IsHealthy: true, ProgressPct: 40}, "passing", 0, false, 0, "plan 60% remaining"},
++		{"ready", healthy, "passing", 0, false, 0, "ready to release"},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			got := pickReason(tc.plan, tc.ci, tc.openCrit, tc.aiCritical, tc.aiRisk)
++			if got != tc.want {
++				t.Errorf("pickReason = %q, want %q", got, tc.want)
++			}
++		})
++	}
++}
++
++// loadPlanMd は候補名を順に探し、無ければエラー。
++func TestLoadPlanMd(t *testing.T) {
++	if _, _, err := loadPlanMd(""); err == nil {
++		t.Error("empty local_path should error")
++	}
++
++	dir := t.TempDir()
++	if _, _, err := loadPlanMd(dir); err == nil {
++		t.Error("missing Plan.md should error")
++	}
++
++	want := "# Plan\n\n## 目的\nhello\n"
++	if err := os.WriteFile(filepath.Join(dir, "Plan.md"), []byte(want), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	content, full, err := loadPlanMd(dir)
++	if err != nil {
++		t.Fatalf("loadPlanMd: %v", err)
++	}
++	if content != want {
++		t.Errorf("content = %q", content)
++	}
++	if filepath.Base(full) != "Plan.md" {
++		t.Errorf("full = %q", full)
++	}
++}
++
++// extractSection は ## ヘッダ直下の本文を返し、case-insensitive で一致する。
++func TestExtractSection(t *testing.T) {
++	content := "# Title\n\n## Purpose\nthe goal line\nsecond line\n\n## Scope\nin scope\n"
++
++	got := extractSection(content, []string{"purpose"})
++	if got != "the goal line\nsecond line" {
++		t.Errorf("Purpose body = %q", got)
++	}
++
++	// 複数候補: 最初に見つかった非空を返す。
++	got = extractSection(content, []string{"Nonexistent", "Scope"})
++	if got != "in scope" {
++		t.Errorf("Scope body = %q", got)
++	}
++
++	if extractSection(content, []string{"Missing"}) != "" {
++		t.Error("missing section should be empty")
++	}
++}
++
++// extractDoDItems は DoD section の bullet を checkbox を除いて列挙する。
++func TestExtractDoDItems(t *testing.T) {
++	content := "## DoD\n- [ ] first\n- [x] second\n* third\nignored non-bullet\n"
++	items := extractDoDItems(content)
++	want := []string{"first", "second", "third"}
++	if len(items) != len(want) {
++		t.Fatalf("items = %v, want %v", items, want)
++	}
++	for i := range want {
++		if items[i] != want[i] {
++			t.Errorf("items[%d] = %q, want %q", i, items[i], want[i])
++		}
++	}
++
++	if extractDoDItems("## Other\n- x\n") != nil {
++		t.Error("no DoD section should yield nil")
++	}
++}
++
++// planStateToFeatureInput は Phase header 配下の checkbox を feature task にする。
++func TestPlanStateToFeatureInput(t *testing.T) {
++	content := "# Plan\n" + // line 1
++		"## Phase 1\n" + // line 2
++		"- [x] done task\n" + // line 3
++		"- [ ] todo task\n" + // line 4
++		"## Notes\n" + // line 5
++		"- [ ] not a feature\n" // line 6
++	state := plantracker.PlanState{
++		Phases: []plantracker.Phase{
++			{Name: "Phase 1", LineStart: 2},
++			{Name: "Notes", LineStart: 5},
++		},
++	}
++	pin := planStateToFeatureInput("proj", content, state)
++	if pin.Project != "proj" {
++		t.Errorf("project = %q", pin.Project)
++	}
++	if len(pin.Phases) != 1 {
++		t.Fatalf("phases = %d, want 1 (only Phase section)", len(pin.Phases))
++	}
++	tasks := pin.Phases[0].Tasks
++	if len(tasks) != 2 {
++		t.Fatalf("tasks = %d, want 2", len(tasks))
++	}
++	if !tasks[0].Done || tasks[0].Title != "done task" {
++		t.Errorf("task0 = %+v", tasks[0])
++	}
++	if tasks[1].Done || tasks[1].Title != "todo task" {
++		t.Errorf("task1 = %+v", tasks[1])
++	}
++}
++
++// formatQualityResult は summaryOnly で findings/by_file を出し分ける。
++func TestFormatQualityResult(t *testing.T) {
++	res := qualitycheck.Result{
++		FilesScanned: 2,
++		TotalLines:   100,
++		Findings:     []qualitycheck.Finding{{}},
++		BySeverity:   map[qualitycheck.Severity]int{},
++		ByRule:       map[string]int{"todo": 1},
++		ByFile:       map[string]int{"a.go": 1},
++	}
++
++	summary := formatQualityResult(res, true).(map[string]any)
++	if summary["finding_count"].(int) != 1 {
++		t.Errorf("finding_count = %v", summary["finding_count"])
++	}
++	if _, ok := summary["findings"]; ok {
++		t.Error("summaryOnly should omit findings")
++	}
++	if _, ok := summary["by_file"]; ok {
++		t.Error("summaryOnly should omit by_file")
++	}
++
++	full := formatQualityResult(res, false).(map[string]any)
++	if _, ok := full["findings"]; !ok {
++		t.Error("full output should include findings")
++	}
++	if _, ok := full["by_file"]; !ok {
++		t.Error("full output should include by_file")
++	}
++}
++
++// formatAIVerifyResult も summaryOnly で findings を出し分ける。
++func TestFormatAIVerifyResult(t *testing.T) {
++	res := aiverify.Result{
++		FilesScanned: 1,
++		Findings:     []aiverify.Finding{{}},
++		BySeverity:   map[aiverify.RiskLevel]int{},
++		ByCategory:   map[aiverify.Category]int{},
++	}
++
++	summary := formatAIVerifyResult(res, true).(map[string]any)
++	if summary["finding_count"].(int) != 1 {
++		t.Errorf("finding_count = %v", summary["finding_count"])
++	}
++	if _, ok := summary["findings"]; ok {
++		t.Error("summaryOnly should omit findings")
++	}
++
++	full := formatAIVerifyResult(res, false).(map[string]any)
++	if _, ok := full["findings"]; !ok {
++		t.Error("full output should include findings")
++	}
++}
++
++// scanProjectAICode は対象 source を拾い、空ディレクトリでは空 Result を返す。
++func TestScanProjectAICode(t *testing.T) {
++	empty := scanProjectAICode(t.TempDir())
++	if empty.FilesScanned != 0 {
++		t.Errorf("empty dir: FilesScanned = %d, want 0", empty.FilesScanned)
++	}
++
++	dir := t.TempDir()
++	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	// 非対象拡張子は無視される。
++	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# doc\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	res := scanProjectAICode(dir)
++	if res.FilesScanned != 1 {
++		t.Errorf("FilesScanned = %d, want 1 (only main.go)", res.FilesScanned)
++	}
++}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/server.go fixed/yagura-v0.34.1/internal/mcp/server.go
 --- a/yagura-v0.34.1/internal/mcp/server.go	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/mcp/server.go	2026-06-03 04:24:21.696121755 +0000
@@ -2394,6 +2709,105 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/y
  		callErr error
  	)
  	func() {
+diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/server_accessors_test.go fixed/yagura-v0.34.1/internal/mcp/server_accessors_test.go
+--- a/yagura-v0.34.1/internal/mcp/server_accessors_test.go	1970-01-01 00:00:00.000000000 +0000
++++ b/yagura-v0.34.1/internal/mcp/server_accessors_test.go	2026-06-03 06:08:35.627405228 +0000
+@@ -0,0 +1,95 @@
++package mcp
++
++import (
++	"path/filepath"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/alertfix"
++	"github.com/shizukutanaka/yagura/internal/project"
++)
++
++// ToolStats の平均は Calls=0 で 0、それ以外は byte/Calls。
++func TestToolStatsAverages(t *testing.T) {
++	zero := &ToolStats{}
++	if zero.AvgReqBytes() != 0 || zero.AvgRespBytes() != 0 {
++		t.Errorf("zero calls should give 0 averages")
++	}
++	st := &ToolStats{Calls: 2, RequestBytes: 10, ResponseBytes: 30}
++	if st.AvgReqBytes() != 5 {
++		t.Errorf("AvgReqBytes = %v, want 5", st.AvgReqBytes())
++	}
++	if st.AvgRespBytes() != 15 {
++		t.Errorf("AvgRespBytes = %v, want 15", st.AvgRespBytes())
++	}
++}
++
++// Cache / CacheStats / recordStats / AllToolStats の基本動作。
++func TestServerCacheAndStats(t *testing.T) {
++	s := New("", nil)
++	if s.Cache() == nil {
++		t.Fatal("Cache() should be non-nil by default")
++	}
++	// 新規 cache の統計はゼロ。
++	if cs := s.CacheStats(); cs.Hits != 0 || cs.Misses != 0 {
++		t.Errorf("fresh CacheStats not zero: %+v", cs)
++	}
++
++	if len(s.AllToolStats()) != 0 {
++		t.Errorf("fresh server should have no tool stats")
++	}
++	s.recordStats("yagura_x", 100, 200, false, fixedNow)
++	s.recordStats("yagura_x", 50, 50, true, fixedNow)
++	all := s.AllToolStats()
++	if len(all) != 1 {
++		t.Fatalf("AllToolStats len = %d, want 1", len(all))
++	}
++	got := all[0]
++	if got.Name != "yagura_x" || got.Calls != 2 || got.RequestBytes != 150 || got.ErrorCount != 1 {
++		t.Errorf("stats snapshot wrong: %+v", got)
++	}
++}
++
++// audit / alertStore / hookReceiver の setter/getter (nil 許容)。
++func TestServerOptionalSinks(t *testing.T) {
++	s := New("", nil)
++
++	s.SetAudit(nil) // nil は許容
++	s.SetHookReceiver(nil)
++	if s.HookReceiver() != nil {
++		t.Error("HookReceiver should be nil")
++	}
++
++	if s.AlertStore() != nil {
++		t.Error("AlertStore should start nil")
++	}
++	store, err := alertfix.NewStore(filepath.Join(t.TempDir(), "alerts.json"))
++	if err != nil {
++		t.Fatalf("NewStore: %v", err)
++	}
++	s.SetAlertStore(store)
++	if s.AlertStore() != store {
++		t.Error("AlertStore should return the set store")
++	}
++	s.SetAlertStore(nil)
++	if s.AlertStore() != nil {
++		t.Error("AlertStore should be nil after clearing")
++	}
++}
++
++// toGraphProjects は Slug / DependsOn のみを写す。
++func TestToGraphProjects(t *testing.T) {
++	in := []*project.Project{
++		{Slug: "a", DependsOn: []string{"b"}},
++		{Slug: "b"},
++	}
++	out := toGraphProjects(in)
++	if len(out) != 2 {
++		t.Fatalf("len = %d, want 2", len(out))
++	}
++	if out[0].Slug != "a" || len(out[0].DependsOn) != 1 || out[0].DependsOn[0] != "b" {
++		t.Errorf("out[0] = %+v", out[0])
++	}
++	if out[1].Slug != "b" || len(out[1].DependsOn) != 0 {
++		t.Errorf("out[1] = %+v", out[1])
++	}
++}
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' baseline/yagura-v0.34.1/internal/mcp/server_test.go fixed/yagura-v0.34.1/internal/mcp/server_test.go
 --- a/yagura-v0.34.1/internal/mcp/server_test.go	2026-06-02 00:00:00.000000000 +0000
 +++ b/yagura-v0.34.1/internal/mcp/server_test.go	2026-06-03 04:24:21.700121756 +0000
