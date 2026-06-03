@@ -6409,7 +6409,7 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  			Date string `json:"date"` // RFC3339
 diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude=bin' baseline/yagura-v0.34.1/internal/github/client_test.go fixed/yagura-v0.34.1/internal/github/client_test.go
 --- baseline/yagura-v0.34.1/internal/github/client_test.go	2026-06-02 00:00:00.000000000 +0000
-+++ fixed/yagura-v0.34.1/internal/github/client_test.go	2026-06-03 08:10:57.168583240 +0000
++++ fixed/yagura-v0.34.1/internal/github/client_test.go	2026-06-03 08:24:07.932611066 +0000
 @@ -6,6 +6,7 @@
  	"fmt"
  	"net/http"
@@ -6437,6 +6437,15 @@ diff -ruN '--exclude=yagura-tray' '--exclude=secretscan_fuzz_test.go' '--exclude
  	_, c := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
 -		w.Header().Set("X-RateLimit-Remaining", "0")
 +		w.Header().Set("X-Ratelimit-Remaining", "0")
+ 		w.WriteHeader(http.StatusForbidden)
+ 	})
+ 	_, err := c.GetRepository(context.Background(), "x", "r")
+@@ -91,7 +92,7 @@
+ 
+ func TestGetRepository_Forbidden_NonRateLimit(t *testing.T) {
+ 	_, c := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+-		w.Header().Set("X-RateLimit-Remaining", "4000")
++		w.Header().Set("X-Ratelimit-Remaining", "4000")
  		w.WriteHeader(http.StatusForbidden)
  	})
  	_, err := c.GetRepository(context.Background(), "x", "r")
