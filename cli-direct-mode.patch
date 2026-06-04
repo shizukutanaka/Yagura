@@ -1,8 +1,8 @@
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..bfb201e 100644
+index 9b29eec..1b658cc 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,45 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,54 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -32,6 +32,15 @@ index 9b29eec..bfb201e 100644
 +  要求する。副産物として `yagura secret` も token 不要になり、`yagura verify`
 +  が daemon と同じ `~/.yagura/state/audit` を見るよう修正(以前は `~/.yagura`
 +  を見ており不一致だった)。
++- **secretscan: AI 認証情報の検出強化(12 → 14 パターン)**。IPA「情報セキュリティ
++  10大脅威 2026」(AI 利用リスクが初の 3 位)/「AI 利用者のためのセキュリティ豆知識」
++  が指摘する「生成 AI へ認証情報を貼り付けてしまう」漏洩経路に対応。2024 以降の
++  OpenAI project/service/admin キー(`sk-proj-` / `sk-svcacct-` / `sk-admin-`、
++  `-`/`_` を含み旧 `sk-…48` パターンでは取り逃がしていた)と Hugging Face token
++  (`hf_…`)を追加。entropy フィルタで placeholder は引き続き除外。
++- **CLI/MCP 共有 helper の重複解消**:`matchesQuery` / `daysSince` を
++  `project` パッケージへ集約(`(*Project).MatchesQuery` / `project.DaysSince`)。
++  `gha-audit` / `pin-drift` の `--dir` 既定値を `.github/workflows` に変更。
 +
 +### What's not yet
 +
@@ -1593,6 +1602,19 @@ index 6981102..8711b5c 100644
  </div>
  </body>
  </html>`
+diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
+index 939a67e..1a1046a 100644
+--- a/yagura-v0.35.0/internal/mcp/tools.go
++++ b/yagura-v0.35.0/internal/mcp/tools.go
+@@ -245,7 +245,7 @@ type todayItem struct {
+ func buildSecretScanTool(d Deps) *Tool {
+ 	return &Tool{
+ 		Name: "yagura_secretscan",
+-		Description: "[G] Secret scan: 12 patterns + entropy. Redacts hits.",
++		Description: "[G] Secret scan: 14 patterns + entropy. Redacts hits.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
 diff --git a/yagura-v0.35.0/internal/mcp/tools_inventory.go b/yagura-v0.35.0/internal/mcp/tools_inventory.go
 index e08cf8f..fe69d7f 100644
 --- a/yagura-v0.35.0/internal/mcp/tools_inventory.go
@@ -1705,3 +1727,88 @@ index 9ca620a..f400aba 100644
  // SortBySlug は slug 昇順ソート。
  func SortBySlug(ps []*Project) {
  	sort.Slice(ps, func(i, j int) bool { return ps[i].Slug < ps[j].Slug })
+diff --git a/yagura-v0.35.0/internal/secretscan/secretscan.go b/yagura-v0.35.0/internal/secretscan/secretscan.go
+index f870332..8719b6c 100644
+--- a/yagura-v0.35.0/internal/secretscan/secretscan.go
++++ b/yagura-v0.35.0/internal/secretscan/secretscan.go
+@@ -2,7 +2,7 @@
+ //
+ // 設計判断 (security spec S1.3):
+ //   - regex + Shannon entropy のハイブリッド検出 (gitleaks 互換のアプローチ)
+-//   - 12 種類の代表的 secret pattern (AWS / GitHub / Slack / Stripe / OpenAI /
++//   - 14 種類の代表的 secret pattern (AWS / GitHub / Slack / Stripe / OpenAI /
+ //     Anthropic / Google API / JWT / Generic API key / Private key / Database URL / Generic hex)
+ //   - 各検出には rule ID + severity + finger print を付与
+ //   - secret 自体はレポートに含めない(redacted) — 監査ログに secret raw を残さない
+@@ -164,13 +164,13 @@ func ShannonEntropy(s string) float64 {
+ 
+ // ─── default rules ──────────────────────────────────────────
+ 
+-// DefaultRules は標準的な secret patterns 12 種類を返す。
++// DefaultRules は標準的な secret patterns 14 種類を返す。
+ //
+ // 各 pattern は OWASP "Top 10 Web Application Security Risks" の credential
+ // 漏洩カテゴリ、および gitleaks v8 default rules を参考にしている。
+ // Go regexp は lookahead/lookbehind 不可のため、gitleaks の TOML rule をそのまま
+ // 変換できないものは context-free な regex に簡略化している。
+-// compiledDefaultRules は 12 個の正規表現を一度だけコンパイルして再利用する
++// compiledDefaultRules は 14 個の正規表現を一度だけコンパイルして再利用する
+ // (New() / DefaultRules() 呼び出し毎の MustCompile を回避)。
+ var compiledDefaultRules = sync.OnceValue(buildDefaultRules)
+ 
+@@ -236,11 +236,28 @@ func buildDefaultRules() []Rule {
+ 		},
+ 		{
+ 			ID:          "openai-api-key",
+-			Description: "OpenAI API Key (sk-…)",
++			Description: "OpenAI API Key (legacy sk-…48)",
+ 			Severity:    SeverityCritical,
+ 			Regex:       regexp.MustCompile(`\bsk-[a-zA-Z0-9]{48}\b`),
+ 			EntropyMin:  4.0,
+ 		},
++		{
++			// v0.35: 2024 以降の OpenAI project / service-account / admin キー。
++			// 旧 sk-…48 パターンは "-"/"_" を含む新形式(sk-proj- 等)を取り逃がす。
++			ID:          "openai-project-key",
++			Description: "OpenAI project/service key (sk-proj-/sk-svcacct-/sk-admin-…)",
++			Severity:    SeverityCritical,
++			Regex:       regexp.MustCompile(`\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{20,}`),
++			EntropyMin:  3.0,
++		},
++		{
++			// v0.35: Hugging Face access token(モデル/データセットの読み書き権限)。
++			ID:          "huggingface-token",
++			Description: "Hugging Face access token (hf_…)",
++			Severity:    SeverityHigh,
++			Regex:       regexp.MustCompile(`\bhf_[A-Za-z0-9]{34,}\b`),
++			EntropyMin:  3.0,
++		},
+ 		{
+ 			ID:          "google-api-key",
+ 			Description: "Google API Key (AIza…)",
+diff --git a/yagura-v0.35.0/internal/secretscan/secretscan_test.go b/yagura-v0.35.0/internal/secretscan/secretscan_test.go
+index 024402e..56e8f05 100644
+--- a/yagura-v0.35.0/internal/secretscan/secretscan_test.go
++++ b/yagura-v0.35.0/internal/secretscan/secretscan_test.go
+@@ -87,6 +87,21 @@ func TestDefaultRules_Detect(t *testing.T) {
+ 			ruleID:   "openai-api-key",
+ 			severity: SeverityCritical,
+ 		},
++		{
++			// fixture は連結で組み立て、完全なトークン literal を source に残さない
++			// (push-protection の OpenAI/HF パターン誤検出を避ける。実行時は連結後の
++			// 文字列がスキャンされるので regex の検証には影響しない)。
++			name:     "OpenAI project key (modern sk-proj-)",
++			text:     `OPENAI_API_KEY=sk-` + `proj-aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5bC7dE9fG1hJ3`,
++			ruleID:   "openai-project-key",
++			severity: SeverityCritical,
++		},
++		{
++			name:     "Hugging Face token",
++			text:     `HF_TOKEN = "hf` + `_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"`,
++			ruleID:   "huggingface-token",
++			severity: SeverityHigh,
++		},
+ 		{
+ 			name:     "Google API key",
+ 			text:     `key = AIzaabcdefghijklmnopqrstuvwxyzABCDEFGHI`,
