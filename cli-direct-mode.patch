@@ -1,8 +1,8 @@
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..abaaae2 100644
+index 9b29eec..c412677 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,68 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,73 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -55,6 +55,11 @@ index 9b29eec..abaaae2 100644
 +  description 無し+本文ほぼ空の stub、(2) score < 40 の低品質 skill を
 +  「retire 候補」として明示する(rule-based 判定のみ。embedding/LLM は ADR-0001
 +  の範囲外なので採用せず、自動削除もしない=人間判断に委ねる)。
++- **CLI `yagura skill-audit`**。上記 retire signal をライブラリ単位で実用化:
++  `--dir`(既定 `.claude/skills`)配下の `SKILL.md` を再帰走査し、各スコアと
++  retire 候補数をまとめて報告(`--json` / `--retire-only`)。MUSE-Autoskill の
++  「ライブラリが育つほど retire による self-cleaning が効く」を開発者の手元に。
++  disk 走査なので CLI 側に置き、MCP の tool 数(46)は不変。
 +
 +### What's not yet
 +
@@ -86,10 +91,10 @@ index 986f84e..e3ac25e 100644
  
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..28d5f19
+index 0000000..9c0d8a7
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,758 @@
+@@ -0,0 +1,835 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -119,8 +124,10 @@ index 0000000..28d5f19
 +	"flag"
 +	"fmt"
 +	"io"
++	"io/fs"
 +	"os"
 +	"path/filepath"
++	"sort"
 +	"strings"
 +	"time"
 +
@@ -128,6 +135,7 @@ index 0000000..28d5f19
 +	"github.com/shizukutanaka/yagura/internal/config"
 +	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 +	"github.com/shizukutanaka/yagura/internal/github"
++	"github.com/shizukutanaka/yagura/internal/harness"
 +	"github.com/shizukutanaka/yagura/internal/pindrift"
 +	"github.com/shizukutanaka/yagura/internal/project"
 +	"github.com/shizukutanaka/yagura/internal/registry"
@@ -148,6 +156,7 @@ index 0000000..28d5f19
 +	"list": true, "get": true, "search": true, "stats": true,
 +	"register": true, "update": true, "unregister": true,
 +	"sbom": true, "secretscan": true, "gha-audit": true, "pin-drift": true,
++	"skill-audit": true,
 +}
 +
 +// runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -176,6 +185,8 @@ index 0000000..28d5f19
 +		err = cliGhaAudit(args, stdout, stderr)
 +	case "pin-drift":
 +		err = cliPinDrift(args, stdout, stderr)
++	case "skill-audit":
++		err = cliSkillAudit(args, stdout, stderr)
 +	default:
 +		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 +		return 2
@@ -679,6 +690,77 @@ index 0000000..28d5f19
 +	return nil
 +}
 +
++// skillAuditEntry は 1 つの SKILL.md の監査結果(path 付き)。
++type skillAuditEntry struct {
++	Path string `json:"path"`
++	harness.SkillAuditResult
++}
++
++// cliSkillAudit は dir 配下の SKILL.md を走査し、品質スコアと retire 候補を
++// まとめて報告する(MUSE-Autoskill のライブラリ単位の self-cleaning を CLI で
++// 実用化)。disk 走査なので MCP の単発 yagura_skill_audit ではなく CLI 側に置く。
++func cliSkillAudit(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("skill-audit", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	dir := fs.String("dir", ".claude/skills", "directory to scan for SKILL.md files")
++	retireOnly := fs.Bool("retire-only", false, "show only retire candidates")
++	if err := fs.Parse(args); err != nil {
++		return errUsage
++	}
++	paths, err := findSkillFiles(*dir)
++	if err != nil {
++		return err
++	}
++	entries := make([]skillAuditEntry, 0, len(paths))
++	retireCount := 0
++	for _, p := range paths {
++		data, err := os.ReadFile(p)
++		if err != nil {
++			return fmt.Errorf("read %s: %w", p, err)
++		}
++		res := harness.AuditSkill(string(data))
++		if res.RetireRecommended {
++			retireCount++
++		}
++		if *retireOnly && !res.RetireRecommended {
++			continue
++		}
++		entries = append(entries, skillAuditEntry{Path: p, SkillAuditResult: res})
++	}
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{
++			"scanned":           len(paths),
++			"retire_candidates": retireCount,
++			"skills":            entries,
++		})
++	}
++	humanSkillAudit(stdout, entries, len(paths), retireCount)
++	return nil
++}
++
++// findSkillFiles は dir 配下(再帰)の "SKILL.md" を slug 昇順で返す。
++// dir が存在しなければ空(エラーにしない — 未導入リポジトリでも素直に 0 件)。
++func findSkillFiles(dir string) ([]string, error) {
++	if _, err := os.Stat(dir); os.IsNotExist(err) {
++		return nil, nil
++	}
++	var paths []string
++	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
++		if err != nil {
++			return err
++		}
++		if !d.IsDir() && d.Name() == "SKILL.md" {
++			paths = append(paths, p)
++		}
++		return nil
++	})
++	if err != nil {
++		return nil, fmt.Errorf("walk %s: %w", dir, err)
++	}
++	sort.Strings(paths)
++	return paths, nil
++}
++
 +// ─── shared helpers ──────────────────────────────────────────
 +
 +// filterProjects は stage/tag/language/query で registry を絞り込む。
@@ -850,10 +932,10 @@ index 0000000..28d5f19
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
 new file mode 100644
-index 0000000..ab540d0
+index 0000000..bb39f9a
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
-@@ -0,0 +1,302 @@
+@@ -0,0 +1,327 @@
 +// cli_format.go: output formatters for CLI direct mode (v0.35.0).
 +//
 +// 2 つの出力経路:
@@ -1141,6 +1223,31 @@ index 0000000..ab540d0
 +	_ = tw.Flush()
 +}
 +
++// ─── skill-audit ─────────────────────────────────────────────
++
++func humanSkillAudit(w io.Writer, entries []skillAuditEntry, scanned, retireCount int) {
++	fmt.Fprintf(w, "scanned: %d   retire_candidates: %d\n", scanned, retireCount)
++	if len(entries) == 0 {
++		return
++	}
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	fmt.Fprintln(tw, "SCORE\tRETIRE\tPATH")
++	for _, e := range entries {
++		retire := "-"
++		if e.RetireRecommended {
++			retire = "RETIRE"
++		}
++		fmt.Fprintf(tw, "%d\t%s\t%s\n", e.Score, retire, e.Path)
++	}
++	_ = tw.Flush()
++	// retire 候補は理由も出す(人間が判断できるように)
++	for _, e := range entries {
++		if e.RetireRecommended {
++			fmt.Fprintf(w, "  %s: %s\n", e.Path, e.RetireReason)
++		}
++	}
++}
++
 +// ─── small helpers ───────────────────────────────────────────
 +
 +func dash(s string) string {
@@ -1158,10 +1265,10 @@ index 0000000..ab540d0
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
 new file mode 100644
-index 0000000..26b69d8
+index 0000000..6ca6478
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
-@@ -0,0 +1,317 @@
+@@ -0,0 +1,359 @@
 +package main
 +
 +import (
@@ -1445,6 +1552,48 @@ index 0000000..26b69d8
 +	}
 +}
 +
++func TestCLI_SkillAudit(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	dir := t.TempDir()
++	mustWrite := func(sub, content string) {
++		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(filepath.Join(dir, sub, "SKILL.md"), []byte(content), 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++	mustWrite("good", "---\nname: go-test\ndescription: Use when the user asks to fix Go tests.\n---\n\n# Go\n\n## Gotchas\n\n- use t.TempDir\n")
++	mustWrite("stub", "# placeholder\n\nTODO\n")
++
++	_, out, _ := runCLICapture(t, "skill-audit", "--dir", dir, "--json")
++	var r struct {
++		Scanned          int `json:"scanned"`
++		RetireCandidates int `json:"retire_candidates"`
++		Skills           []struct {
++			Path              string `json:"path"`
++			Score             int    `json:"score"`
++			RetireRecommended bool   `json:"retire_recommended"`
++		} `json:"skills"`
++	}
++	if err := json.Unmarshal([]byte(out), &r); err != nil {
++		t.Fatalf("json: %v\n%s", err, out)
++	}
++	if r.Scanned != 2 || r.RetireCandidates != 1 {
++		t.Errorf("expected scanned=2 retire=1, got %+v", r)
++	}
++	// retire-only narrows to the stub
++	_, ro, _ := runCLICapture(t, "skill-audit", "--dir", dir, "--retire-only", "--json")
++	_ = json.Unmarshal([]byte(ro), &r)
++	if len(r.Skills) != 1 || !r.Skills[0].RetireRecommended {
++		t.Errorf("retire-only should return 1 retire skill, got %+v", r.Skills)
++	}
++	// missing dir → 0, exit 0
++	if code, mout, _ := runCLICapture(t, "skill-audit", "--dir", filepath.Join(dir, "nope")); code != 0 || !strings.Contains(mout, "scanned: 0") {
++		t.Errorf("missing dir: code=%d out=%q", code, mout)
++	}
++}
++
 +func TestCLI_PinDriftRequiresToken(t *testing.T) {
 +	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
 +	t.Setenv("YAGURA_GITHUB_TOKEN", "") // ensure unset
@@ -1480,7 +1629,7 @@ index 0000000..26b69d8
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..305fd61 100644
+index bd1fe39..4f41999 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -57,7 +57,7 @@ import (
@@ -1503,7 +1652,7 @@ index bd1fe39..305fd61 100644
  	}
  	if err := run(); err != nil {
  		fmt.Fprintf(stderr, "yagura: %v\n", err)
-@@ -128,6 +132,13 @@ Usage:
+@@ -128,6 +132,14 @@ Usage:
    yagura secret get <name>     Decrypt and print <name> to stdout
    yagura secret delete <name>  Remove <name>
  
@@ -1511,13 +1660,14 @@ index bd1fe39..305fd61 100644
 +  yagura list|get|search|stats             Registry read ops
 +  yagura register|update|unregister        Registry mutations (audited)
 +  yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
++  yagura skill-audit                       Audit .claude/skills (score + retire)
 +  Add --json to any of the above for machine-readable output.
 +  pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
 +
  Set passphrase via YAGURA_SECRET_PASSPHRASE for set/get.
  Configuration is via environment variables. See documentation.
  `
-@@ -152,11 +163,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
+@@ -152,11 +164,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
  		return nil
  	}
  
@@ -1532,7 +1682,7 @@ index bd1fe39..305fd61 100644
  	if err != nil {
  		return fmt.Errorf("init store: %w", err)
  	}
-@@ -239,15 +251,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
+@@ -239,15 +252,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
  // この関数は GITHUB_TOKEN を読まない — verify は通常運用とは独立して
  // オフラインでも実行できる(disaster recovery を意識)。
  func verifyAudit(out io.Writer) error {
