@@ -1,8 +1,8 @@
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..1cb5c8c 100644
+index 9b29eec..cf8255f 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,116 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,132 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -101,6 +101,22 @@ index 9b29eec..1cb5c8c 100644
 +  これは既存の 1→1 handoff(quota 枯渇で切替)を **1→N 並列 fan-out** へ拡張する
 +  もの。新規依存ゼロ(stdlib `math`/`sort` のみ)。tool 数 46 → **47**、新 package
 +  `internal/agentparallel`(39 → 40 packages)。
++- **CLI `yagura agent-config-audit`: OpenClaw 系エージェント設定 lint**
++  (`internal/harness/agentconfig_audit.go`)。OS を直接触れる自律エージェント
++  (OpenClaw)を「いかに安全に実務へ組み込むか」— 西川和久氏の PC Watch コラムが
++  示す Docker 隔離 + multi-provider `openclaw.json`(LM Studio / vLLM / クラウド API
++  混在)の foot-gun を構造ベースで検出する。`AuditAgentConfig`(strict JSON)が:
++  **security** — `dangerouslyDisableDeviceAuth`(HTTP/LAN で control UI 露出)、
++  `browser.noSandbox`、provider への実 API key 直書き(placeholder `EMPTY`/`API-KEY`
++  は除外)、弱い gateway token;**reliability** — `compaction.reserveTokensFloor`
++  < 50000(小さすぎると圧縮自体が失敗)、`maxTokens >= contextWindow` / contextWindow
++  未設定(overflow);**reference integrity** — `agents.defaults.model.primary` と
++  `models` のキー(`provider/modelId`)が宣言モデルに解決するか。score 0-100 +
++  Issues/Suggestions。`--file`(既定 `openclaw.json`)or 位置引数、未配置は 0 件。
++  これで `.claude/` 系 4 auditor(skill/subagent/workflow/settings)に加え、
++  外部エージェント設定の監査が揃う。記事の実 config は 70 点(LAN/HTTP の security
++  トレードオフのみ flag、参照・context・compaction は健全)。disk 読みなので CLI 側、
++  MCP tool 数(47)は不変。stdlib `encoding/json` のみ。
 +
 +### What's not yet
 +
@@ -143,10 +159,10 @@ index 986f84e..b454692 100644
  │  │  - .well-known/mcp (2026 spec)                 │  │
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..eda2cce
+index 0000000..bc2e948
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,971 @@
+@@ -0,0 +1,1025 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -209,6 +225,7 @@ index 0000000..eda2cce
 +	"register": true, "update": true, "unregister": true,
 +	"sbom": true, "secretscan": true, "gha-audit": true, "pin-drift": true,
 +	"skill-audit": true, "workflow-audit": true, "settings-audit": true,
++	"agent-config-audit": true,
 +}
 +
 +// runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -243,6 +260,8 @@ index 0000000..eda2cce
 +		err = cliWorkflowAudit(args, stdout, stderr)
 +	case "settings-audit":
 +		err = cliSettingsAudit(args, stdout, stderr)
++	case "agent-config-audit":
++		err = cliAgentConfigAudit(args, stdout, stderr)
 +	default:
 +		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 +		return 2
@@ -949,6 +968,57 @@ index 0000000..eda2cce
 +	return paths
 +}
 +
++// cliAgentConfigAudit は OpenClaw 系 multi-provider エージェント設定(openclaw.json)を
++// 監査する。OS を触る自律エージェントを安全に運用するための security/reliability foot-gun
++// (LAN 公開認証 / sandbox / secret 直書き / context・compaction・モデル参照不整合)を検出。
++// 単一ファイル監査なので dir 走査ではなく --file(or 位置引数)で対象を取る。
++func cliAgentConfigAudit(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("agent-config-audit", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	file := fs.String("file", "openclaw.json", "path to the OpenClaw-style agent config JSON")
++	rest, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	path := *file
++	if len(rest) > 0 {
++		path = rest[0] // 位置引数があれば優先
++	}
++	if _, err := os.Stat(path); os.IsNotExist(err) {
++		// 未配置リポジトリでも素直に 0 件(他 audit と同じ graceful 挙動)。
++		if *jsonOut {
++			return emitJSON(stdout, map[string]any{"scanned": 0, "flagged": 0, "configs": []any{}})
++		}
++		fmt.Fprintln(stdout, "scanned: 0   flagged: 0")
++		return nil
++	}
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return fmt.Errorf("read %s: %w", path, err)
++	}
++	res := harness.AuditAgentConfig(string(data))
++	flagged := 0
++	if len(res.Issues) > 0 {
++		flagged = 1
++	}
++	entry := agentConfigAuditEntry{Path: path, AgentConfigAuditResult: res}
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{
++			"scanned": 1,
++			"flagged": flagged,
++			"configs": []agentConfigAuditEntry{entry},
++		})
++	}
++	humanAgentConfigAudit(stdout, entry, flagged)
++	return nil
++}
++
++// agentConfigAuditEntry は 1 つの openclaw.json の監査結果(path 付き)。
++type agentConfigAuditEntry struct {
++	Path string `json:"path"`
++	harness.AgentConfigAuditResult
++}
++
 +// ─── shared helpers ──────────────────────────────────────────
 +
 +// filterProjects は stage/tag/language/query で registry を絞り込む。
@@ -1120,10 +1190,10 @@ index 0000000..eda2cce
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
 new file mode 100644
-index 0000000..5524e9f
+index 0000000..0094baa
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
-@@ -0,0 +1,395 @@
+@@ -0,0 +1,409 @@
 +// cli_format.go: output formatters for CLI direct mode (v0.35.0).
 +//
 +// 2 つの出力経路:
@@ -1504,6 +1574,20 @@ index 0000000..5524e9f
 +	return "no"
 +}
 +
++// ─── agent-config-audit ──────────────────────────────────────
++
++func humanAgentConfigAudit(w io.Writer, e agentConfigAuditEntry, flagged int) {
++	fmt.Fprintf(w, "scanned: 1   flagged: %d\n", flagged)
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	fmt.Fprintln(tw, "SCORE\tPROVIDERS\tMODELS\tPRIMARY_OK\tPATH")
++	fmt.Fprintf(tw, "%d\t%d\t%d\t%s\t%s\n",
++		e.Score, e.ProviderCount, e.ModelCount, yesNo(e.PrimaryResolves), e.Path)
++	_ = tw.Flush()
++	for _, iss := range e.Issues {
++		fmt.Fprintf(w, "  %s: %s\n", e.Path, iss)
++	}
++}
++
 +// ─── small helpers ───────────────────────────────────────────
 +
 +func dash(s string) string {
@@ -1521,10 +1605,10 @@ index 0000000..5524e9f
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
 new file mode 100644
-index 0000000..1484f10
+index 0000000..5b35646
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,497 @@
 +package main
 +
 +import (
@@ -1977,6 +2061,51 @@ index 0000000..1484f10
 +		t.Errorf("missing dir: code=%d out=%q", code, mout)
 +	}
 +}
++
++func TestCLI_AgentConfigAudit(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	dir := t.TempDir()
++	// a config with a dangling primary + insecure LAN settings → flagged.
++	cfg := `{
++      "gateway": {"auth": {"mode": "token", "token": "openclaw-local-token-123"}, "controlUi": {"dangerouslyDisableDeviceAuth": true}},
++      "agents": {"defaults": {"model": {"primary": "vllm/missing"}}},
++      "models": {"providers": {"vllm": {"apiKey": "EMPTY", "models": [{"id": "qwen3.6-27b", "contextWindow": 262144, "maxTokens": 32768}]}}}
++    }`
++	path := filepath.Join(dir, "openclaw.json")
++	if err := os.WriteFile(path, []byte(cfg), 0o644); err != nil {
++		t.Fatal(err)
++	}
++
++	_, out, _ := runCLICapture(t, "agent-config-audit", "--file", path, "--json")
++	var r struct {
++		Scanned int `json:"scanned"`
++		Flagged int `json:"flagged"`
++		Configs []struct {
++			Path            string `json:"path"`
++			Score           int    `json:"score"`
++			PrimaryResolves bool   `json:"primary_resolves"`
++		} `json:"configs"`
++	}
++	if err := json.Unmarshal([]byte(out), &r); err != nil {
++		t.Fatalf("json: %v\n%s", err, out)
++	}
++	if r.Scanned != 1 || r.Flagged != 1 {
++		t.Errorf("expected scanned=1 flagged=1, got %+v", r)
++	}
++	if len(r.Configs) != 1 || r.Configs[0].PrimaryResolves {
++		t.Errorf("dangling primary should not resolve: %+v", r.Configs)
++	}
++
++	// positional arg form also works.
++	if code, pout, _ := runCLICapture(t, "agent-config-audit", path); code != 0 || !strings.Contains(pout, "scanned: 1") {
++		t.Errorf("positional form: code=%d out=%q", code, pout)
++	}
++
++	// missing file → scanned 0, exit 0.
++	if code, mout, _ := runCLICapture(t, "agent-config-audit", "--file", filepath.Join(dir, "nope.json")); code != 0 || !strings.Contains(mout, "scanned: 0") {
++		t.Errorf("missing file: code=%d out=%q", code, mout)
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
 index cfb6e51..b5b973a 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
@@ -1991,7 +2120,7 @@ index cfb6e51..b5b973a 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..8c7dd40 100644
+index bd1fe39..2b1eda0 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -57,7 +57,7 @@ import (
@@ -2014,7 +2143,7 @@ index bd1fe39..8c7dd40 100644
  	}
  	if err := run(); err != nil {
  		fmt.Fprintf(stderr, "yagura: %v\n", err)
-@@ -128,6 +132,16 @@ Usage:
+@@ -128,6 +132,17 @@ Usage:
    yagura secret get <name>     Decrypt and print <name> to stdout
    yagura secret delete <name>  Remove <name>
  
@@ -2025,13 +2154,14 @@ index bd1fe39..8c7dd40 100644
 +  yagura skill-audit                       Audit .claude/skills (score + retire)
 +  yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)
 +  yagura settings-audit                    Audit .claude/settings.json (permissions/hooks)
++  yagura agent-config-audit [file]         Audit OpenClaw-style openclaw.json (security/reliability)
 +  Add --json to any of the above for machine-readable output.
 +  pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
 +
  Set passphrase via YAGURA_SECRET_PASSPHRASE for set/get.
  Configuration is via environment variables. See documentation.
  `
-@@ -152,11 +166,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
+@@ -152,11 +167,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
  		return nil
  	}
  
@@ -2046,7 +2176,7 @@ index bd1fe39..8c7dd40 100644
  	if err != nil {
  		return fmt.Errorf("init store: %w", err)
  	}
-@@ -239,15 +254,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
+@@ -239,15 +255,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
  // この関数は GITHUB_TOKEN を読まない — verify は通常運用とは独立して
  // オフラインでも実行できる(disaster recovery を意識)。
  func verifyAudit(out io.Writer) error {
@@ -2675,6 +2805,445 @@ index 6981102..8711b5c 100644
  </div>
  </body>
  </html>`
+diff --git a/yagura-v0.35.0/internal/harness/agentconfig_audit.go b/yagura-v0.35.0/internal/harness/agentconfig_audit.go
+new file mode 100644
+index 0000000..76510e6
+--- /dev/null
++++ b/yagura-v0.35.0/internal/harness/agentconfig_audit.go
+@@ -0,0 +1,271 @@
++// agentconfig_audit.go: OpenClaw 系 multi-provider AI エージェント設定(openclaw.json)
++// の heuristic 評価。
++//
++// 動機: OS を直接触れる自律エージェント(OpenClaw 等)を「いかに安全に実務へ組み込むか」
++// が論点で、設定 1 箇所のミスが数時間のデバッグを生む(LM Studio / vLLM / クラウド API
++// の混在、Vision の input、compaction、LAN 公開の認証)。これらは構造ベースの lint rule
++// になる。本 auditor は openclaw.json を strict JSON で parse し、security と reliability
++// の foot-gun を検出する:
++//
++//	security:
++//	  - gateway.controlUi.dangerouslyDisableDeviceAuth=true(HTTP/LAN 公開で control UI 露出)
++//	  - browser.noSandbox=true(Chromium sandbox 無効 — privilege escalation 面)
++//	  - providers[].apiKey が placeholder でない実 key の直書き(secret leak)
++//	  - 弱い gateway token(例値・123・短すぎ)
++//	reliability:
++//	  - compaction.reserveTokensFloor < 50000(小さすぎると圧縮自体が失敗)
++//	  - model.maxTokens >= contextWindow / contextWindow 未設定(overflow)
++//	  - agents.defaults.model.primary / models のキーが providers の宣言モデルに解決しない
++//
++// AuditSkill / AuditSubagent / AuditWorkflow / AuditSettings と同じ shape
++// (Score + Issues + Suggestions)。stdlib encoding/json のみ(ADR-0001)。
++package harness
++
++import (
++	"encoding/json"
++	"fmt"
++	"sort"
++	"strings"
++)
++
++// AgentConfigAuditResult は openclaw.json 評価結果。
++//
++// Score は 0-100:
++//
++//	90+ : security/reliability とも健全
++//	70-89: 動くが LAN 公開 / sandbox 等のトレードオフあり
++//	50-69: 複数 foot-gun(参照不整合 / context 設定ミス等)
++//	<50 : 起動不能 or 重大な secret/security 露出
++type AgentConfigAuditResult struct {
++	Score              int      `json:"score"`
++	ValidJSON          bool     `json:"valid_json"`
++	ProviderCount      int      `json:"provider_count"`
++	ModelCount         int      `json:"model_count"`
++	PrimaryModel       string   `json:"primary_model,omitempty"`
++	PrimaryResolves    bool     `json:"primary_resolves"`
++	DeviceAuthDisabled bool     `json:"device_auth_disabled"`
++	BrowserNoSandbox   bool     `json:"browser_no_sandbox"`
++	HardcodedKeys      []string `json:"hardcoded_key_providers,omitempty"`
++	CompactionSafe     bool     `json:"compaction_safe"`
++	Issues             []string `json:"issues,omitempty"`
++	Suggestions        []string `json:"suggestions,omitempty"`
++}
++
++// compactionFloorRecommended は記事が推奨する reserveTokensFloor の下限。
++const compactionFloorRecommended = 50000
++
++// apiKeyPlaceholders は「実 key ではない」とみなす値(local provider の EMPTY など)。
++var apiKeyPlaceholders = map[string]bool{
++	"": true, "EMPTY": true, "API-KEY": true, "APIKEY": true,
++	"YOUR_API_KEY": true, "YOUR-API-KEY": true, "<API-KEY>": true,
++	"CHANGEME": true, "DUMMY": true, "TODO": true, "XXX": true, "NONE": true,
++}
++
++// agentConfigDoc は openclaw.json の audit 対象フィールドのみ抽出する。
++type agentConfigDoc struct {
++	Gateway struct {
++		Bind string `json:"bind"`
++		Auth struct {
++			Mode  string `json:"mode"`
++			Token string `json:"token"`
++		} `json:"auth"`
++		ControlUI struct {
++			AllowedOrigins               []string `json:"allowedOrigins"`
++			DangerouslyDisableDeviceAuth bool     `json:"dangerouslyDisableDeviceAuth"`
++		} `json:"controlUi"`
++	} `json:"gateway"`
++	Browser struct {
++		Enabled   bool `json:"enabled"`
++		NoSandbox bool `json:"noSandbox"`
++	} `json:"browser"`
++	Agents struct {
++		Defaults struct {
++			Model struct {
++				Primary string `json:"primary"`
++			} `json:"model"`
++			Models     map[string]json.RawMessage `json:"models"`
++			Compaction struct {
++				Mode               string `json:"mode"`
++				ReserveTokensFloor int    `json:"reserveTokensFloor"`
++			} `json:"compaction"`
++		} `json:"defaults"`
++	} `json:"agents"`
++	Models struct {
++		Providers map[string]struct {
++			BaseURL string `json:"baseUrl"`
++			APIKey  string `json:"apiKey"`
++			Models  []struct {
++				ID            string   `json:"id"`
++				Name          string   `json:"name"`
++				Input         []string `json:"input"`
++				ContextWindow int      `json:"contextWindow"`
++				MaxTokens     int      `json:"maxTokens"`
++			} `json:"models"`
++		} `json:"providers"`
++	} `json:"models"`
++}
++
++// AuditAgentConfig は openclaw.json content を heuristic で評価する。
++func AuditAgentConfig(content string) AgentConfigAuditResult {
++	r := AgentConfigAuditResult{Score: 100, CompactionSafe: true}
++
++	var doc agentConfigDoc
++	if err := json.Unmarshal([]byte(content), &doc); err != nil {
++		r.ValidJSON = false
++		r.Score = 0
++		r.Issues = append(r.Issues, "invalid JSON — OpenClaw cannot load this config at all")
++		r.Suggestions = append(r.Suggestions,
++			"openclaw.json must be strict JSON (the article's template uses # comments for explanation only — delete them before use).")
++		return r
++	}
++	r.ValidJSON = true
++
++	// ─── provider / model 集計 + 参照解決セット構築 ───
++	validRefs := map[string]bool{}
++	for pname, prov := range doc.Models.Providers {
++		r.ProviderCount++
++		for _, m := range prov.Models {
++			r.ModelCount++
++			validRefs[pname+"/"+m.ID] = true
++
++			// reliability: context 設定。
++			if m.ContextWindow <= 0 {
++				r.Score -= 8
++				r.Issues = append(r.Issues, fmt.Sprintf("model %q: contextWindow unset/zero — set it to the model's real context length (mismatch overflows fast)", refName(pname, m.ID)))
++			} else if m.MaxTokens >= m.ContextWindow {
++				r.Score -= 8
++				r.Issues = append(r.Issues, fmt.Sprintf("model %q: maxTokens (%d) >= contextWindow (%d) — no room for input, will overflow", refName(pname, m.ID), m.MaxTokens, m.ContextWindow))
++			}
++			// input 値の健全性(text/image 以外は誤設定の可能性)。
++			for _, in := range m.Input {
++				switch strings.ToLower(strings.TrimSpace(in)) {
++				case "text", "image", "audio", "video":
++				default:
++					r.Suggestions = append(r.Suggestions,
++						fmt.Sprintf("model %q: unrecognized input modality %q (Vision needs input:[\"text\",\"image\"])", refName(pname, m.ID), in))
++				}
++			}
++		}
++
++		// security: provider の apiKey 直書き。
++		if isRealAPIKey(prov.APIKey) {
++			r.HardcodedKeys = append(r.HardcodedKeys, pname)
++		}
++	}
++
++	if r.ProviderCount == 0 {
++		r.Score -= 20
++		r.Issues = append(r.Issues, "no model providers declared (models.providers is empty)")
++		r.Suggestions = append(r.Suggestions,
++			"Declare at least one provider (lmstudio/vllm/cloud) with its baseUrl and models.")
++	}
++
++	// security: hardcoded API key。
++	if len(r.HardcodedKeys) > 0 {
++		sort.Strings(r.HardcodedKeys)
++		r.Score -= 20
++		r.Issues = append(r.Issues, "hardcoded API key(s) in config for provider(s): "+strings.Join(r.HardcodedKeys, ", "))
++		r.Suggestions = append(r.Suggestions,
++			"Keep secrets out of openclaw.json (local providers use \"EMPTY\"; for cloud, inject the key via env/secret store, not the committed config).")
++	}
++
++	// ─── reference integrity: primary / models キーの解決 ───
++	r.PrimaryModel = strings.TrimSpace(doc.Agents.Defaults.Model.Primary)
++	if r.PrimaryModel == "" {
++		r.Score -= 10
++		r.Issues = append(r.Issues, "agents.defaults.model.primary is unset — no default model to run")
++	} else if validRefs[r.PrimaryModel] {
++		r.PrimaryResolves = true
++	} else {
++		r.Score -= 15
++		r.Issues = append(r.Issues, fmt.Sprintf("primary model %q does not resolve to any declared provider model — the agent will fail to select it", r.PrimaryModel))
++		r.Suggestions = append(r.Suggestions,
++			"primary must be \"provider/modelId\" matching a models.providers[*].models[*].id exactly.")
++	}
++	// Control UI のモデル一覧キーも解決を要求。
++	danglingMenu := make([]string, 0)
++	for ref := range doc.Agents.Defaults.Models {
++		if !validRefs[ref] {
++			danglingMenu = append(danglingMenu, ref)
++		}
++	}
++	if len(danglingMenu) > 0 {
++		sort.Strings(danglingMenu)
++		r.Score -= 5
++		r.Issues = append(r.Issues, "agents.defaults.models lists unresolved model ref(s): "+strings.Join(danglingMenu, ", "))
++	}
++
++	// ─── compaction ───
++	if doc.Agents.Defaults.Compaction.Mode != "" {
++		floor := doc.Agents.Defaults.Compaction.ReserveTokensFloor
++		if floor > 0 && floor < compactionFloorRecommended {
++			r.CompactionSafe = false
++			r.Score -= 10
++			r.Issues = append(r.Issues, fmt.Sprintf("compaction.reserveTokensFloor (%d) is below the recommended %d — too small and compaction itself can fail", floor, compactionFloorRecommended))
++		} else if floor == 0 {
++			r.CompactionSafe = false
++			r.Score -= 8
++			r.Issues = append(r.Issues, fmt.Sprintf("compaction.mode is set but reserveTokensFloor is unset — set it to ~%d so compression has room", compactionFloorRecommended))
++		}
++	}
++
++	// ─── security: gateway / browser ───
++	r.DeviceAuthDisabled = doc.Gateway.ControlUI.DangerouslyDisableDeviceAuth
++	if r.DeviceAuthDisabled {
++		r.Score -= 15
++		r.Issues = append(r.Issues, "gateway.controlUi.dangerouslyDisableDeviceAuth=true — device auth off; only acceptable behind HTTPS, otherwise the control UI is exposed over HTTP/LAN")
++		r.Suggestions = append(r.Suggestions,
++			"Prefer HTTPS and leave device auth on. If LAN HTTP is unavoidable, restrict allowedOrigins and the network.")
++	}
++	r.BrowserNoSandbox = doc.Browser.NoSandbox
++	if r.BrowserNoSandbox {
++		r.Score -= 10
++		r.Issues = append(r.Issues, "browser.noSandbox=true — Chromium sandbox disabled; sometimes needed in containers but it is a privilege-escalation surface")
++		r.Suggestions = append(r.Suggestions,
++			"Keep the OpenClaw container itself isolated (Docker) so a disabled in-browser sandbox is not the only boundary.")
++	}
++	// 弱い gateway token。
++	if doc.Gateway.Auth.Mode == "token" && isWeakToken(doc.Gateway.Auth.Token) {
++		r.Score -= 5
++		r.Issues = append(r.Issues, "gateway.auth.token looks weak/example (e.g. contains '123' / 'local-token' / too short)")
++		r.Suggestions = append(r.Suggestions,
++			"Use a long random token, especially when bind is 'lan'.")
++	}
++
++	if r.Score < 0 {
++		r.Score = 0
++	}
++	return r
++}
++
++func refName(provider, id string) string { return provider + "/" + id }
++
++// isRealAPIKey は apiKey が placeholder ではなく、実 secret らしいか。
++func isRealAPIKey(k string) bool {
++	t := strings.TrimSpace(k)
++	if apiKeyPlaceholders[strings.ToUpper(t)] {
++		return false
++	}
++	// 既知 prefix or 十分な長さなら実 key とみなす。
++	for _, p := range []string{"sk-", "sk_", "ghp_", "gho_", "xai-", "aiza", "anthropic", "pk-"} {
++		if strings.HasPrefix(strings.ToLower(t), p) {
++			return true
++		}
++	}
++	return len(t) >= 16
++}
++
++// isWeakToken は gateway token が弱い/例値か。
++func isWeakToken(tok string) bool {
++	t := strings.TrimSpace(tok)
++	if t == "" {
++		return false // 別チェック(token mode で空)は対象外、ここは「弱い値」を見る
++	}
++	low := strings.ToLower(t)
++	for _, bad := range []string{"123", "changeme", "example", "local-token", "test", "secret", "password"} {
++		if strings.Contains(low, bad) {
++			return true
++		}
++	}
++	return len(t) < 12
++}
+diff --git a/yagura-v0.35.0/internal/harness/agentconfig_audit_test.go b/yagura-v0.35.0/internal/harness/agentconfig_audit_test.go
+new file mode 100644
+index 0000000..9833967
+--- /dev/null
++++ b/yagura-v0.35.0/internal/harness/agentconfig_audit_test.go
+@@ -0,0 +1,156 @@
++package harness
++
++import (
++	"strings"
++	"testing"
++)
++
++func acIssue(issues []string, substr string) bool {
++	for _, i := range issues {
++		if strings.Contains(i, substr) {
++			return true
++		}
++	}
++	return false
++}
++
++// cleanAgentConfig: 参照解決済み・secure・context 整合の理想 config。
++const cleanAgentConfig = `{
++  "gateway": {
++    "mode": "local",
++    "bind": "loopback",
++    "auth": {"mode": "token", "token": "f3a9c1e7b245d8901aa6"},
++    "controlUi": {"allowedOrigins": ["http://127.0.0.1:18789"]}
++  },
++  "agents": {
++    "defaults": {
++      "model": {"primary": "vllm/qwen3.6-27b"},
++      "models": {"vllm/qwen3.6-27b": {"alias": "Qwen"}},
++      "compaction": {"mode": "safeguard", "reserveTokensFloor": 50000}
++    }
++  },
++  "models": {
++    "providers": {
++      "vllm": {
++        "baseUrl": "http://192.168.11.100:8888/v1",
++        "apiKey": "EMPTY",
++        "models": [
++          {"id": "qwen3.6-27b", "name": "Qwen", "input": ["text", "image"], "contextWindow": 262144, "maxTokens": 32768}
++        ]
++      }
++    }
++  }
++}`
++
++func TestAuditAgentConfig_Clean(t *testing.T) {
++	r := AuditAgentConfig(cleanAgentConfig)
++	if !r.ValidJSON {
++		t.Fatal("should be valid JSON")
++	}
++	if !r.PrimaryResolves {
++		t.Errorf("primary should resolve, got %+v", r)
++	}
++	if r.DeviceAuthDisabled || r.BrowserNoSandbox || len(r.HardcodedKeys) != 0 || !r.CompactionSafe {
++		t.Errorf("clean config should have no security/compaction flags: %+v", r)
++	}
++	if r.Score < 90 {
++		t.Errorf("clean config should score >=90, got %d (issues %v)", r.Score, r.Issues)
++	}
++}
++
++func TestAuditAgentConfig_InvalidJSON(t *testing.T) {
++	r := AuditAgentConfig(`{ "gateway": , }`)
++	if r.ValidJSON || r.Score != 0 {
++		t.Errorf("invalid JSON → score 0, got %+v", r)
++	}
++	if !acIssue(r.Issues, "invalid JSON") {
++		t.Errorf("expected invalid-JSON issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditAgentConfig_DanglingPrimary(t *testing.T) {
++	src := `{
++      "agents": {"defaults": {"model": {"primary": "vllm/not-declared"}}},
++      "models": {"providers": {"vllm": {"apiKey": "EMPTY", "models": [{"id": "qwen3.6-27b", "contextWindow": 262144, "maxTokens": 32768}]}}}
++    }`
++	r := AuditAgentConfig(src)
++	if r.PrimaryResolves {
++		t.Error("primary should not resolve")
++	}
++	if !acIssue(r.Issues, "does not resolve") {
++		t.Errorf("expected dangling-primary issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditAgentConfig_ContextMisconfig(t *testing.T) {
++	src := `{
++      "agents": {"defaults": {"model": {"primary": "p/m"}}},
++      "models": {"providers": {"p": {"apiKey": "EMPTY", "models": [{"id": "m", "contextWindow": 8000, "maxTokens": 8000}]}}}
++    }`
++	r := AuditAgentConfig(src)
++	if !acIssue(r.Issues, "maxTokens") {
++		t.Errorf("expected maxTokens>=contextWindow issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditAgentConfig_HardcodedKey(t *testing.T) {
++	src := `{
++      "agents": {"defaults": {"model": {"primary": "cloud/m"}}},
++      "models": {"providers": {"cloud": {"apiKey": "sk-proj-abcdef0123456789", "models": [{"id": "m", "contextWindow": 1000000, "maxTokens": 32768}]}}}
++    }`
++	r := AuditAgentConfig(src)
++	if len(r.HardcodedKeys) != 1 || r.HardcodedKeys[0] != "cloud" {
++		t.Errorf("expected hardcoded key for 'cloud', got %+v", r.HardcodedKeys)
++	}
++	if !acIssue(r.Issues, "hardcoded API key") {
++		t.Errorf("expected hardcoded-key issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditAgentConfig_PlaceholderKeyOK(t *testing.T) {
++	// "API-KEY" and "EMPTY" are placeholders — must not be flagged.
++	src := `{
++      "agents": {"defaults": {"model": {"primary": "a/m"}}},
++      "models": {"providers": {
++        "a": {"apiKey": "EMPTY", "models": [{"id": "m", "contextWindow": 100, "maxTokens": 50}]},
++        "b": {"apiKey": "API-KEY", "models": [{"id": "n", "contextWindow": 100, "maxTokens": 50}]}
++      }}
++    }`
++	r := AuditAgentConfig(src)
++	if len(r.HardcodedKeys) != 0 {
++		t.Errorf("placeholder keys must not be flagged, got %+v", r.HardcodedKeys)
++	}
++}
++
++func TestAuditAgentConfig_CompactionFloorTooSmall(t *testing.T) {
++	src := `{
++      "agents": {"defaults": {"model": {"primary": "a/m"}, "compaction": {"mode": "safeguard", "reserveTokensFloor": 5000}}},
++      "models": {"providers": {"a": {"apiKey": "EMPTY", "models": [{"id": "m", "contextWindow": 100000, "maxTokens": 8000}]}}}
++    }`
++	r := AuditAgentConfig(src)
++	if r.CompactionSafe {
++		t.Error("reserveTokensFloor 5000 should be flagged unsafe")
++	}
++	if !acIssue(r.Issues, "reserveTokensFloor") {
++		t.Errorf("expected compaction floor issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditAgentConfig_SecurityFlags(t *testing.T) {
++	src := `{
++      "gateway": {"auth": {"mode": "token", "token": "openclaw-local-token-123"}, "controlUi": {"dangerouslyDisableDeviceAuth": true}},
++      "browser": {"enabled": true, "noSandbox": true},
++      "agents": {"defaults": {"model": {"primary": "a/m"}}},
++      "models": {"providers": {"a": {"apiKey": "EMPTY", "models": [{"id": "m", "contextWindow": 100000, "maxTokens": 8000}]}}}
++    }`
++	r := AuditAgentConfig(src)
++	if !r.DeviceAuthDisabled || !r.BrowserNoSandbox {
++		t.Errorf("expected device-auth + noSandbox flags, got %+v", r)
++	}
++	if !acIssue(r.Issues, "dangerouslyDisableDeviceAuth") || !acIssue(r.Issues, "noSandbox") {
++		t.Errorf("expected security issues, got %v", r.Issues)
++	}
++	if !acIssue(r.Issues, "weak/example") {
++		t.Errorf("expected weak-token issue, got %v", r.Issues)
++	}
++}
 diff --git a/yagura-v0.35.0/internal/harness/audit.go b/yagura-v0.35.0/internal/harness/audit.go
 index 14b08e8..04c6f86 100644
 --- a/yagura-v0.35.0/internal/harness/audit.go
