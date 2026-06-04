@@ -1,8 +1,8 @@
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..1b658cc 100644
+index 9b29eec..03b5e90 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,54 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,61 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -41,6 +41,13 @@ index 9b29eec..1b658cc 100644
 +- **CLI/MCP 共有 helper の重複解消**:`matchesQuery` / `daysSince` を
 +  `project` パッケージへ集約(`(*Project).MatchesQuery` / `project.DaysSince`)。
 +  `gha-audit` / `pin-drift` の `--dir` 既定値を `.github/workflows` に変更。
++- **トークン経済(input-token 削減)**。MCP tool 出力は agent の input token に
++  なる、という Headroom 的観点での改善:
++  - `yagura_list` / `yagura_search`(と CLI `--limit`)に任意の `limit` を追加。
++    超過時は先頭 N 件に切り詰め、`total` / `truncated` を返して「必要なら件数
++    指定で再取得」できるようにする(`yagura_today` の既存 limit と同じ流儀)。
++  - list 出力の反復的なゼロ値ノイズ(`open_prs:0` / `open_issues:0`)を
++    `omitempty` で省略。静かなプロジェクトが多い portfolio で毎回のトークンを削る。
 +
 +### What's not yet
 +
@@ -72,10 +79,10 @@ index 986f84e..e3ac25e 100644
  
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..fabc8d0
+index 0000000..28d5f19
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,741 @@
+@@ -0,0 +1,758 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -228,6 +235,7 @@ index 0000000..fabc8d0
 +	stage := fs.String("stage", "", "filter by stage (active/maintenance/paused/archived)")
 +	tag := fs.String("tag", "", "filter by tag (exact, case-insensitive)")
 +	lang := fs.String("language", "", "filter by language (exact, case-insensitive)")
++	limit := fs.Int("limit", 0, "max rows to show (0 = all)")
 +	if err := fs.Parse(args); err != nil {
 +		return errUsage
 +	}
@@ -239,12 +247,7 @@ index 0000000..fabc8d0
 +	if err != nil {
 +		return err
 +	}
-+	now := time.Now()
-+	if *jsonOut {
-+		return emitJSON(stdout, listPayload(projects, now))
-+	}
-+	humanList(stdout, projects, now)
-+	return nil
++	return emitProjects(stdout, projects, *limit, *jsonOut)
 +}
 +
 +func cliSearch(args []string, stdout, stderr io.Writer) error {
@@ -254,6 +257,7 @@ index 0000000..fabc8d0
 +	lang := fs.String("language", "", "filter by language")
 +	stage := fs.String("stage", "", "filter by stage")
 +	query := fs.String("query", "", "substring over slug/name/notes/repo/tags")
++	limit := fs.Int("limit", 0, "max rows to show (0 = all)")
 +	pos, err := parseArgs(fs, args)
 +	if err != nil {
 +		return errUsage
@@ -270,11 +274,31 @@ index 0000000..fabc8d0
 +	if err != nil {
 +		return err
 +	}
++	return emitProjects(stdout, projects, *limit, *jsonOut)
++}
++
++// emitProjects は list/search の共通出力。limit>0 で先頭 limit 件に切り詰め、
++// JSON では total/truncated を付与、human では末尾に注記する(MCP list と同じ流儀)。
++func emitProjects(stdout io.Writer, projects []*project.Project, limit int, jsonOut bool) error {
 +	now := time.Now()
-+	if *jsonOut {
-+		return emitJSON(stdout, listPayload(projects, now))
++	total := len(projects)
++	truncated := false
++	if limit > 0 && total > limit {
++		projects = projects[:limit]
++		truncated = true
++	}
++	if jsonOut {
++		payload := listPayload(projects, now)
++		if truncated {
++			payload["total"] = total
++			payload["truncated"] = true
++		}
++		return emitJSON(stdout, payload)
 +	}
 +	humanList(stdout, projects, now)
++	if truncated {
++		fmt.Fprintf(stdout, "(showing %d of %d; --limit 0 for all)\n", len(projects), total)
++	}
 +	return nil
 +}
 +
@@ -819,7 +843,7 @@ index 0000000..fabc8d0
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
 new file mode 100644
-index 0000000..26f03b4
+index 0000000..ab540d0
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
 @@ -0,0 +1,302 @@
@@ -867,11 +891,11 @@ index 0000000..26f03b4
 +	DisplayName     string `json:"display_name"`
 +	Stage           string `json:"stage"`
 +	Priority        int    `json:"priority"`
-+	Language        string `json:"language"`
-+	OpenPRs         int    `json:"open_prs"`
-+	OpenIssues      int    `json:"open_issues"`
-+	CIStatus        string `json:"ci_status"`
-+	LatestVersion   string `json:"latest_version"`
++	Language        string `json:"language,omitempty"`
++	OpenPRs         int    `json:"open_prs,omitempty"`
++	OpenIssues      int    `json:"open_issues,omitempty"`
++	CIStatus        string `json:"ci_status,omitempty"`
++	LatestVersion   string `json:"latest_version,omitempty"`
 +	DaysSinceCommit int    `json:"days_since_commit"`
 +}
 +
@@ -1127,10 +1151,10 @@ index 0000000..26f03b4
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
 new file mode 100644
-index 0000000..ac15996
+index 0000000..26b69d8
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,317 @@
 +package main
 +
 +import (
@@ -1317,6 +1341,29 @@ index 0000000..ac15996
 +	}
 +	if st.Total != 2 || st.ByLanguage["go"] != 1 || st.ByLanguage["python"] != 1 {
 +		t.Errorf("unexpected stats: %+v", st)
++	}
++}
++
++func TestCLI_ListLimit(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	for _, s := range []string{"a", "b", "c"} {
++		runCLICapture(t, "register", s, "o/"+s)
++	}
++	_, out, _ := runCLICapture(t, "list", "--limit", "2", "--json")
++	var p struct {
++		Count     int  `json:"count"`
++		Total     int  `json:"total"`
++		Truncated bool `json:"truncated"`
++	}
++	if err := json.Unmarshal([]byte(out), &p); err != nil {
++		t.Fatalf("json: %v\n%s", err, out)
++	}
++	if p.Count != 2 || p.Total != 3 || !p.Truncated {
++		t.Errorf("expected count=2 total=3 truncated=true, got %+v", p)
++	}
++	// human mode shows the truncation note
++	if _, hout, _ := runCLICapture(t, "list", "--limit", "1"); !strings.Contains(hout, "showing 1 of 3") {
++		t.Errorf("expected truncation note, got: %q", hout)
 +	}
 +}
 +
@@ -1603,9 +1650,20 @@ index 6981102..8711b5c 100644
  </body>
  </html>`
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..1a1046a 100644
+index 939a67e..c56ae68 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
+@@ -198,8 +198,8 @@ type listOut struct {
+ 	Stage          string `json:"stage"`
+ 	Priority       int    `json:"priority"`
+ 	Language       string `json:"language,omitempty"`
+-	OpenPRs        int    `json:"open_prs"`
+-	OpenIssues     int    `json:"open_issues"`
++	OpenPRs        int    `json:"open_prs,omitempty"`
++	OpenIssues     int    `json:"open_issues,omitempty"`
+ 	CIStatus       string `json:"ci_status,omitempty"`
+ 	LatestVersion  string `json:"latest_version,omitempty"`
+ 	DaysSinceCommit int   `json:"days_since_commit"`
 @@ -245,7 +245,7 @@ type todayItem struct {
  func buildSecretScanTool(d Deps) *Tool {
  	return &Tool{
@@ -1616,19 +1674,125 @@ index 939a67e..1a1046a 100644
  			"type": "object",
  			"properties": map[string]any{
 diff --git a/yagura-v0.35.0/internal/mcp/tools_inventory.go b/yagura-v0.35.0/internal/mcp/tools_inventory.go
-index e08cf8f..fe69d7f 100644
+index e08cf8f..1b592ad 100644
 --- a/yagura-v0.35.0/internal/mcp/tools_inventory.go
 +++ b/yagura-v0.35.0/internal/mcp/tools_inventory.go
-@@ -39,7 +39,7 @@ func buildListTool(d Deps) *Tool {
- 					OpenIssues:     p.OpenIssues,
- 					CIStatus:       string(p.CIStatus),
- 					LatestVersion:  p.LatestVersion,
+@@ -19,37 +19,75 @@ import (
+ func buildListTool(d Deps) *Tool {
+ 	return &Tool{
+ 		Name: "yagura_list",
+-		Description: "[G] List projects (compact).",
++		Description: "[G] List projects (compact). Optional limit caps rows.",
+ 		InputSchema: map[string]any{
+-			"type":       "object",
+-			"properties": map[string]any{},
++			"type": "object",
++			"properties": map[string]any{
++				"limit": map[string]any{"type": "integer", "minimum": 1,
++					"description": "最大返却件数(省略時は全件)。トークン節約用。"},
++			},
+ 		},
+ 		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+-			projects := d.Registry.List()
+-			now := d.Now()
+-			out := make([]listOut, 0, len(projects))
+-			for _, p := range projects {
+-				out = append(out, listOut{
+-					Slug:           p.Slug,
+-					DisplayName:    p.DisplayName,
+-					Stage:          string(p.Stage),
+-					Priority:       p.Priority,
+-					Language:       p.Language,
+-					OpenPRs:        p.OpenPRs,
+-					OpenIssues:     p.OpenIssues,
+-					CIStatus:       string(p.CIStatus),
+-					LatestVersion:  p.LatestVersion,
 -					DaysSinceCommit: daysSince(p.LatestActivity, now),
-+					DaysSinceCommit: project.DaysSince(p.LatestActivity, now),
- 				})
+-				})
++			limit, err := parseLimitArg(args)
++			if err != nil {
++				return nil, err
  			}
- 			return map[string]any{
-@@ -128,7 +128,7 @@ func buildSearchTool(d Deps) *Tool {
+-			return map[string]any{
+-				"count":    len(out),
+-				"projects": out,
+-			}, nil
++			return listResult(d.Registry.List(), d.Now(), limit), nil
+ 		},
+ 	}
+ }
+ 
++// listResult は projects を listOut に変換した {count, projects[, total, truncated]}
++// を返す共通ロジック。limit>0 のとき先頭 limit 件に切り詰め、元の総数を total /
++// truncated で伝える(Headroom 流「必要なら追加取得」: agent は total を見て
++// 件数指定で再取得できる)。list と search で共有。
++func listResult(projects []*project.Project, now time.Time, limit int) map[string]any {
++	total := len(projects)
++	truncated := false
++	if limit > 0 && total > limit {
++		projects = projects[:limit]
++		truncated = true
++	}
++	out := make([]listOut, 0, len(projects))
++	for _, p := range projects {
++		out = append(out, listOut{
++			Slug:            p.Slug,
++			DisplayName:     p.DisplayName,
++			Stage:           string(p.Stage),
++			Priority:        p.Priority,
++			Language:        p.Language,
++			OpenPRs:         p.OpenPRs,
++			OpenIssues:      p.OpenIssues,
++			CIStatus:        string(p.CIStatus),
++			LatestVersion:   p.LatestVersion,
++			DaysSinceCommit: project.DaysSince(p.LatestActivity, now),
++		})
++	}
++	res := map[string]any{"count": len(out), "projects": out}
++	if truncated {
++		res["total"] = total
++		res["truncated"] = true
++	}
++	return res
++}
++
++// parseLimitArg は args から任意の "limit" を読む。未指定/0/負値は 0(無制限)。
++func parseLimitArg(args json.RawMessage) (int, error) {
++	if len(args) == 0 {
++		return 0, nil
++	}
++	var in struct {
++		Limit int `json:"limit"`
++	}
++	if err := json.Unmarshal(args, &in); err != nil {
++		return 0, &ToolError{Code: "invalid_input", Message: "invalid args", Cause: err}
++	}
++	if in.Limit < 0 {
++		return 0, nil
++	}
++	return in.Limit, nil
++}
++
+ func buildGetTool(d Deps) *Tool {
+ 	return &Tool{
+ 		Name: "yagura_get",
+@@ -94,6 +132,7 @@ func buildSearchTool(d Deps) *Tool {
+ 				"language": map[string]any{"type": "string", "description": "言語完全一致 (大文字小文字無視)"},
+ 				"stage":    map[string]any{"type": "string", "description": "active / maintenance / paused / archived"},
+ 				"query":    map[string]any{"type": "string", "description": "slug/name/notes/tags を横断する部分一致"},
++				"limit":    map[string]any{"type": "integer", "minimum": 1, "description": "最大返却件数(省略時は全件)。"},
+ 			},
+ 		},
+ 		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+@@ -102,6 +141,7 @@ func buildSearchTool(d Deps) *Tool {
+ 				Language string `json:"language"`
+ 				Stage    string `json:"stage"`
+ 				Query    string `json:"query"`
++				Limit    int    `json:"limit"`
+ 			}
+ 			if len(args) > 0 {
+ 				if err := json.Unmarshal(args, &in); err != nil {
+@@ -128,32 +168,16 @@ func buildSearchTool(d Deps) *Tool {
  				if in.Stage != "" && p.Stage != stage {
  					return false
  				}
@@ -1637,16 +1801,36 @@ index e08cf8f..fe69d7f 100644
  					return false
  				}
  				return true
-@@ -147,7 +147,7 @@ func buildSearchTool(d Deps) *Tool {
- 					OpenIssues:     p.OpenIssues,
- 					CIStatus:       string(p.CIStatus),
- 					LatestVersion:  p.LatestVersion,
--					DaysSinceCommit: daysSince(p.LatestActivity, now),
-+					DaysSinceCommit: project.DaysSince(p.LatestActivity, now),
- 				})
  			}
- 			return map[string]any{
-@@ -212,7 +212,7 @@ func buildTodayTool(d Deps) *Tool {
+-			result := d.Registry.Filter(filter)
+-			now := d.Now()
+-			outProjects := make([]listOut, 0, len(result))
+-			for _, p := range result {
+-				outProjects = append(outProjects, listOut{
+-					Slug:           p.Slug,
+-					DisplayName:    p.DisplayName,
+-					Stage:          string(p.Stage),
+-					Priority:       p.Priority,
+-					Language:       p.Language,
+-					OpenPRs:        p.OpenPRs,
+-					OpenIssues:     p.OpenIssues,
+-					CIStatus:       string(p.CIStatus),
+-					LatestVersion:  p.LatestVersion,
+-					DaysSinceCommit: daysSince(p.LatestActivity, now),
+-				})
++			limit := in.Limit
++			if limit < 0 {
++				limit = 0
+ 			}
+-			return map[string]any{
+-				"count":    len(outProjects),
+-				"projects": outProjects,
+-			}, nil
++			return listResult(d.Registry.Filter(filter), d.Now(), limit), nil
+ 		},
+ 	}
+ }
+@@ -212,7 +236,7 @@ func buildTodayTool(d Deps) *Tool {
  					score += 20
  					reasons = append(reasons, "CI failing")
  				}
@@ -1655,7 +1839,7 @@ index e08cf8f..fe69d7f 100644
  				if days >= 14 && p.Stage == project.StageActive {
  					score += 5
  					reasons = append(reasons, "stale (active but idle)")
-@@ -521,29 +521,3 @@ func buildStatsTool(d Deps) *Tool {
+@@ -521,29 +545,3 @@ func buildStatsTool(d Deps) *Tool {
  		},
  	}
  }
@@ -1685,6 +1869,44 @@ index e08cf8f..fe69d7f 100644
 -	}
 -	return false
 -}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_test.go b/yagura-v0.35.0/internal/mcp/tools_test.go
+index 31ea232..e4a7a4c 100644
+--- a/yagura-v0.35.0/internal/mcp/tools_test.go
++++ b/yagura-v0.35.0/internal/mcp/tools_test.go
+@@ -79,6 +79,33 @@ func TestList_ReturnsAllProjects(t *testing.T) {
+ 	}
+ }
+ 
++func TestList_Limit(t *testing.T) {
++	d := newDeps(t)
++	for _, s := range []string{"alpha", "bravo", "charlie", "delta"} {
++		_ = d.Registry.Add(sampleProject(s))
++	}
++	tool := buildListTool(d)
++	r := mustCall(t, tool, map[string]any{"limit": 2}).(map[string]any)
++	if r["count"].(int) != 2 {
++		t.Fatalf("limit=2 expected count 2, got %v", r["count"])
++	}
++	if r["total"].(int) != 4 || r["truncated"] != true {
++		t.Errorf("expected total=4 truncated=true, got total=%v truncated=%v", r["total"], r["truncated"])
++	}
++	out := r["projects"].([]listOut)
++	if len(out) != 2 || out[0].Slug != "alpha" {
++		t.Errorf("expected first 2 sorted, got %v", out)
++	}
++	// no limit → all, no truncated key
++	full := mustCall(t, tool, struct{}{}).(map[string]any)
++	if full["count"].(int) != 4 {
++		t.Errorf("no-limit expected 4, got %v", full["count"])
++	}
++	if _, ok := full["truncated"]; ok {
++		t.Errorf("no-limit should not set truncated")
++	}
++}
++
+ // ─── yagura_get ──────────────────────────────────────────────
+ 
+ func TestGet_Existing(t *testing.T) {
 diff --git a/yagura-v0.35.0/internal/project/project.go b/yagura-v0.35.0/internal/project/project.go
 index 9ca620a..f400aba 100644
 --- a/yagura-v0.35.0/internal/project/project.go
