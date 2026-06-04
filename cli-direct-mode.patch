@@ -1,8 +1,8 @@
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..03b5e90 100644
+index 9b29eec..abaaae2 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,61 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,68 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -48,6 +48,13 @@ index 9b29eec..03b5e90 100644
 +    指定で再取得」できるようにする(`yagura_today` の既存 limit と同じ流儀)。
 +  - list 出力の反復的なゼロ値ノイズ(`open_prs:0` / `open_issues:0`)を
 +    `omitempty` で省略。静かなプロジェクトが多い portfolio で毎回のトークンを削る。
++- **skill lifecycle: retire signal**(`yagura_skill_audit`)。arXiv 2605.27366
++  "MUSE-Autoskill"(skill の create→store→evaluate→**retire** ライフサイクル。
++  低価値 skill を retire するとライブラリ拡大時の retrieval noise が減る)に着想。
++  `AuditSkill` に `retire_recommended` / `retire_reason` を追加し、(1) routing
++  description 無し+本文ほぼ空の stub、(2) score < 40 の低品質 skill を
++  「retire 候補」として明示する(rule-based 判定のみ。embedding/LLM は ADR-0001
++  の範囲外なので採用せず、自動削除もしない=人間判断に委ねる)。
 +
 +### What's not yet
 +
@@ -1649,8 +1656,114 @@ index 6981102..8711b5c 100644
  </div>
  </body>
  </html>`
+diff --git a/yagura-v0.35.0/internal/harness/audit.go b/yagura-v0.35.0/internal/harness/audit.go
+index 14b08e8..04c6f86 100644
+--- a/yagura-v0.35.0/internal/harness/audit.go
++++ b/yagura-v0.35.0/internal/harness/audit.go
+@@ -11,6 +11,7 @@
+ package harness
+ 
+ import (
++	"fmt"
+ 	"regexp"
+ 	"strings"
+ )
+@@ -32,10 +33,19 @@ type SkillAuditResult struct {
+ 	HasGotchasSection  bool     `json:"has_gotchas_section"`
+ 	HasVagueKeywords   bool     `json:"has_vague_keywords"`
+ 	HasProgDisclosure  bool     `json:"has_progressive_disclosure"` // references/ scripts/ への参照
++	// v0.35: skill lifecycle(MUSE-Autoskill 由来)。低品質/スタブ skill を
++	// ライブラリに残すと retrieval noise を増やすだけなので、rule-based に
++	// 「retire 候補」を明示する(自動削除はせず人間判断に委ねる)。
++	RetireRecommended  bool     `json:"retire_recommended"`
++	RetireReason       string   `json:"retire_reason,omitempty"`
+ 	Issues             []string `json:"issues,omitempty"`
+ 	Suggestions        []string `json:"suggestions,omitempty"`
+ }
+ 
++// skillRetireThreshold は「これ未満なら rewrite より retire を推奨」する score。
++// 既存バンド(<50 = ほぼ動かない)より厳しめに取り、明確なケースだけ flag する。
++const skillRetireThreshold = 40
++
+ // vague description で頻出する単語(filler — 何の trigger にも match しない)
+ var vagueKeywords = []string{
+ 	"helpful", "useful", "various", "general", "smart",
+@@ -162,9 +172,27 @@ func AuditSkill(content string) SkillAuditResult {
+ 	if r.Score < 0 {
+ 		r.Score = 0
+ 	}
++	r.RetireRecommended, r.RetireReason = skillRetireDecision(r)
+ 	return r
+ }
+ 
++// skillRetireDecision は MUSE-Autoskill の "Skill Retiree" 相当を rule-based で
++// 判定する。低価値/obsolete な skill を残すと、ライブラリ拡大に伴い retrieval
++// noise(Claude が無関係 skill を引く確率)を増やすだけなので retire を促す。
++func skillRetireDecision(r SkillAuditResult) (bool, string) {
++	// stub: routing 用の description が無い(=決して発火しない)かつ本文も空同然。
++	// score は frontmatter 欠落の減点止まりで高く出ることがあるため別判定する。
++	if r.DescriptionLen == 0 && r.BodyWordCount < 30 {
++		return true, "stub skill: no routing description and near-empty body — pure retrieval noise; retire or rewrite from scratch"
++	}
++	if r.Score < skillRetireThreshold {
++		return true, fmt.Sprintf(
++			"low quality (score %d < %d): misfires or gets ignored at runtime, so it only adds retrieval noise; retire or rewrite",
++			r.Score, skillRetireThreshold)
++	}
++	return false, ""
++}
++
+ // SubagentAuditResult は subagent 定義(.claude/agents/*.md)評価結果。
+ type SubagentAuditResult struct {
+ 	Score             int      `json:"score"`
+diff --git a/yagura-v0.35.0/internal/harness/harness_test.go b/yagura-v0.35.0/internal/harness/harness_test.go
+index fbc29eb..766c691 100644
+--- a/yagura-v0.35.0/internal/harness/harness_test.go
++++ b/yagura-v0.35.0/internal/harness/harness_test.go
+@@ -110,6 +110,41 @@ References in references/test-patterns.md.
+ 	}
+ }
+ 
++func TestAuditSkill_RetireDecision(t *testing.T) {
++	// pristine skill は retire 非推奨
++	pristine := `---
++name: go-test
++description: Use when the user asks to add tests or fix failing tests in Go code.
++---
++
++# Go Test Skill
++
++## Gotchas
++
++- ` + "`time.Now()`" + ` in tests must go through NowFn hook
++`
++	if r := AuditSkill(pristine); r.RetireRecommended {
++		t.Errorf("pristine skill should not be retire-recommended: %q", r.RetireReason)
++	}
++
++	// stub: frontmatter も本文もほぼ無い → retrieval noise、retire 推奨
++	stub := "# placeholder\n\nTODO\n"
++	rs := AuditSkill(stub)
++	if !rs.RetireRecommended || rs.RetireReason == "" {
++		t.Errorf("stub skill should be retire-recommended, got %+v", rs)
++	}
++
++	// description はあるが本文が薄く trigger 形式でない低品質 → score で retire
++	low := `---
++name: x
++description: A helpful useful general powerful comprehensive advanced thing.
++---
++`
++	if r := AuditSkill(low); !r.RetireRecommended {
++		t.Errorf("low-quality skill (score %d) should be retire-recommended", r.Score)
++	}
++}
++
+ func TestAuditSkill_VagueDescription(t *testing.T) {
+ 	content := `---
+ name: helper
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..c56ae68 100644
+index 939a67e..69cbda1 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
 @@ -198,8 +198,8 @@ type listOut struct {
@@ -1670,6 +1783,15 @@ index 939a67e..c56ae68 100644
  		Name: "yagura_secretscan",
 -		Description: "[G] Secret scan: 12 patterns + entropy. Redacts hits.",
 +		Description: "[G] Secret scan: 14 patterns + entropy. Redacts hits.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+@@ -766,7 +766,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+ func buildSkillAuditTool(d Deps) *Tool {
+ 	return &Tool{
+ 		Name: "yagura_skill_audit",
+-		Description: "[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score.",
++		Description: "[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score + retire signal.",
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
