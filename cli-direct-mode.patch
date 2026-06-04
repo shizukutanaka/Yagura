@@ -1,8 +1,8 @@
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..c412677 100644
+index 9b29eec..1d11c10 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,73 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,85 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -60,6 +60,18 @@ index 9b29eec..c412677 100644
 +  retire 候補数をまとめて報告(`--json` / `--retire-only`)。MUSE-Autoskill の
 +  「ライブラリが育つほど retire による self-cleaning が効く」を開発者の手元に。
 +  disk 走査なので CLI 側に置き、MCP の tool 数(46)は不変。
++- **CLI `yagura workflow-audit`: Dynamic Workflow lint**(`internal/harness/
++  workflow_audit.go`)。Anthropic の Dynamic Workflows(2026-05-28 launch)が
++  「token を浪費する mistakes」として挙げる anti-pattern を、workflow JS の構造
++  ベースで検出する。`AuditWorkflow` が `agent()` / `parallel()` / `pipeline()` /
++  `while` ループを数え、(1) regular session で済む over-reach、(2) token budget
++  不在、(3) 単一 agent が work と verify を兼ねる self-preferential bias、
++  (5) loop pattern での `/goal` 欠落、(6) untrusted content を quarantine なしで
++  actor に渡す prompt-injection 経路、(7) absolute score での sort(tournament
++  推奨)を score(0-100)+ Issues/Suggestions で報告。`--dir`(既定
++  `.claude/workflows`)配下の `*.js` / `*.mjs` を再帰走査(`--json` /
++  `--flagged-only`)。skill-audit と同じく disk 走査なので CLI 側に置き、MCP の
++  tool 数(46)は不変。heuristic のみ(LLM 判定は client 側、ADR-0001 準拠)。
 +
 +### What's not yet
 +
@@ -91,10 +103,10 @@ index 986f84e..e3ac25e 100644
  
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..9c0d8a7
+index 0000000..4fcb983
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,835 @@
+@@ -0,0 +1,911 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -156,7 +168,7 @@ index 0000000..9c0d8a7
 +	"list": true, "get": true, "search": true, "stats": true,
 +	"register": true, "update": true, "unregister": true,
 +	"sbom": true, "secretscan": true, "gha-audit": true, "pin-drift": true,
-+	"skill-audit": true,
++	"skill-audit": true, "workflow-audit": true,
 +}
 +
 +// runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -187,6 +199,8 @@ index 0000000..9c0d8a7
 +		err = cliPinDrift(args, stdout, stderr)
 +	case "skill-audit":
 +		err = cliSkillAudit(args, stdout, stderr)
++	case "workflow-audit":
++		err = cliWorkflowAudit(args, stdout, stderr)
 +	default:
 +		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 +		return 2
@@ -761,6 +775,80 @@ index 0000000..9c0d8a7
 +	return paths, nil
 +}
 +
++// workflowAuditEntry は 1 つの workflow ファイルの監査結果(path 付き)。
++type workflowAuditEntry struct {
++	Path string `json:"path"`
++	harness.WorkflowAuditResult
++}
++
++// cliWorkflowAudit は dir 配下の Dynamic Workflow(*.js / *.mjs)を走査し、
++// Anthropic launch 記事の "token を浪費する mistakes" を構造ベースで検出する。
++// skill-audit と同じく disk 走査なので MCP tool は増やさず CLI 側に置く。
++func cliWorkflowAudit(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("workflow-audit", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	dir := fs.String("dir", ".claude/workflows", "directory to scan for workflow .js/.mjs files")
++	flaggedOnly := fs.Bool("flagged-only", false, "show only workflows with at least one issue")
++	if err := fs.Parse(args); err != nil {
++		return errUsage
++	}
++	paths, err := findWorkflowFiles(*dir)
++	if err != nil {
++		return err
++	}
++	entries := make([]workflowAuditEntry, 0, len(paths))
++	flaggedCount := 0
++	for _, p := range paths {
++		data, err := os.ReadFile(p)
++		if err != nil {
++			return fmt.Errorf("read %s: %w", p, err)
++		}
++		res := harness.AuditWorkflow(string(data))
++		if len(res.Issues) > 0 {
++			flaggedCount++
++		}
++		if *flaggedOnly && len(res.Issues) == 0 {
++			continue
++		}
++		entries = append(entries, workflowAuditEntry{Path: p, WorkflowAuditResult: res})
++	}
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{
++			"scanned":   len(paths),
++			"flagged":   flaggedCount,
++			"workflows": entries,
++		})
++	}
++	humanWorkflowAudit(stdout, entries, len(paths), flaggedCount)
++	return nil
++}
++
++// findWorkflowFiles は dir 配下(再帰)の *.js / *.mjs を path 昇順で返す。
++// dir が存在しなければ空(エラーにしない — 未導入リポジトリでも素直に 0 件)。
++func findWorkflowFiles(dir string) ([]string, error) {
++	if _, err := os.Stat(dir); os.IsNotExist(err) {
++		return nil, nil
++	}
++	var paths []string
++	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
++		if err != nil {
++			return err
++		}
++		if d.IsDir() {
++			return nil
++		}
++		if ext := filepath.Ext(p); ext == ".js" || ext == ".mjs" {
++			paths = append(paths, p)
++		}
++		return nil
++	})
++	if err != nil {
++		return nil, fmt.Errorf("walk %s: %w", dir, err)
++	}
++	sort.Strings(paths)
++	return paths, nil
++}
++
 +// ─── shared helpers ──────────────────────────────────────────
 +
 +// filterProjects は stage/tag/language/query で registry を絞り込む。
@@ -932,10 +1020,10 @@ index 0000000..9c0d8a7
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
 new file mode 100644
-index 0000000..bb39f9a
+index 0000000..da45a3a
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
-@@ -0,0 +1,327 @@
+@@ -0,0 +1,367 @@
 +// cli_format.go: output formatters for CLI direct mode (v0.35.0).
 +//
 +// 2 つの出力経路:
@@ -956,6 +1044,7 @@ index 0000000..bb39f9a
 +	"time"
 +
 +	"github.com/shizukutanaka/yagura/internal/ghaaudit"
++	"github.com/shizukutanaka/yagura/internal/harness"
 +	"github.com/shizukutanaka/yagura/internal/pindrift"
 +	"github.com/shizukutanaka/yagura/internal/project"
 +	"github.com/shizukutanaka/yagura/internal/sbom"
@@ -1248,6 +1337,45 @@ index 0000000..bb39f9a
 +	}
 +}
 +
++// ─── workflow-audit ──────────────────────────────────────────
++
++func humanWorkflowAudit(w io.Writer, entries []workflowAuditEntry, scanned, flagged int) {
++	fmt.Fprintf(w, "scanned: %d   flagged: %d\n", scanned, flagged)
++	if len(entries) == 0 {
++		return
++	}
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	fmt.Fprintln(tw, "SCORE\tAGENTS\tSHAPE\tPATH")
++	for _, e := range entries {
++		fmt.Fprintf(tw, "%d\t%d\t%s\t%s\n", e.Score, e.AgentCalls, workflowShape(e.WorkflowAuditResult), e.Path)
++	}
++	_ = tw.Flush()
++	// issue は path ごとに列挙(人間が判断・修正できるように)。
++	for _, e := range entries {
++		for _, iss := range e.Issues {
++			fmt.Fprintf(w, "  %s: %s\n", e.Path, iss)
++		}
++	}
++}
++
++// workflowShape は orchestration の形を短い tag で要約する(parallel/pipeline/loop)。
++func workflowShape(r harness.WorkflowAuditResult) string {
++	var parts []string
++	if r.UsesParallel {
++		parts = append(parts, "parallel")
++	}
++	if r.UsesPipeline {
++		parts = append(parts, "pipeline")
++	}
++	if r.HasLoop {
++		parts = append(parts, "loop")
++	}
++	if len(parts) == 0 {
++		return "-"
++	}
++	return strings.Join(parts, "+")
++}
++
 +// ─── small helpers ───────────────────────────────────────────
 +
 +func dash(s string) string {
@@ -1265,10 +1393,10 @@ index 0000000..bb39f9a
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
 new file mode 100644
-index 0000000..6ca6478
+index 0000000..b68b798
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,408 @@
 +package main
 +
 +import (
@@ -1628,8 +1756,57 @@ index 0000000..6ca6478
 +		t.Errorf("dispatch list: code=%d out=%q", code, out.String())
 +	}
 +}
++
++func TestCLI_WorkflowAudit(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	dir := t.TempDir()
++	mustWrite := func(name, content string) {
++		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++	// clean fan-out workflow: parallel + per-agent model + token budget, no issues.
++	mustWrite("clean.js", "const r = await parallel(files.map(f => () => agent(`review ${f}`, { model: \"haiku\", maxTokens: 2000 })));\nconst out = await agent(\"merge\", { model: \"opus\", maxTokens: 4000 });\n")
++	// flagged workflow: single agent, no token budget -> over-reach + no budget.
++	mustWrite("thin.js", "const out = await agent(\"explain this module\", { model: \"sonnet\" });\n")
++	// a non-workflow .js file in the dir (should still be scanned, flagged).
++	mustWrite("notwf.mjs", "export const x = 1;\n")
++
++	_, out, _ := runCLICapture(t, "workflow-audit", "--dir", dir, "--json")
++	var r struct {
++		Scanned   int `json:"scanned"`
++		Flagged   int `json:"flagged"`
++		Workflows []struct {
++			Path       string   `json:"path"`
++			Score      int      `json:"score"`
++			IsWorkflow bool     `json:"is_workflow"`
++			Issues     []string `json:"issues"`
++		} `json:"workflows"`
++	}
++	if err := json.Unmarshal([]byte(out), &r); err != nil {
++		t.Fatalf("json: %v\n%s", err, out)
++	}
++	if r.Scanned != 3 {
++		t.Errorf("expected scanned=3, got %d", r.Scanned)
++	}
++	if r.Flagged != 2 {
++		t.Errorf("expected flagged=2 (thin + notwf), got %d", r.Flagged)
++	}
++
++	// flagged-only narrows to the two with issues.
++	_, fo, _ := runCLICapture(t, "workflow-audit", "--dir", dir, "--flagged-only", "--json")
++	_ = json.Unmarshal([]byte(fo), &r)
++	if len(r.Workflows) != 2 {
++		t.Errorf("flagged-only should return 2 workflows, got %d", len(r.Workflows))
++	}
++
++	// missing dir -> 0, exit 0.
++	if code, mout, _ := runCLICapture(t, "workflow-audit", "--dir", filepath.Join(dir, "nope")); code != 0 || !strings.Contains(mout, "scanned: 0") {
++		t.Errorf("missing dir: code=%d out=%q", code, mout)
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..4f41999 100644
+index bd1fe39..f7bfbdb 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -57,7 +57,7 @@ import (
@@ -1652,7 +1829,7 @@ index bd1fe39..4f41999 100644
  	}
  	if err := run(); err != nil {
  		fmt.Fprintf(stderr, "yagura: %v\n", err)
-@@ -128,6 +132,14 @@ Usage:
+@@ -128,6 +132,15 @@ Usage:
    yagura secret get <name>     Decrypt and print <name> to stdout
    yagura secret delete <name>  Remove <name>
  
@@ -1661,13 +1838,14 @@ index bd1fe39..4f41999 100644
 +  yagura register|update|unregister        Registry mutations (audited)
 +  yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
 +  yagura skill-audit                       Audit .claude/skills (score + retire)
++  yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)
 +  Add --json to any of the above for machine-readable output.
 +  pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
 +
  Set passphrase via YAGURA_SECRET_PASSPHRASE for set/get.
  Configuration is via environment variables. See documentation.
  `
-@@ -152,11 +164,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
+@@ -152,11 +165,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
  		return nil
  	}
  
@@ -1682,7 +1860,7 @@ index bd1fe39..4f41999 100644
  	if err != nil {
  		return fmt.Errorf("init store: %w", err)
  	}
-@@ -239,15 +252,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
+@@ -239,15 +253,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
  // この関数は GITHUB_TOKEN を読まない — verify は通常運用とは独立して
  // オフラインでも実行できる(disaster recovery を意識)。
  func verifyAudit(out io.Writer) error {
@@ -1912,6 +2090,397 @@ index fbc29eb..766c691 100644
  func TestAuditSkill_VagueDescription(t *testing.T) {
  	content := `---
  name: helper
+diff --git a/yagura-v0.35.0/internal/harness/workflow_audit.go b/yagura-v0.35.0/internal/harness/workflow_audit.go
+new file mode 100644
+index 0000000..e0d9c3f
+--- /dev/null
++++ b/yagura-v0.35.0/internal/harness/workflow_audit.go
+@@ -0,0 +1,183 @@
++// workflow_audit.go: Dynamic Workflow(~/.claude/workflows/*.js)の heuristic 評価。
++//
++// Anthropic の Dynamic Workflows(2026-05-28 launch)ガイダンス準拠。workflow は
++// Claude がタスク用に書く JavaScript harness で、agent() / parallel() / pipeline()
++// で subagent を spawn・協調させる。launch 記事が列挙する "token を浪費する mistakes"
++// は、そのまま構造ベースの lint rule になる:
++//
++//  1. regular session で済む task に workflow を使う(over-reach)
++//  2. token budget を設定しない(ambitious workflow は 5–10× に膨らむ)
++//  3. 1 つの agent が work と verification を兼ねる(self-preferential bias)
++//  4. parallel() と pipeline() を混同(barrier vs streaming)
++//  5. loop pattern で /goal を省く(soft completion で早期停止)
++//  6. untrusted content を actor に到達させる(quarantine 不在)
++//  7. absolute score で sort(comparative/tournament の方が信頼できる)
++//
++// 全 check は heuristic(LLM 判定は client 側、ここは JS source の構造ベース)。
++// AuditSkill / AuditSubagent と同じ shape(Score + Issues + Suggestions)で揃える。
++package harness
++
++import (
++	"regexp"
++	"strings"
++)
++
++// WorkflowAuditResult は Dynamic Workflow ファイル評価結果。
++//
++// Score は 0-100:
++//
++//	90+ : production ready
++//	70-89: usable, 改善余地あり
++//	50-69: 複数の anti-pattern、要見直し
++//	<50 : workflow として成立していない / 高コスト failure mode 多数
++type WorkflowAuditResult struct {
++	Score                int      `json:"score"`
++	AgentCalls           int      `json:"agent_calls"`                  // agent( の出現数
++	UsesParallel         bool     `json:"uses_parallel"`                // parallel() barrier
++	UsesPipeline         bool     `json:"uses_pipeline"`                // pipeline() streaming
++	HasLoop              bool     `json:"has_loop"`                     // while ループ(loop-until-done)
++	HasTokenBudget       bool     `json:"has_token_budget"`             // mistake #2
++	HasGoalOnLoop        bool     `json:"has_goal_on_loop"`             // mistake #5(loop 時のみ意味)
++	HasAdversarialVerify bool     `json:"has_adversarial_verification"` // mistake #3 の正しい形
++	HasPerAgentModel     bool     `json:"has_per_agent_model"`          // per-agent model choice
++	ReadsUntrusted       bool     `json:"reads_untrusted"`              // mistake #6 のトリガ
++	HasQuarantine        bool     `json:"has_quarantine"`               // mistake #6 の緩和
++	SortsByAbsoluteScore bool     `json:"sorts_by_absolute_score"`      // mistake #7
++	IsTrivial            bool     `json:"is_trivial"`                   // mistake #1(over-reach)
++	IsWorkflow           bool     `json:"is_workflow"`                  // agent() を呼ぶか
++	Issues               []string `json:"issues,omitempty"`
++	Suggestions          []string `json:"suggestions,omitempty"`
++}
++
++var (
++	// agent( / parallel( / pipeline( の呼び出し検出(word boundary + 開き括弧)。
++	reAgentCall = regexp.MustCompile(`\bagent\s*\(`)
++	reParallel  = regexp.MustCompile(`\bparallel\s*\(`)
++	rePipeline  = regexp.MustCompile(`\bpipeline\s*\(`)
++	// loop-until-done の強いシグナルは while(停止条件付き反復)。for は map/iteration と
++	// 紛れるので採らない(false positive 回避)。
++	reWhileLoop = regexp.MustCompile(`\bwhile\s*\(`)
++	// token budget: 明示識別子 or "10k tokens" / "5000 tokens" 形式。
++	reTokenBudget = regexp.MustCompile(`(?i)(max_?tokens|token_?budget|\b\d+k?\s*tokens?\b|use\s+\d+k?\s+tokens)`)
++	// per-agent model 指定(model: "opus" 等)。
++	rePerAgentModel = regexp.MustCompile(`(?i)\bmodel\s*:`)
++	// verification を行っている兆候。
++	reVerification = regexp.MustCompile(`(?i)\b(verif|adversar|reviewer|\breview(s|ed)?\b|judge|grade|critique|refut|fact.?check)`)
++	// /goal による hard completion。
++	reGoal = regexp.MustCompile(`(?i)/goal\b|\bgoal\b`)
++	// untrusted / external input source。conservative に絞る。
++	reUntrusted = regexp.MustCompile(`(?i)(support\s*ticket|bug\s*report|user\s*feedback|customer\s*feedback|scrape|scraped|untrusted|social\s*media|third.?party|public\s*web|user.?submitted)`)
++	// quarantine pattern(read-only reader / low-privilege)。
++	reQuarantine = regexp.MustCompile(`(?i)(quarantine|read.?only\s*reader|low.?privilege|no.?privilege)`)
++	// .sort( による absolute-score sort。
++	reSortCall = regexp.MustCompile(`\.sort\s*\(`)
++	rePairwise = regexp.MustCompile(`(?i)(pairwise|tournament|bracket)`)
++)
++
++// AuditWorkflow は Dynamic Workflow の JS source を heuristic で評価する。
++//
++// 入力:
++//
++//	content: workflow JavaScript ファイル全文
++//
++// 出力:
++//
++//	WorkflowAuditResult。Issues/Suggestions は action-oriented。
++func AuditWorkflow(content string) WorkflowAuditResult {
++	r := WorkflowAuditResult{Score: 100}
++	lower := strings.ToLower(content)
++
++	r.AgentCalls = len(reAgentCall.FindAllStringIndex(content, -1))
++	r.UsesParallel = reParallel.MatchString(content)
++	r.UsesPipeline = rePipeline.MatchString(content)
++	r.HasLoop = reWhileLoop.MatchString(content)
++	r.IsWorkflow = r.AgentCalls > 0
++
++	// agent() を一度も呼ばない → そもそも workflow ではない(残りの check は意味を成さない)。
++	if !r.IsWorkflow {
++		r.Score -= 40
++		r.Issues = append(r.Issues, "no agent() call found — this does not look like a Dynamic Workflow")
++		r.Suggestions = append(r.Suggestions,
++			"A workflow spawns subagents via agent(), and coordinates them with parallel()/pipeline(). "+
++				"If this file is plain script, it belongs elsewhere, not in the workflows library.")
++		if r.Score < 0 {
++			r.Score = 0
++		}
++		return r
++	}
++
++	// mistake #1: over-reach。agent 1 個・orchestration なし → regular session で十分。
++	r.IsTrivial = r.AgentCalls <= 1 && !r.UsesParallel && !r.UsesPipeline && !r.HasLoop
++	if r.IsTrivial {
++		r.Score -= 15
++		r.Issues = append(r.Issues, "single agent, no parallel/pipeline/loop — a regular Claude Code session likely suffices")
++		r.Suggestions = append(r.Suggestions,
++			"Workflows earn their cost via isolation/parallelism/verification. "+
++				"If one context window finishes this in five minutes, don't wrap it in a workflow (mistake #1).")
++	}
++
++	// mistake #2: token budget 不在。
++	r.HasTokenBudget = reTokenBudget.MatchString(content)
++	if !r.HasTokenBudget {
++		r.Score -= 15
++		r.Issues = append(r.Issues, "no explicit token budget — ambitious workflows balloon to 5–10× expected cost")
++		r.Suggestions = append(r.Suggestions,
++			"Set an explicit cap (e.g. a maxTokens option or 'use 10k tokens' in the prompt) so the run is bounded (mistake #2).")
++	}
++
++	// per-agent model choice(best practice — Opus/Sonnet/Haiku を agent ごとに選ぶ)。
++	r.HasPerAgentModel = rePerAgentModel.MatchString(content)
++	if !r.HasPerAgentModel {
++		r.Score -= 5
++		r.Suggestions = append(r.Suggestions,
++			"No per-agent model selection found. Pick the model per agent — Opus for hard reasoning, "+
++				"Haiku for cheap exploration, Sonnet for the middle — to control cost.")
++	}
++
++	// mistake #3: self-preferential bias。verification しているのに agent が 1 個だけ
++	// = work と verify を同一 Claude が兼ねている。複数 agent があれば separate verifier
++	// と推定し adversarial verification の正しい形とみなす。
++	if reVerification.MatchString(content) {
++		if r.AgentCalls >= 2 {
++			r.HasAdversarialVerify = true
++		} else {
++			r.Score -= 20
++			r.Issues = append(r.Issues, "verification logic but only one agent — the worker cannot fairly verify itself (self-preferential bias)")
++			r.Suggestions = append(r.Suggestions,
++				"Spawn a separate verifier agent that sees only the rubric and the artifact, not who produced it (mistake #3 / pattern 07).")
++		}
++	}
++
++	// mistake #5: loop pattern で /goal を欠く。
++	r.HasGoalOnLoop = reGoal.MatchString(content)
++	if r.HasLoop && !r.HasGoalOnLoop {
++		r.Score -= 15
++		r.Issues = append(r.Issues, "loop pattern without /goal — the workflow stops at the first soft completion point")
++		r.Suggestions = append(r.Suggestions,
++			"Pair the loop with /goal to force hard completion (e.g. \"don't stop until one theory works\") (mistake #5).")
++	}
++
++	// mistake #6: untrusted content を読むのに quarantine が無い。
++	r.ReadsUntrusted = reUntrusted.MatchString(content)
++	r.HasQuarantine = reQuarantine.MatchString(content)
++	if r.ReadsUntrusted && !r.HasQuarantine {
++		r.Score -= 15
++		r.Issues = append(r.Issues, "reads untrusted/external content without a quarantine pattern — prompt-injection risk")
++		r.Suggestions = append(r.Suggestions,
++			"Bar the reader agent from high-privilege actions; let a separate agent (never exposed to the raw content) act (mistake #6 / step 13).")
++	}
++
++	// mistake #7: absolute score での sort。pairwise/tournament が無ければ flag。
++	if reSortCall.MatchString(content) && strings.Contains(lower, "score") && !rePairwise.MatchString(content) {
++		r.SortsByAbsoluteScore = true
++		r.Score -= 10
++		r.Issues = append(r.Issues, "sorting by absolute score — comparative judgment (tournament/pairwise) is more reliable")
++		r.Suggestions = append(r.Suggestions,
++			"For taste-based or large-N ranking, use a tournament (pairwise comparison across fresh agents) instead of sort-by-score (mistake #7 / pattern 09).")
++	}
++
++	if r.Score < 0 {
++		r.Score = 0
++	}
++	return r
++}
+diff --git a/yagura-v0.35.0/internal/harness/workflow_audit_test.go b/yagura-v0.35.0/internal/harness/workflow_audit_test.go
+new file mode 100644
+index 0000000..39f5b43
+--- /dev/null
++++ b/yagura-v0.35.0/internal/harness/workflow_audit_test.go
+@@ -0,0 +1,196 @@
++package harness
++
++import (
++	"strings"
++	"testing"
++)
++
++// hasIssueContaining は Issues のいずれかが substr を含むか。
++func hasIssueContaining(issues []string, substr string) bool {
++	for _, i := range issues {
++		if strings.Contains(i, substr) {
++			return true
++		}
++	}
++	return false
++}
++
++// pristine な fan-out-and-synthesize workflow(記事 pattern 06 の形)。
++// parallel barrier + per-agent model + token budget + 複数 agent。
++const pristineWorkflow = `
++// fan out one agent per file, then synthesize. use 20k tokens.
++const reviews = await parallel(
++  files.map(file => () => agent(
++    ` + "`Review ${file} for security issues`" + `,
++    { model: "haiku", maxTokens: 2000 }
++  ))
++)
++const report = await agent(
++  ` + "`Merge these reviews into one prioritized report`" + `,
++  { model: "opus" }
++)
++`
++
++func TestAuditWorkflow_Pristine(t *testing.T) {
++	r := AuditWorkflow(pristineWorkflow)
++	if !r.IsWorkflow {
++		t.Fatal("should be detected as a workflow")
++	}
++	if r.AgentCalls != 2 {
++		t.Errorf("expected 2 agent calls, got %d", r.AgentCalls)
++	}
++	if !r.UsesParallel {
++		t.Error("should detect parallel()")
++	}
++	if !r.HasTokenBudget {
++		t.Error("should detect token budget")
++	}
++	if !r.HasPerAgentModel {
++		t.Error("should detect per-agent model")
++	}
++	if r.IsTrivial {
++		t.Error("multi-agent parallel workflow is not trivial")
++	}
++	if r.Score < 90 {
++		t.Errorf("pristine workflow should score >=90, got %d (issues: %v)", r.Score, r.Issues)
++	}
++}
++
++func TestAuditWorkflow_NotAWorkflow(t *testing.T) {
++	r := AuditWorkflow("const x = 1;\nconsole.log(x);\n")
++	if r.IsWorkflow {
++		t.Error("plain script is not a workflow")
++	}
++	if !hasIssueContaining(r.Issues, "does not look like a Dynamic Workflow") {
++		t.Errorf("expected not-a-workflow issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditWorkflow_Trivial(t *testing.T) {
++	// 単一 agent・orchestration なし → over-reach（mistake #1）。
++	r := AuditWorkflow(`const out = await agent("explain this file", { model: "sonnet", maxTokens: 5000 })`)
++	if !r.IsTrivial {
++		t.Error("single agent without orchestration should be trivial")
++	}
++	if !hasIssueContaining(r.Issues, "regular Claude Code session likely suffices") {
++		t.Errorf("expected over-reach issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditWorkflow_NoTokenBudget(t *testing.T) {
++	src := `
++const a = await agent("do work", { model: "opus" })
++const b = await agent("do more", { model: "haiku" })
++`
++	r := AuditWorkflow(src)
++	if r.HasTokenBudget {
++		t.Error("should not detect a token budget")
++	}
++	if !hasIssueContaining(r.Issues, "no explicit token budget") {
++		t.Errorf("expected token-budget issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditWorkflow_SelfVerification(t *testing.T) {
++	// verification の語があるのに agent 1 個 → self-preferential bias。
++	src := `const out = await agent("write the fix and verify it against the rubric", { model: "opus", maxTokens: 4000 })`
++	r := AuditWorkflow(src)
++	if r.HasAdversarialVerify {
++		t.Error("single-agent self-verification is not adversarial")
++	}
++	if !hasIssueContaining(r.Issues, "self-preferential bias") {
++		t.Errorf("expected self-preference issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditWorkflow_AdversarialVerifyOK(t *testing.T) {
++	// 別 agent が verify → 正しい adversarial verification。
++	src := `
++const fix = await agent("write the fix", { model: "opus", maxTokens: 4000 })
++const ok  = await agent("verify this fix against the rubric", { model: "sonnet", maxTokens: 2000 })
++`
++	r := AuditWorkflow(src)
++	if !r.HasAdversarialVerify {
++		t.Error("two-agent verify/work split should count as adversarial verification")
++	}
++	if hasIssueContaining(r.Issues, "self-preferential bias") {
++		t.Errorf("should not flag self-preference with separate verifier: %v", r.Issues)
++	}
++}
++
++func TestAuditWorkflow_LoopWithoutGoal(t *testing.T) {
++	src := `
++let done = false
++while (!done) {
++  const theory = await agent("form and test a theory from the logs", { model: "opus", maxTokens: 3000 })
++  done = theory.verified
++}
++`
++	r := AuditWorkflow(src)
++	if !r.HasLoop {
++		t.Error("should detect while loop")
++	}
++	if !hasIssueContaining(r.Issues, "loop pattern without /goal") {
++		t.Errorf("expected loop-without-goal issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditWorkflow_LoopWithGoalOK(t *testing.T) {
++	src := `
++// /goal don't stop until one theory holds
++let done = false
++while (!done) {
++  const theory = await agent("test a theory", { model: "opus", maxTokens: 3000 })
++  done = theory.verified
++}
++`
++	r := AuditWorkflow(src)
++	if !r.HasGoalOnLoop {
++		t.Error("should detect /goal")
++	}
++	if hasIssueContaining(r.Issues, "loop pattern without /goal") {
++		t.Errorf("should not flag loop when /goal present: %v", r.Issues)
++	}
++}
++
++func TestAuditWorkflow_UntrustedWithoutQuarantine(t *testing.T) {
++	src := `
++const tickets = loadSupportTickets()
++const actions = await parallel(
++  tickets.map(t => () => agent(` + "`triage and fix: ${t.body}`" + `, { model: "sonnet", maxTokens: 3000 }))
++)
++`
++	r := AuditWorkflow(src)
++	if !r.ReadsUntrusted {
++		t.Error("should detect untrusted input (support tickets)")
++	}
++	if !hasIssueContaining(r.Issues, "quarantine") {
++		t.Errorf("expected quarantine issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditWorkflow_SortByAbsoluteScore(t *testing.T) {
++	src := `
++const ideas = await parallel(seeds.map(s => () => agent("score this idea", { model: "haiku", maxTokens: 1000 })))
++const ranked = ideas.sort((a, b) => b.score - a.score)
++`
++	r := AuditWorkflow(src)
++	if !r.SortsByAbsoluteScore {
++		t.Error("should detect absolute-score sort")
++	}
++	if !hasIssueContaining(r.Issues, "comparative judgment") {
++		t.Errorf("expected tournament suggestion, got %v", r.Issues)
++	}
++}
++
++func TestAuditWorkflow_TournamentNotFlagged(t *testing.T) {
++	src := `
++const ranked = items.sort(byScore) // tournament bracket already applied pairwise
++const w = await agent("pick the bracket winner", { model: "opus", maxTokens: 2000 })
++const v = await agent("verify the winner", { model: "sonnet", maxTokens: 2000 })
++`
++	r := AuditWorkflow(src)
++	if r.SortsByAbsoluteScore {
++		t.Error("should not flag sort when tournament/pairwise present")
++	}
++}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
 index 939a67e..69cbda1 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
