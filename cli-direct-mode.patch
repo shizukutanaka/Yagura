@@ -1,8 +1,8 @@
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..ab18530 100644
+index 9b29eec..1cb5c8c 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,96 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,116 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -83,6 +83,24 @@ index 9b29eec..ab18530 100644
 +  artifact の audit 四点セット(skill / subagent / workflow / settings)が揃う。
 +  yagura 自身の settings.json は 100 点(deny + gofmt/go-vet hooks)。disk 走査
 +  なので CLI 側に置き、MCP の tool 数(46)は不変。
++- **`yagura_parallel_plan`: 複数 AI を使った処理の並列化(MCP tool #47)**
++  (`internal/agentparallel/agentparallel.go`)。独立した task 群を複数の AI agent
++  (Claude Opus/Sonnet/Haiku, Codex, Windsurf, ...)へ fan-out する deterministic な
++  dispatch planner。着想は tensor/data parallelism — agent を「容量(残 quota)と
++  能力(tier)を持つ計算 device」とみなし、task を分割並列実行して barrier で集約
++  する。割り当ては最小 makespan スケジューリングの古典 greedy **LPT(Longest
++  Processing Time first)** を heterogeneous machine 向けに一般化:task を weight
++  降順に見て `(load+weight)/capacity` 最小の eligible agent へ置く(tie-break まで
++  決定論的 — deterministic output ルール準拠)。capacity 重み付き負荷分散、tier に
++  よる capability routing(classify-and-act / per-agent model)、min_tier 不適合は
++  unassigned で報告、per-agent / global の bounded concurrency と wave(makespan)
++  推定を返す。`quotamonitor` が設定済みで agent 名が既知(claude_code / windsurf)
++  かつ capacity 省略時は **live quota を capacity として補完**(枯渇 agent に積まない
++  quota-aware な fan-out)。Yagura は LLM を呼ばない(rule-based / ADR-0001)ので、
++  実際の spawn/実行は MCP client が行い、本 tool は再現可能な「計画」だけを返す。
++  これは既存の 1→1 handoff(quota 枯渇で切替)を **1→N 並列 fan-out** へ拡張する
++  もの。新規依存ゼロ(stdlib `math`/`sort` のみ)。tool 数 46 → **47**、新 package
++  `internal/agentparallel`(39 → 40 packages)。
 +
 +### What's not yet
 +
@@ -92,15 +110,17 @@ index 9b29eec..ab18530 100644
 +
 +### Notes
 +
-+- ADR-0001 維持:新規依存ゼロ(`flag` / `text/tabwriter` / `encoding/json` 等
-+  stdlib のみ)。`go.mod` 不変 → reproducible build を維持。
-+- MCP tool は増えていないので tool 数(46)と `integration_test` は不変。
++- ADR-0001 維持:新規依存ゼロ(`flag` / `text/tabwriter` / `encoding/json` /
++  `math` / `sort` 等 stdlib のみ)。`go.mod` 不変 → reproducible build を維持。
++- CLI 系追加(skill/workflow/settings-audit)は MCP tool を増やさず CLI 側に置いた
++  ため tool 数は据え置き。最後の `yagura_parallel_plan` のみ MCP tool を追加し、
++  46 → 47 へ(`integration_test` / `MCP_TOOLS.md` 更新済み)。
 +
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..e3ac25e 100644
+index 986f84e..b454692 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -108,10 +128,19 @@ index 986f84e..e3ac25e 100644
  **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
  
 -Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
-+Status: **v0.35.0** — 46 MCP tools, 39 internal packages, CLI direct mode, 30 consecutive reproducible releases.
++Status: **v0.35.0** — 47 MCP tools, 40 internal packages, CLI direct mode, 30 consecutive reproducible releases.
  
  ---
  
+@@ -36,7 +36,7 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
+ │        ▼                              │              │
+ │  ┌────────────────────────────────────────────────┐  │
+ │  │  yagura daemon (single binary, ~9 MB)          │  │
+-│  │  - 46 MCP tools                                │  │
++│  │  - 47 MCP tools                                │  │
+ │  │  - HTTP hook receiver                          │  │
+ │  │  - Prometheus /metrics                         │  │
+ │  │  - .well-known/mcp (2026 spec)                 │  │
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
 index 0000000..eda2cce
@@ -1948,6 +1977,19 @@ index 0000000..1484f10
 +		t.Errorf("missing dir: code=%d out=%q", code, mout)
 +	}
 +}
+diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
+index cfb6e51..b5b973a 100644
+--- a/yagura-v0.35.0/cmd/yagura/integration_test.go
++++ b/yagura-v0.35.0/cmd/yagura/integration_test.go
+@@ -164,6 +164,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
+ 		// v0.27 — cortex flywheel ④ Alert-Fix
+ 		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
+ 		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",
++		// v0.35 — 複数 AI を使った処理の並列化
++		"yagura_parallel_plan",
+ 	}
+ 	if len(r.Result.Tools) != len(expectedTools) {
+ 		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
 index bd1fe39..8c7dd40 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
@@ -2039,6 +2081,511 @@ index f923a14..5cdb82b 100644
  		t.Errorf("expected version in stdout, got: %q", out.String())
  	}
  	if !strings.Contains(out.String(), "go") {
+diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
+index 689c182..68c6675 100644
+--- a/yagura-v0.35.0/docs/MCP_TOOLS.md
++++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
+@@ -1,6 +1,6 @@
+ # MCP tools reference
+ 
+-Generated from a live yagura — **46 tools**.
++Generated from a live yagura — **47 tools**.
+ 
+ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
+ 
+@@ -13,7 +13,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ - [Handoff](#handoff) (1)
+ - [Harness (guides)](#harness-guides) (8)
+ - [Inventory](#inventory) (8)
+-- [Misc](#misc) (8)
++- [Misc](#misc) (9)
+ - [Observability](#observability) (4)
+ - [Plan tracking](#plan-tracking) (2)
+ - [Security (sensors)](#security-sensors) (10)
+@@ -181,7 +181,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ 
+ ### `yagura_skill_audit`
+ 
+-[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score.
++[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score + retire signal.
+ 
+ **Arguments:**
+ 
+@@ -219,7 +219,13 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ 
+ ### `yagura_list`
+ 
+-[G] List projects (compact).
++[G] List projects (compact). Optional limit caps rows.
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `limit` (integer) |  | 最大返却件数(省略時は全件)。トークン節約用。 |
+ 
+ ---
+ 
+@@ -253,6 +259,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ | Name | Required | Description |
+ |---|---|---|
+ | `language` (string) |  | 言語完全一致 (大文字小文字無視) |
++| `limit` (integer) |  | 最大返却件数(省略時は全件)。 |
+ | `query` (string) |  | slug/name/notes/tags を横断する部分一致 |
+ | `stage` (string) |  | active / maintenance / paused / archived |
+ | `tag` (string) |  | tag 完全一致 (大文字小文字無視) |
+@@ -329,6 +336,22 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ 
+ ---
+ 
++### `yagura_parallel_plan`
++
++[G] Plan parallel task fan-out across AI agents.
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `agents` (array) | ★ | AI agents to fan out to. Each: {name, tier, capacity_percent?, max_concurrency?}. |
++| `global_concurrency` (integer) |  |  |
++| `strategy` (string) |  |  |
++| `task_count` (integer) |  | Shorthand: N uniform unit-weight tasks (task-1..task-N) when 'tasks' omitted. |
++| `tasks` (array) |  | Independent work items. Each: {id, weight?, min_tier?}. |
++
++---
++
+ ### `yagura_quota_forecast`
+ 
+ [S] Empty-time linreg forecast. Needs ≥3 samples.
+@@ -576,7 +599,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ 
+ ### `yagura_secretscan`
+ 
+-[G] Secret scan: 12 patterns + entropy. Redacts hits.
++[G] Secret scan: 14 patterns + entropy. Redacts hits.
+ 
+ **Arguments:**
+ 
+diff --git a/yagura-v0.35.0/docs/QUICKSTART.md b/yagura-v0.35.0/docs/QUICKSTART.md
+index 62e02cd..ad352ff 100644
+--- a/yagura-v0.35.0/docs/QUICKSTART.md
++++ b/yagura-v0.35.0/docs/QUICKSTART.md
+@@ -177,7 +177,7 @@ The process drains for 5 seconds (`/readyz` returns 503) then shuts down gracefu
+ 
+ ## What next?
+ 
+-- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 46 tools.
++- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 47 tools.
+ - [WINDOWS.md](WINDOWS.md) — Task Scheduler / NSSM / Windows service setup.
+ - [ARCHITECTURE.md](../ARCHITECTURE.md) — internals and design rationale.
+ - [security-spec.md](security-spec.md) — threat model.
+diff --git a/yagura-v0.35.0/internal/agentparallel/agentparallel.go b/yagura-v0.35.0/internal/agentparallel/agentparallel.go
+new file mode 100644
+index 0000000..76f4caa
+--- /dev/null
++++ b/yagura-v0.35.0/internal/agentparallel/agentparallel.go
+@@ -0,0 +1,213 @@
++// Package agentparallel は「複数 AI を使った処理の並列化」を deterministic に
++// 計画する rule-based planner。
++//
++// 着想: tensor/data parallelism が計算を複数 device(GPU)に分割して並列実行し
++// barrier で結合するのと同様に、独立した task 群を複数の AI agent(Claude
++// Opus/Sonnet/Haiku, Codex, Windsurf, ...)に fan-out し、各 agent の
++//   - capacity(残 quota %) … device の空き容量に相当
++//   - capability tier(cheap/mid/strong) … device の能力に相当
++//
++// に応じて割り当て、bounded concurrency(wave)で実行、最後に synthesize barrier
++// で集約する — という data-parallel な分散計画を立てる。
++//
++// Yagura は LLM を呼ばない(ADR-0001 / rule-based)。実際に agent を spawn して
++// task を走らせるのは MCP client 側で、本 package は「どの agent にどの task を、
++// どの並列幅で振るか」という再現可能な plan を返すだけ(quotamonitor の live quota
++// と組み合わせると、枯渇した agent に積まない quota-aware な fan-out になる)。
++//
++// 割り当ては最小 makespan スケジューリング(P_m||C_max, strongly NP-hard)の
++// 古典 greedy "Longest Processing Time first"(LPT)を heterogeneous machine 向けに
++// 一般化したもの: task を weight 降順に見て、その時点で
++// (projected load + weight) / capacity が最小になる eligible agent へ置く。
++// LPT は identical machine で 2-(1/m) 近似、O(n log n)。tie-break まで決定論的に
++// 固定する(Yagura の deterministic output ルール)。
++package agentparallel
++
++import (
++	"math"
++	"sort"
++)
++
++// Tier は agent の能力段(= 使用モデルの強さ)。task 側は「最低これ以上」を要求できる。
++type Tier int
++
++const (
++	TierAny    Tier = iota // 0: 制約なし(task) / 未宣言(agent は任意の min_tier に適格)
++	TierCheap              // 1: haiku 級(安価・探索向き)
++	TierMid                // 2: sonnet 級(中庸)
++	TierStrong             // 3: opus 級(難しい推論)
++)
++
++// Agent は fan-out 先の AI(= 並列計算の device)。
++type Agent struct {
++	Name           string `json:"name"`
++	Tier           Tier   `json:"tier"`            // capability(eligibility 判定に使用)
++	CapacityPct    int    `json:"capacity_pct"`    // 0-100 の残 quota。<=0 は除外(枯渇 device)
++	MaxConcurrency int    `json:"max_concurrency"` // 同時 in-flight 上限。<=0 は 1 とみなす
++}
++
++// Task は分散する独立な仕事 1 単位。
++type Task struct {
++	ID      string  `json:"id"`
++	Weight  float64 `json:"weight"`   // 推定コスト/難易度。<=0 は 1 とみなす
++	MinTier Tier    `json:"min_tier"` // 必要最低 capability(TierAny=制約なし)
++}
++
++// Assignment は 1 agent への割り当て結果。
++type Assignment struct {
++	Agent      string   `json:"agent"`
++	Tasks      []string `json:"tasks"`       // 割り当て順(weight 降順で配置された順)
++	Waves      int      `json:"waves"`       // ceil(len(Tasks)/MaxConcurrency)
++	LoadWeight float64  `json:"load_weight"` // 割り当て総 weight
++}
++
++// Plan は parallel dispatch 計画(barrier 付き fan-out)。
++type Plan struct {
++	Strategy    string       `json:"strategy"`             // 現状 "data"(data-parallel fan-out)
++	FanOutWidth int          `json:"fan_out_width"`        // task を持つ agent 数
++	Assignments []Assignment `json:"assignments"`          // agent 名昇順
++	Unassigned  []string     `json:"unassigned,omitempty"` // どの eligible agent も無い task
++	EstWaves    int          `json:"est_waves"`            // 推定 makespan(wave 数)
++	Barrier     bool         `json:"barrier"`              // 全 fan-out 後に synthesize する(data は常に true)
++	Notes       []string     `json:"notes,omitempty"`
++}
++
++// eligible は task が agent に割り当て可能か(tier 制約)。agent.Tier==TierAny は
++// 「能力未宣言」とみなし任意の min_tier に適格(誤って除外しないため)。
++func eligible(a Agent, t Task) bool {
++	return a.Tier == TierAny || a.Tier >= t.MinTier
++}
++
++// PlanDataParallel は task 群を agent 群へ capacity 重み付き LPT で割り当てた
++// data-parallel な fan-out plan を返す。入力は変更しない。完全に決定論的。
++func PlanDataParallel(tasks []Task, agents []Agent, globalConcurrency int) Plan {
++	p := Plan{Strategy: "data", Barrier: true}
++
++	// capacity を持つ agent だけを名前昇順で(tie-break 安定化)。
++	live := make([]Agent, 0, len(agents))
++	for _, a := range agents {
++		if a.CapacityPct > 0 {
++			if a.MaxConcurrency <= 0 {
++				a.MaxConcurrency = 1
++			}
++			live = append(live, a)
++		}
++	}
++	sort.Slice(live, func(i, j int) bool { return live[i].Name < live[j].Name })
++
++	if len(live) == 0 {
++		// 全 agent 枯渇 → 何も割り当てられない。
++		for _, t := range tasks {
++			p.Unassigned = append(p.Unassigned, t.ID)
++		}
++		if len(tasks) > 0 {
++			p.Notes = append(p.Notes, "no agent has remaining capacity (>0%); nothing scheduled")
++		}
++		sort.Strings(p.Unassigned)
++		return p
++	}
++
++	// LPT: task を (weight 降順, min_tier 降順, id 昇順) で並べる。
++	// 大きい/制約の強い task を先に置くほど makespan が縮む。
++	order := make([]Task, len(tasks))
++	copy(order, tasks)
++	for i := range order {
++		if order[i].Weight <= 0 {
++			order[i].Weight = 1
++		}
++	}
++	sort.SliceStable(order, func(i, j int) bool {
++		if order[i].Weight != order[j].Weight {
++			return order[i].Weight > order[j].Weight
++		}
++		if order[i].MinTier != order[j].MinTier {
++			return order[i].MinTier > order[j].MinTier
++		}
++		return order[i].ID < order[j].ID
++	})
++
++	// load[name] = 現在の割り当て総 weight。割り当て task list も保持。
++	load := make(map[string]float64, len(live))
++	picked := make(map[string][]string, len(live))
++	usedTier := false
++
++	for _, t := range order {
++		best := -1
++		bestScore := math.Inf(1)
++		for i, a := range live {
++			if !eligible(a, t) {
++				continue
++			}
++			// projected finish = (現 load + weight) / capacity。小さいほど良い。
++			score := (load[a.Name] + t.Weight) / float64(a.CapacityPct)
++			if score < bestScore {
++				bestScore = score
++				best = i
++			}
++			// tie は live が名前昇順なので最初に当たった(=辞書順最小)を保持。
++		}
++		if best < 0 {
++			p.Unassigned = append(p.Unassigned, t.ID)
++			continue
++		}
++		a := live[best]
++		load[a.Name] += t.Weight
++		picked[a.Name] = append(picked[a.Name], t.ID)
++		if t.MinTier > TierAny {
++			usedTier = true
++		}
++	}
++
++	// Assignment を agent 名昇順で組み立て。
++	totalAssigned := 0
++	maxAgentWaves := 0
++	for _, a := range live {
++		ids := picked[a.Name]
++		if len(ids) == 0 {
++			continue
++		}
++		waves := int(math.Ceil(float64(len(ids)) / float64(a.MaxConcurrency)))
++		if waves > maxAgentWaves {
++			maxAgentWaves = waves
++		}
++		totalAssigned += len(ids)
++		p.Assignments = append(p.Assignments, Assignment{
++			Agent:      a.Name,
++			Tasks:      ids,
++			Waves:      waves,
++			LoadWeight: load[a.Name],
++		})
++	}
++	p.FanOutWidth = len(p.Assignments)
++
++	// makespan(wave)推定: agent 内 wave の最大。global concurrency が fan-out 幅
++	// より小さいと同時稼働 agent が絞られるので、その制約も加味する。
++	p.EstWaves = maxAgentWaves
++	if globalConcurrency > 0 {
++		slots := 0
++		for _, a := range live {
++			if len(picked[a.Name]) > 0 {
++				slots += a.MaxConcurrency
++			}
++		}
++		if globalConcurrency < slots && totalAssigned > 0 {
++			gw := int(math.Ceil(float64(totalAssigned) / float64(globalConcurrency)))
++			if gw > p.EstWaves {
++				p.EstWaves = gw
++			}
++			p.Notes = append(p.Notes,
++				"global_concurrency caps simultaneous tasks below the fan-out's natural width; makespan is bounded by the global cap")
++		}
++	}
++
++	if usedTier {
++		p.Notes = append(p.Notes,
++			"tier constraints applied: tasks were routed only to agents meeting their min_tier (classify-and-act / per-agent model)")
++	}
++	sort.Strings(p.Unassigned)
++	if len(p.Unassigned) > 0 {
++		p.Notes = append(p.Notes,
++			"some tasks had no agent meeting their min_tier; raise an agent's tier or lower the task's min_tier")
++	}
++	return p
++}
+diff --git a/yagura-v0.35.0/internal/agentparallel/agentparallel_test.go b/yagura-v0.35.0/internal/agentparallel/agentparallel_test.go
+new file mode 100644
+index 0000000..46f2e48
+--- /dev/null
++++ b/yagura-v0.35.0/internal/agentparallel/agentparallel_test.go
+@@ -0,0 +1,182 @@
++package agentparallel
++
++import (
++	"reflect"
++	"testing"
++)
++
++func mkTasks(ids ...string) []Task {
++	ts := make([]Task, len(ids))
++	for i, id := range ids {
++		ts[i] = Task{ID: id, Weight: 1}
++	}
++	return ts
++}
++
++func assignmentFor(p Plan, agent string) (Assignment, bool) {
++	for _, a := range p.Assignments {
++		if a.Agent == agent {
++			return a, true
++		}
++	}
++	return Assignment{}, false
++}
++
++func TestPlan_EvenSplitBalanced(t *testing.T) {
++	// 4 unit tasks, 2 equal-capacity agents → 2 each.
++	agents := []Agent{
++		{Name: "a", Tier: TierMid, CapacityPct: 100, MaxConcurrency: 1},
++		{Name: "b", Tier: TierMid, CapacityPct: 100, MaxConcurrency: 1},
++	}
++	p := PlanDataParallel(mkTasks("t1", "t2", "t3", "t4"), agents, 0)
++	if p.FanOutWidth != 2 {
++		t.Fatalf("expected fan-out 2, got %d", p.FanOutWidth)
++	}
++	for _, name := range []string{"a", "b"} {
++		as, ok := assignmentFor(p, name)
++		if !ok || len(as.Tasks) != 2 {
++			t.Errorf("agent %s should get 2 tasks, got %+v", name, as)
++		}
++	}
++	if !p.Barrier {
++		t.Error("data-parallel plan should have a barrier")
++	}
++}
++
++func TestPlan_CapacityWeighted(t *testing.T) {
++	// agent "big" has 3x the capacity of "small" → should get ~3x the load.
++	agents := []Agent{
++		{Name: "big", Tier: TierMid, CapacityPct: 90, MaxConcurrency: 4},
++		{Name: "small", Tier: TierMid, CapacityPct: 30, MaxConcurrency: 4},
++	}
++	p := PlanDataParallel(mkTasks("t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8"), agents, 0)
++	big, _ := assignmentFor(p, "big")
++	small, _ := assignmentFor(p, "small")
++	if !(len(big.Tasks) > len(small.Tasks)) {
++		t.Errorf("higher-capacity agent should carry more: big=%d small=%d", len(big.Tasks), len(small.Tasks))
++	}
++	if len(big.Tasks)+len(small.Tasks) != 8 {
++		t.Errorf("all 8 tasks must be assigned, got %d", len(big.Tasks)+len(small.Tasks))
++	}
++}
++
++func TestPlan_Deterministic(t *testing.T) {
++	agents := []Agent{
++		{Name: "b", Tier: TierMid, CapacityPct: 50, MaxConcurrency: 2},
++		{Name: "a", Tier: TierMid, CapacityPct: 50, MaxConcurrency: 2},
++		{Name: "c", Tier: TierMid, CapacityPct: 50, MaxConcurrency: 2},
++	}
++	tasks := mkTasks("x", "y", "z", "p", "q")
++	p1 := PlanDataParallel(tasks, agents, 0)
++	p2 := PlanDataParallel(tasks, agents, 0)
++	if !reflect.DeepEqual(p1, p2) {
++		t.Errorf("plan must be deterministic:\n%+v\n%+v", p1, p2)
++	}
++	// agents are reported in name order regardless of input order.
++	for i := 1; i < len(p1.Assignments); i++ {
++		if p1.Assignments[i-1].Agent > p1.Assignments[i].Agent {
++			t.Errorf("assignments not sorted by agent name: %+v", p1.Assignments)
++		}
++	}
++}
++
++func TestPlan_TierRouting(t *testing.T) {
++	// a strong task must only go to the opus-tier agent.
++	agents := []Agent{
++		{Name: "haiku", Tier: TierCheap, CapacityPct: 100, MaxConcurrency: 4},
++		{Name: "opus", Tier: TierStrong, CapacityPct: 100, MaxConcurrency: 4},
++	}
++	tasks := []Task{
++		{ID: "hard", Weight: 1, MinTier: TierStrong},
++		{ID: "easy1", Weight: 1},
++		{ID: "easy2", Weight: 1},
++	}
++	p := PlanDataParallel(tasks, agents, 0)
++	opus, _ := assignmentFor(p, "opus")
++	foundHard := false
++	for _, id := range opus.Tasks {
++		if id == "hard" {
++			foundHard = true
++		}
++	}
++	if !foundHard {
++		t.Errorf("strong task must be routed to opus-tier agent, got %+v", p.Assignments)
++	}
++	// haiku must never receive the hard task.
++	haiku, _ := assignmentFor(p, "haiku")
++	for _, id := range haiku.Tasks {
++		if id == "hard" {
++			t.Error("cheap-tier agent received a strong-tier task")
++		}
++	}
++}
++
++func TestPlan_Unassignable(t *testing.T) {
++	// no agent meets the strong requirement → task is unassigned, not a crash.
++	agents := []Agent{{Name: "haiku", Tier: TierCheap, CapacityPct: 100, MaxConcurrency: 1}}
++	tasks := []Task{{ID: "needs-opus", Weight: 1, MinTier: TierStrong}}
++	p := PlanDataParallel(tasks, agents, 0)
++	if len(p.Unassigned) != 1 || p.Unassigned[0] != "needs-opus" {
++		t.Errorf("expected needs-opus unassigned, got %+v", p.Unassigned)
++	}
++}
++
++func TestPlan_AllAgentsExhausted(t *testing.T) {
++	agents := []Agent{{Name: "a", Tier: TierMid, CapacityPct: 0, MaxConcurrency: 1}}
++	p := PlanDataParallel(mkTasks("t1", "t2"), agents, 0)
++	if p.FanOutWidth != 0 || len(p.Unassigned) != 2 {
++		t.Errorf("exhausted agents → everything unassigned, got %+v", p)
++	}
++}
++
++func TestPlan_Waves(t *testing.T) {
++	// one agent, concurrency 2, 5 tasks → ceil(5/2)=3 waves.
++	agents := []Agent{{Name: "a", Tier: TierMid, CapacityPct: 100, MaxConcurrency: 2}}
++	p := PlanDataParallel(mkTasks("t1", "t2", "t3", "t4", "t5"), agents, 0)
++	as, _ := assignmentFor(p, "a")
++	if as.Waves != 3 {
++		t.Errorf("expected 3 waves, got %d", as.Waves)
++	}
++	if p.EstWaves != 3 {
++		t.Errorf("expected est_waves 3, got %d", p.EstWaves)
++	}
++}
++
++func TestPlan_GlobalConcurrencyCap(t *testing.T) {
++	// 2 agents able to run 4 in parallel, but global cap of 1 serializes to 8 waves.
++	agents := []Agent{
++		{Name: "a", Tier: TierMid, CapacityPct: 100, MaxConcurrency: 2},
++		{Name: "b", Tier: TierMid, CapacityPct: 100, MaxConcurrency: 2},
++	}
++	p := PlanDataParallel(mkTasks("t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8"), agents, 1)
++	if p.EstWaves < 8 {
++		t.Errorf("global cap of 1 should serialize to >=8 waves, got %d", p.EstWaves)
++	}
++	if len(p.Notes) == 0 {
++		t.Error("expected a note about the global concurrency cap")
++	}
++}
++
++func TestPlan_Empty(t *testing.T) {
++	p := PlanDataParallel(nil, nil, 0)
++	if p.FanOutWidth != 0 || len(p.Assignments) != 0 || len(p.Unassigned) != 0 {
++		t.Errorf("empty input → empty plan, got %+v", p)
++	}
++	if p.Strategy != "data" || !p.Barrier {
++		t.Errorf("plan metadata should still be set: %+v", p)
++	}
++}
++
++func TestPlan_DefaultWeightAndConcurrency(t *testing.T) {
++	// weight<=0 → 1, concurrency<=0 → 1.
++	agents := []Agent{{Name: "a", Tier: TierMid, CapacityPct: 100, MaxConcurrency: 0}}
++	tasks := []Task{{ID: "t1"}, {ID: "t2"}} // zero weight
++	p := PlanDataParallel(tasks, agents, 0)
++	as, _ := assignmentFor(p, "a")
++	if as.LoadWeight != 2 {
++		t.Errorf("zero weights should default to 1 each (load 2), got %v", as.LoadWeight)
++	}
++	if as.Waves != 2 {
++		t.Errorf("concurrency<=0 defaults to 1 → 2 waves, got %d", as.Waves)
++	}
++}
 diff --git a/yagura-v0.35.0/internal/config/config.go b/yagura-v0.35.0/internal/config/config.go
 index af23d66..6b601a7 100644
 --- a/yagura-v0.35.0/internal/config/config.go
@@ -2917,10 +3464,19 @@ index 0000000..39f5b43
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..69cbda1 100644
+index 939a67e..66b91d0 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
-@@ -198,8 +198,8 @@ type listOut struct {
+@@ -188,6 +188,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
+ 	s.Register(buildHookStatsTool(s))
+ 	s.Register(buildProgressFileTool(d, s))
+ 	s.Register(buildInitShTool(d))
++	// [v0.35.0] 複数 AI を使った処理の並列化(deterministic dispatch planner)
++	s.Register(buildParallelPlanTool(d))
+ }
+ 
+ // ─── yagura_list ─────────────────────────────────────────────
+@@ -198,8 +200,8 @@ type listOut struct {
  	Stage          string `json:"stage"`
  	Priority       int    `json:"priority"`
  	Language       string `json:"language,omitempty"`
@@ -2931,7 +3487,7 @@ index 939a67e..69cbda1 100644
  	CIStatus       string `json:"ci_status,omitempty"`
  	LatestVersion  string `json:"latest_version,omitempty"`
  	DaysSinceCommit int   `json:"days_since_commit"`
-@@ -245,7 +245,7 @@ type todayItem struct {
+@@ -245,7 +247,7 @@ type todayItem struct {
  func buildSecretScanTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_secretscan",
@@ -2940,7 +3496,7 @@ index 939a67e..69cbda1 100644
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
-@@ -766,7 +766,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+@@ -766,7 +768,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_skill_audit",
@@ -3145,6 +3701,346 @@ index e08cf8f..1b592ad 100644
 -	}
 -	return false
 -}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_parallel.go b/yagura-v0.35.0/internal/mcp/tools_parallel.go
+new file mode 100644
+index 0000000..949ca63
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_parallel.go
+@@ -0,0 +1,182 @@
++// tools_parallel.go: yagura_parallel_plan — 複数 AI を使った処理の並列化を計画する。
++//
++// 独立した task 群を複数の AI agent(Claude Opus/Sonnet/Haiku, Codex, Windsurf, ...)
++// に capacity(残 quota)と capability(tier)で重み付けして fan-out する deterministic
++// な dispatch plan を返す(internal/agentparallel)。Yagura は LLM を呼ばないので、
++// 実際の spawn/実行は MCP client が行い、本 tool は「どの agent にどの task を、どの
++// 並列幅で振るか」の再現可能な計画だけを返す。
++//
++// quotamonitor が設定済みで agent 名が既知(claude_code / windsurf)かつ
++// capacity_percent 省略時は、live quota を capacity として埋める(枯渇 agent に積まない
++// quota-aware な fan-out)。
++
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"strings"
++
++	"github.com/shizukutanaka/yagura/internal/agentparallel"
++	"github.com/shizukutanaka/yagura/internal/quotamonitor"
++)
++
++// parseTier は tier 文字列(別名込み)を agentparallel.Tier に変換する。
++// "" / "any" は TierAny。haiku/sonnet/opus を cheap/mid/strong の別名として受ける。
++func parseTier(s string) (agentparallel.Tier, bool) {
++	switch strings.ToLower(strings.TrimSpace(s)) {
++	case "", "any":
++		return agentparallel.TierAny, true
++	case "cheap", "haiku":
++		return agentparallel.TierCheap, true
++	case "mid", "sonnet", "medium":
++		return agentparallel.TierMid, true
++	case "strong", "opus", "high":
++		return agentparallel.TierStrong, true
++	}
++	return agentparallel.TierAny, false
++}
++
++// maxSynthTasks は task_count 省略記法の上限(暴発防止)。
++const maxSynthTasks = 10000
++
++func buildParallelPlanTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_parallel_plan",
++		Description: "[G] Plan parallel task fan-out across AI agents.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"tasks": map[string]any{
++					"type":        "array",
++					"description": "Independent work items. Each: {id, weight?, min_tier?}.",
++					"items": map[string]any{
++						"type": "object",
++						"properties": map[string]any{
++							"id":       map[string]any{"type": "string"},
++							"weight":   map[string]any{"type": "number"},
++							"min_tier": map[string]any{"type": "string"},
++						},
++					},
++				},
++				"task_count": map[string]any{
++					"type":        "integer",
++					"description": "Shorthand: N uniform unit-weight tasks (task-1..task-N) when 'tasks' omitted.",
++				},
++				"agents": map[string]any{
++					"type":        "array",
++					"description": "AI agents to fan out to. Each: {name, tier, capacity_percent?, max_concurrency?}.",
++					"items": map[string]any{
++						"type": "object",
++						"properties": map[string]any{
++							"name":             map[string]any{"type": "string"},
++							"tier":             map[string]any{"type": "string"},
++							"capacity_percent": map[string]any{"type": "integer"},
++							"max_concurrency":  map[string]any{"type": "integer"},
++						},
++						"required": []string{"name"},
++					},
++				},
++				"global_concurrency": map[string]any{"type": "integer"},
++				"strategy":           map[string]any{"type": "string"},
++			},
++			"required": []string{"agents"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Tasks []struct {
++					ID      string  `json:"id"`
++					Weight  float64 `json:"weight"`
++					MinTier string  `json:"min_tier"`
++				} `json:"tasks"`
++				TaskCount int `json:"task_count"`
++				Agents    []struct {
++					Name            string `json:"name"`
++					Tier            string `json:"tier"`
++					CapacityPercent *int   `json:"capacity_percent"`
++					MaxConcurrency  int    `json:"max_concurrency"`
++				} `json:"agents"`
++				GlobalConcurrency int    `json:"global_concurrency"`
++				Strategy          string `json:"strategy"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++
++			if s := strings.ToLower(strings.TrimSpace(in.Strategy)); s != "" && s != "data" {
++				return nil, &ToolError{Code: "invalid_input",
++					Message: fmt.Sprintf("unsupported strategy %q (only 'data' is supported)", in.Strategy)}
++			}
++			if len(in.Agents) == 0 {
++				return nil, &ToolError{Code: "invalid_input", Message: "at least one agent is required"}
++			}
++
++			// tasks を組み立てる(明示 list か task_count 省略記法)。
++			var tasks []agentparallel.Task
++			if len(in.Tasks) > 0 {
++				for i, t := range in.Tasks {
++					id := strings.TrimSpace(t.ID)
++					if id == "" {
++						id = fmt.Sprintf("task-%d", i+1)
++					}
++					tier, ok := parseTier(t.MinTier)
++					if !ok {
++						return nil, &ToolError{Code: "invalid_input",
++							Message: fmt.Sprintf("task %q: unknown min_tier %q (use any/cheap/mid/strong)", id, t.MinTier)}
++					}
++					tasks = append(tasks, agentparallel.Task{ID: id, Weight: t.Weight, MinTier: tier})
++				}
++			} else if in.TaskCount > 0 {
++				if in.TaskCount > maxSynthTasks {
++					return nil, &ToolError{Code: "invalid_input",
++						Message: fmt.Sprintf("task_count %d exceeds limit %d", in.TaskCount, maxSynthTasks)}
++				}
++				for i := 0; i < in.TaskCount; i++ {
++					tasks = append(tasks, agentparallel.Task{ID: fmt.Sprintf("task-%d", i+1), Weight: 1})
++				}
++			} else {
++				return nil, &ToolError{Code: "invalid_input", Message: "provide 'tasks' or a positive 'task_count'"}
++			}
++
++			// agents を組み立てる。capacity 省略時は live quota で埋める(既知 agent のみ)。
++			filledFromQuota := false
++			agents := make([]agentparallel.Agent, 0, len(in.Agents))
++			for _, a := range in.Agents {
++				name := strings.TrimSpace(a.Name)
++				if name == "" {
++					return nil, &ToolError{Code: "invalid_input", Message: "agent name must not be empty"}
++				}
++				tier, ok := parseTier(a.Tier)
++				if !ok {
++					return nil, &ToolError{Code: "invalid_input",
++						Message: fmt.Sprintf("agent %q: unknown tier %q (use any/cheap/mid/strong)", name, a.Tier)}
++				}
++				capPct := 100
++				if a.CapacityPercent != nil {
++					capPct = *a.CapacityPercent
++				} else if d.QuotaMonitor != nil {
++					if qa, err := quotamonitor.AgentFromString(name); err == nil {
++						if st, err := d.QuotaMonitor.Status(qa); err == nil {
++							capPct = st.RemainingPercent
++							filledFromQuota = true
++						}
++					}
++				}
++				agents = append(agents, agentparallel.Agent{
++					Name:           name,
++					Tier:           tier,
++					CapacityPct:    capPct,
++					MaxConcurrency: a.MaxConcurrency,
++				})
++			}
++
++			plan := agentparallel.PlanDataParallel(tasks, agents, in.GlobalConcurrency)
++			if filledFromQuota {
++				plan.Notes = append(plan.Notes,
++					"some agent capacities were filled from live quotamonitor quota (omitted capacity_percent)")
++			}
++			return plan, nil
++		},
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_parallel_test.go b/yagura-v0.35.0/internal/mcp/tools_parallel_test.go
+new file mode 100644
+index 0000000..c469356
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_parallel_test.go
+@@ -0,0 +1,146 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/shizukutanaka/yagura/internal/agentparallel"
++	"github.com/shizukutanaka/yagura/internal/quotamonitor"
++)
++
++// planFromResult は tool Handler の戻り値を agentparallel.Plan に変換する
++// (Handler は値を直接返すが、JSON 往復で client が見る形と一致させて検証する)。
++func planFromResult(t *testing.T, v any) agentparallel.Plan {
++	t.Helper()
++	b, err := json.Marshal(v)
++	if err != nil {
++		t.Fatalf("marshal: %v", err)
++	}
++	var p agentparallel.Plan
++	if err := json.Unmarshal(b, &p); err != nil {
++		t.Fatalf("unmarshal: %v", err)
++	}
++	return p
++}
++
++func TestParallelPlan_TaskCountFanOut(t *testing.T) {
++	tool := buildParallelPlanTool(newDeps(t))
++	res := mustCall(t, tool, map[string]any{
++		"task_count": 6,
++		"agents": []map[string]any{
++			{"name": "a", "tier": "mid", "capacity_percent": 100, "max_concurrency": 3},
++			{"name": "b", "tier": "mid", "capacity_percent": 100, "max_concurrency": 3},
++		},
++	})
++	p := planFromResult(t, res)
++	if p.Strategy != "data" || !p.Barrier {
++		t.Errorf("expected data strategy with barrier, got %+v", p)
++	}
++	if p.FanOutWidth != 2 {
++		t.Errorf("expected fan-out 2, got %d", p.FanOutWidth)
++	}
++	total := 0
++	for _, a := range p.Assignments {
++		total += len(a.Tasks)
++	}
++	if total != 6 {
++		t.Errorf("all 6 synthesized tasks must be assigned, got %d", total)
++	}
++}
++
++func TestParallelPlan_TierAliasRouting(t *testing.T) {
++	// opus/haiku aliases + a strong task must land on the opus-tier agent.
++	tool := buildParallelPlanTool(newDeps(t))
++	res := mustCall(t, tool, map[string]any{
++		"tasks": []map[string]any{
++			{"id": "hard", "min_tier": "opus"},
++			{"id": "easy"},
++		},
++		"agents": []map[string]any{
++			{"name": "cheap", "tier": "haiku", "capacity_percent": 100},
++			{"name": "strong", "tier": "opus", "capacity_percent": 100},
++		},
++	})
++	p := planFromResult(t, res)
++	for _, a := range p.Assignments {
++		if a.Agent == "cheap" {
++			for _, id := range a.Tasks {
++				if id == "hard" {
++					t.Error("strong task routed to haiku-tier agent")
++				}
++			}
++		}
++	}
++	if len(p.Unassigned) != 0 {
++		t.Errorf("nothing should be unassigned, got %+v", p.Unassigned)
++	}
++}
++
++func TestParallelPlan_QuotaFill(t *testing.T) {
++	// capacity_percent omitted for a known agent → filled from live quotamonitor.
++	mon := quotamonitor.New()
++	if err := mon.Report(quotamonitor.AgentClaudeCode, 10, "manual", time.Time{}, time.Time{}); err != nil {
++		t.Fatal(err)
++	}
++	if err := mon.Report(quotamonitor.AgentWindsurf, 90, "manual", time.Time{}, time.Time{}); err != nil {
++		t.Fatal(err)
++	}
++	d := newDeps(t)
++	d.QuotaMonitor = mon
++	tool := buildParallelPlanTool(d)
++	res := mustCall(t, tool, map[string]any{
++		"task_count": 10,
++		"agents": []map[string]any{
++			{"name": "claude_code", "tier": "strong"}, // capacity omitted → 10
++			{"name": "windsurf", "tier": "mid"},       // capacity omitted → 90
++		},
++	})
++	p := planFromResult(t, res)
++	// windsurf has 9x the live quota, so it should carry the bulk.
++	var cc, ws int
++	for _, a := range p.Assignments {
++		switch a.Agent {
++		case "claude_code":
++			cc = len(a.Tasks)
++		case "windsurf":
++			ws = len(a.Tasks)
++		}
++	}
++	if ws <= cc {
++		t.Errorf("higher live-quota agent (windsurf) should carry more: ws=%d cc=%d", ws, cc)
++	}
++	foundNote := false
++	for _, n := range p.Notes {
++		if strings.Contains(n, "live quotamonitor quota") {
++			foundNote = true
++		}
++	}
++	if !foundNote {
++		t.Errorf("expected a note about quota fill, got %+v", p.Notes)
++	}
++}
++
++func TestParallelPlan_Validation(t *testing.T) {
++	tool := buildParallelPlanTool(newDeps(t))
++	cases := []struct {
++		name string
++		args map[string]any
++	}{
++		{"no agents", map[string]any{"task_count": 3}},
++		{"no tasks", map[string]any{"agents": []map[string]any{{"name": "a", "tier": "mid", "capacity_percent": 100}}}},
++		{"bad tier", map[string]any{"task_count": 1, "agents": []map[string]any{{"name": "a", "tier": "ultra"}}}},
++		{"bad strategy", map[string]any{"task_count": 1, "strategy": "pipeline", "agents": []map[string]any{{"name": "a", "tier": "mid"}}}},
++		{"task_count too big", map[string]any{"task_count": maxSynthTasks + 1, "agents": []map[string]any{{"name": "a", "tier": "mid"}}}},
++	}
++	for _, c := range cases {
++		t.Run(c.name, func(t *testing.T) {
++			b, _ := json.Marshal(c.args)
++			if _, err := tool.Handler(context.Background(), b); err == nil {
++				t.Errorf("%s: expected error, got nil", c.name)
++			}
++		})
++	}
++}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_test.go b/yagura-v0.35.0/internal/mcp/tools_test.go
 index 31ea232..e4a7a4c 100644
 --- a/yagura-v0.35.0/internal/mcp/tools_test.go
