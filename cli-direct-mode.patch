@@ -1,8 +1,8 @@
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..1d11c10 100644
+index 9b29eec..ab18530 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,85 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,96 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -72,6 +72,17 @@ index 9b29eec..1d11c10 100644
 +  `.claude/workflows`)配下の `*.js` / `*.mjs` を再帰走査(`--json` /
 +  `--flagged-only`)。skill-audit と同じく disk 走査なので CLI 側に置き、MCP の
 +  tool 数(46)は不変。heuristic のみ(LLM 判定は client 側、ADR-0001 準拠)。
++- **CLI `yagura settings-audit`: settings.json lint**(`internal/harness/
++  settings_audit.go`)。Boris Cherny の Claude Code customization ガイドが説く
++  security/sharing best practice を `.claude/settings.json` に対して構造ベースで
++  検査する。`AuditSettings`(strict JSON parse)が、(1) `permissions` block 不在、
++  (2) 空の deny list、(3) deny が `rm -rf` を塞いでいない、(4) `Bash(*)` 等の無制限
++  allow(4 層防御を骨抜きにする)を検出し、hooks/default-agent の有無も報告
++  (score 0-100 + Issues/Suggestions)。`--dir`(既定 `.claude`)直下の
++  `settings.json` / `settings.local.json` を走査(`--json`)。これで `.claude/`
++  artifact の audit 四点セット(skill / subagent / workflow / settings)が揃う。
++  yagura 自身の settings.json は 100 点(deny + gofmt/go-vet hooks)。disk 走査
++  なので CLI 側に置き、MCP の tool 数(46)は不変。
 +
 +### What's not yet
 +
@@ -103,10 +114,10 @@ index 986f84e..e3ac25e 100644
  
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..4fcb983
+index 0000000..eda2cce
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,911 @@
+@@ -0,0 +1,971 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -168,7 +179,7 @@ index 0000000..4fcb983
 +	"list": true, "get": true, "search": true, "stats": true,
 +	"register": true, "update": true, "unregister": true,
 +	"sbom": true, "secretscan": true, "gha-audit": true, "pin-drift": true,
-+	"skill-audit": true, "workflow-audit": true,
++	"skill-audit": true, "workflow-audit": true, "settings-audit": true,
 +}
 +
 +// runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -201,6 +212,8 @@ index 0000000..4fcb983
 +		err = cliSkillAudit(args, stdout, stderr)
 +	case "workflow-audit":
 +		err = cliWorkflowAudit(args, stdout, stderr)
++	case "settings-audit":
++		err = cliSettingsAudit(args, stdout, stderr)
 +	default:
 +		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 +		return 2
@@ -849,6 +862,64 @@ index 0000000..4fcb983
 +	return paths, nil
 +}
 +
++// settingsAuditEntry は 1 つの settings.json の監査結果(path 付き)。
++type settingsAuditEntry struct {
++	Path string `json:"path"`
++	harness.SettingsAuditResult
++}
++
++// cliSettingsAudit は dir 配下の settings.json / settings.local.json を走査し、
++// Boris の customization ガイドが説く security/sharing best practice(permissions
++// を check-in、破壊的コマンドを deny、無制限 allow を避ける)を構造ベースで検査する。
++// skill-audit / workflow-audit と同じく disk 走査なので CLI 側に置き、MCP tool は
++// 増やさない。
++func cliSettingsAudit(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("settings-audit", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	dir := fs.String("dir", ".claude", "directory to scan for settings.json / settings.local.json")
++	if err := fs.Parse(args); err != nil {
++		return errUsage
++	}
++	paths := findSettingsFiles(*dir)
++	entries := make([]settingsAuditEntry, 0, len(paths))
++	flaggedCount := 0
++	for _, p := range paths {
++		data, err := os.ReadFile(p)
++		if err != nil {
++			return fmt.Errorf("read %s: %w", p, err)
++		}
++		res := harness.AuditSettings(string(data))
++		if len(res.Issues) > 0 {
++			flaggedCount++
++		}
++		entries = append(entries, settingsAuditEntry{Path: p, SettingsAuditResult: res})
++	}
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{
++			"scanned":  len(paths),
++			"flagged":  flaggedCount,
++			"settings": entries,
++		})
++	}
++	humanSettingsAudit(stdout, entries, len(paths), flaggedCount)
++	return nil
++}
++
++// findSettingsFiles は dir 直下の settings.json / settings.local.json のうち実在
++// するものを path 昇順で返す(再帰しない — settings は scope ごとに dir 直下に置く)。
++// dir が無ければ空(エラーにしない)。
++func findSettingsFiles(dir string) []string {
++	var paths []string
++	for _, name := range []string{"settings.json", "settings.local.json"} {
++		p := filepath.Join(dir, name)
++		if _, err := os.Stat(p); err == nil {
++			paths = append(paths, p)
++		}
++	}
++	sort.Strings(paths)
++	return paths
++}
++
 +// ─── shared helpers ──────────────────────────────────────────
 +
 +// filterProjects は stage/tag/language/query で registry を絞り込む。
@@ -1020,10 +1091,10 @@ index 0000000..4fcb983
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
 new file mode 100644
-index 0000000..da45a3a
+index 0000000..5524e9f
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
-@@ -0,0 +1,367 @@
+@@ -0,0 +1,395 @@
 +// cli_format.go: output formatters for CLI direct mode (v0.35.0).
 +//
 +// 2 つの出力経路:
@@ -1376,6 +1447,34 @@ index 0000000..da45a3a
 +	return strings.Join(parts, "+")
 +}
 +
++// ─── settings-audit ──────────────────────────────────────────
++
++func humanSettingsAudit(w io.Writer, entries []settingsAuditEntry, scanned, flagged int) {
++	fmt.Fprintf(w, "scanned: %d   flagged: %d\n", scanned, flagged)
++	if len(entries) == 0 {
++		return
++	}
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	fmt.Fprintln(tw, "SCORE\tDENY\tHOOKS\tPATH")
++	for _, e := range entries {
++		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", e.Score, yesNo(e.HasDenyList), yesNo(e.HasHooks), e.Path)
++	}
++	_ = tw.Flush()
++	// issue は path ごとに列挙(人間が判断・修正できるように)。
++	for _, e := range entries {
++		for _, iss := range e.Issues {
++			fmt.Fprintf(w, "  %s: %s\n", e.Path, iss)
++		}
++	}
++}
++
++func yesNo(b bool) string {
++	if b {
++		return "yes"
++	}
++	return "no"
++}
++
 +// ─── small helpers ───────────────────────────────────────────
 +
 +func dash(s string) string {
@@ -1393,10 +1492,10 @@ index 0000000..da45a3a
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
 new file mode 100644
-index 0000000..b68b798
+index 0000000..1484f10
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
-@@ -0,0 +1,408 @@
+@@ -0,0 +1,452 @@
 +package main
 +
 +import (
@@ -1805,8 +1904,52 @@ index 0000000..b68b798
 +		t.Errorf("missing dir: code=%d out=%q", code, mout)
 +	}
 +}
++
++func TestCLI_SettingsAudit(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	dir := t.TempDir()
++	claudeDir := filepath.Join(dir, ".claude")
++	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	// settings.json: clean (deny guards rm -rf, has hooks) -> no issues.
++	clean := `{"permissions":{"deny":["Bash(rm -rf *)"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"go vet ./..."}]}]}}`
++	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(clean), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	// settings.local.json: no permissions + unrestricted allow -> flagged.
++	local := `{"permissions":{"allow":["Bash(*)"]}}`
++	if err := os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte(local), 0o644); err != nil {
++		t.Fatal(err)
++	}
++
++	_, out, _ := runCLICapture(t, "settings-audit", "--dir", claudeDir, "--json")
++	var r struct {
++		Scanned  int `json:"scanned"`
++		Flagged  int `json:"flagged"`
++		Settings []struct {
++			Path        string `json:"path"`
++			Score       int    `json:"score"`
++			HasDenyList bool   `json:"has_deny_list"`
++		} `json:"settings"`
++	}
++	if err := json.Unmarshal([]byte(out), &r); err != nil {
++		t.Fatalf("json: %v\n%s", err, out)
++	}
++	if r.Scanned != 2 {
++		t.Errorf("expected scanned=2, got %d", r.Scanned)
++	}
++	if r.Flagged != 1 {
++		t.Errorf("expected flagged=1 (local only), got %d", r.Flagged)
++	}
++
++	// missing dir -> 0, exit 0.
++	if code, mout, _ := runCLICapture(t, "settings-audit", "--dir", filepath.Join(dir, "nope")); code != 0 || !strings.Contains(mout, "scanned: 0") {
++		t.Errorf("missing dir: code=%d out=%q", code, mout)
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..f7bfbdb 100644
+index bd1fe39..8c7dd40 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -57,7 +57,7 @@ import (
@@ -1829,7 +1972,7 @@ index bd1fe39..f7bfbdb 100644
  	}
  	if err := run(); err != nil {
  		fmt.Fprintf(stderr, "yagura: %v\n", err)
-@@ -128,6 +132,15 @@ Usage:
+@@ -128,6 +132,16 @@ Usage:
    yagura secret get <name>     Decrypt and print <name> to stdout
    yagura secret delete <name>  Remove <name>
  
@@ -1839,13 +1982,14 @@ index bd1fe39..f7bfbdb 100644
 +  yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
 +  yagura skill-audit                       Audit .claude/skills (score + retire)
 +  yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)
++  yagura settings-audit                    Audit .claude/settings.json (permissions/hooks)
 +  Add --json to any of the above for machine-readable output.
 +  pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
 +
  Set passphrase via YAGURA_SECRET_PASSPHRASE for set/get.
  Configuration is via environment variables. See documentation.
  `
-@@ -152,11 +165,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
+@@ -152,11 +166,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
  		return nil
  	}
  
@@ -1860,7 +2004,7 @@ index bd1fe39..f7bfbdb 100644
  	if err != nil {
  		return fmt.Errorf("init store: %w", err)
  	}
-@@ -239,15 +253,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
+@@ -239,15 +254,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
  // この関数は GITHUB_TOKEN を読まない — verify は通常運用とは独立して
  // オフラインでも実行できる(disaster recovery を意識)。
  func verifyAudit(out io.Writer) error {
@@ -2090,6 +2234,297 @@ index fbc29eb..766c691 100644
  func TestAuditSkill_VagueDescription(t *testing.T) {
  	content := `---
  name: helper
+diff --git a/yagura-v0.35.0/internal/harness/settings_audit.go b/yagura-v0.35.0/internal/harness/settings_audit.go
+new file mode 100644
+index 0000000..60bf69d
+--- /dev/null
++++ b/yagura-v0.35.0/internal/harness/settings_audit.go
+@@ -0,0 +1,152 @@
++// settings_audit.go: .claude/settings.json の heuristic 評価。
++//
++// Boris Cherny(Claude Code 作者)の customization ガイド準拠。settings.json は
++// 9 つの customization 軸を束ねる設定基盤で、特に security の要:
++//
++//   - permissions(allow/deny)を git に check-in してチーム共通の policy にする
++//   - deny で破壊的コマンド(`Bash(rm -rf *)` 等)を必ず塞ぐ
++//   - `Bash(*)` のような無制限 allow は 4 層防御(prompt-injection 検出 /
++//     static 解析 / sandbox / human oversight)を骨抜きにするので避ける
++//   - `--dangerously-skip-permissions` ではなく sandbox + permissions を使う
++//   - hooks で formatter 自動実行などの規約を deterministic に強制する
++//
++// 全 check は heuristic(構造ベース)。AuditSkill / AuditSubagent / AuditWorkflow
++// と同じ shape(Score + Issues + Suggestions)で揃える。settings.json は strict
++// JSON なので stdlib encoding/json で parse する(ADR-0001: 依存ゼロ)。
++package harness
++
++import (
++	"encoding/json"
++	"regexp"
++	"strings"
++)
++
++// SettingsAuditResult は .claude/settings.json 評価結果。
++//
++// Score は 0-100:
++//
++//	90+ : team-shareable な security policy が整っている
++//	70-89: usable, deny/allow に改善余地
++//	50-69: permissions が緩い / 破壊的コマンド未ガード
++//	<50 : permissions 不在 or 無制限 allow(4 層防御が機能しない)
++type SettingsAuditResult struct {
++	Score                int      `json:"score"`
++	ValidJSON            bool     `json:"valid_json"`
++	HasPermissions       bool     `json:"has_permissions"`
++	HasDenyList          bool     `json:"has_deny_list"`
++	GuardsDestructive    bool     `json:"guards_destructive"`     // deny が rm -rf 等を塞ぐ
++	HasUnrestrictedAllow bool     `json:"has_unrestricted_allow"` // Bash(*) 等
++	HasHooks             bool     `json:"has_hooks"`
++	HasDefaultAgent      bool     `json:"has_default_agent"` // settings.agent(lesser-known)
++	Issues               []string `json:"issues,omitempty"`
++	Suggestions          []string `json:"suggestions,omitempty"`
++}
++
++// settingsDoc は settings.json の audit 対象フィールドのみを抽出する。
++type settingsDoc struct {
++	Permissions *struct {
++		Allow []string `json:"allow"`
++		Deny  []string `json:"deny"`
++		Ask   []string `json:"ask"`
++	} `json:"permissions"`
++	Hooks map[string]json.RawMessage `json:"hooks"`
++	Agent string                     `json:"agent"`
++}
++
++// reDestructiveGuard は deny エントリが rm -rf 系を塞いでいるか判定する。
++var reDestructiveGuard = regexp.MustCompile(`(?i)rm\s+-[a-z]*[rf]`)
++
++// reUnrestrictedBash は `Bash(*)` / `Bash(:*)` / `Bash()` 等の無制限 Bash allow を
++// 検出する(inner が空 / コロン / アスタリスク / 空白のみ)。Edit(/docs/**) のような
++// scope 付き rule は対象外(記事が推奨する正しい形)。
++var reUnrestrictedBash = regexp.MustCompile(`^Bash\s*\(\s*[:*\s]*\)$`)
++
++// AuditSettings は .claude/settings.json の content を heuristic で評価する。
++//
++// 入力:
++//
++//	content: settings.json 全テキスト(strict JSON)
++//
++// 出力:
++//
++//	SettingsAuditResult。Issues/Suggestions は action-oriented。
++func AuditSettings(content string) SettingsAuditResult {
++	r := SettingsAuditResult{Score: 100}
++
++	var doc settingsDoc
++	if err := json.Unmarshal([]byte(content), &doc); err != nil {
++		// parse 不能 = Claude Code 自身が設定を読めない(=全 customization 不発)。
++		r.ValidJSON = false
++		r.Score = 0
++		r.Issues = append(r.Issues, "invalid JSON — Claude Code cannot load this settings file at all")
++		r.Suggestions = append(r.Suggestions,
++			"settings.json must be strict JSON (no comments, no trailing commas). Validate before committing.")
++		return r
++	}
++	r.ValidJSON = true
++
++	r.HasHooks = len(doc.Hooks) > 0
++	r.HasDefaultAgent = strings.TrimSpace(doc.Agent) != ""
++
++	// permissions 不在 → check-in できる security policy が無い。
++	if doc.Permissions == nil {
++		r.Score -= 30
++		r.Issues = append(r.Issues, "no 'permissions' block — the 4-layer defense has no allow/deny policy to enforce")
++		r.Suggestions = append(r.Suggestions,
++			"Add a permissions block and check it in, so the whole team shares one policy (Boris). "+
++				"e.g. allow: [\"Bash(go test *)\"], deny: [\"Bash(rm -rf *)\"].")
++	} else {
++		r.HasPermissions = true
++
++		// deny 不在 / 空 → 破壊的コマンドが素通り。
++		r.HasDenyList = len(doc.Permissions.Deny) > 0
++		if !r.HasDenyList {
++			r.Score -= 20
++			r.Issues = append(r.Issues, "empty deny list — destructive commands are not guarded")
++			r.Suggestions = append(r.Suggestions,
++				"Add deny rules for destructive commands, e.g. Bash(rm -rf *), Bash(git push --force*).")
++		} else {
++			// deny はあるが rm -rf 系を塞いでいるか。
++			for _, d := range doc.Permissions.Deny {
++				if reDestructiveGuard.MatchString(d) {
++					r.GuardsDestructive = true
++					break
++				}
++			}
++			if !r.GuardsDestructive {
++				r.Score -= 10
++				r.Issues = append(r.Issues, "deny list does not guard rm -rf — the canonical destructive command")
++				r.Suggestions = append(r.Suggestions,
++					"Add Bash(rm -rf *) (or equivalent) to the deny list.")
++			}
++		}
++
++		// 無制限 allow(Bash(*) 等)→ static 解析 / sandbox prompt を骨抜きにする。
++		for _, a := range doc.Permissions.Allow {
++			t := strings.TrimSpace(a)
++			if t == "*" || t == "Bash" || reUnrestrictedBash.MatchString(t) {
++				r.HasUnrestrictedAllow = true
++				break
++			}
++		}
++		if r.HasUnrestrictedAllow {
++			r.Score -= 15
++			r.Issues = append(r.Issues, "unrestricted Bash allow (e.g. Bash(*)) — this defeats static analysis and sandbox prompts")
++			r.Suggestions = append(r.Suggestions,
++				"Scope allow rules to concrete commands, e.g. Bash(go test *) / Bash(npm test *), not a blanket Bash(*).")
++		}
++	}
++
++	// hooks 不在 → 規約を deterministic に強制できていない(security ではないので suggestion のみ)。
++	if !r.HasHooks {
++		r.Score -= 5
++		r.Suggestions = append(r.Suggestions,
++			"No hooks configured. Consider a format-on-edit hook (gofmt/prettier) or a Stop-time check "+
++				"to enforce conventions deterministically (Boris §Hooks).")
++	}
++
++	if r.Score < 0 {
++		r.Score = 0
++	}
++	return r
++}
+diff --git a/yagura-v0.35.0/internal/harness/settings_audit_test.go b/yagura-v0.35.0/internal/harness/settings_audit_test.go
+new file mode 100644
+index 0000000..ec1ca30
+--- /dev/null
++++ b/yagura-v0.35.0/internal/harness/settings_audit_test.go
+@@ -0,0 +1,127 @@
++package harness
++
++import (
++	"strings"
++	"testing"
++)
++
++// settingsIssue は Issues のいずれかが substr を含むか(workflow_audit_test の
++// hasIssueContaining と同じ用途だが、test バイナリ内で名前衝突しないよう別名)。
++func settingsIssue(issues []string, substr string) bool {
++	for _, i := range issues {
++		if strings.Contains(i, substr) {
++			return true
++		}
++	}
++	return false
++}
++
++// pristineSettings は yagura 自身の .claude/settings.json 相当(deny + hooks)。
++const pristineSettings = `{
++  "permissions": {
++    "deny": ["Bash(rm -rf*)", "Bash(git push --force*)"],
++    "ask": ["Write", "Edit", "Bash"]
++  },
++  "hooks": {
++    "PostToolUse": [
++      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "gofmt -w x"}]}
++    ]
++  }
++}`
++
++func TestAuditSettings_Pristine(t *testing.T) {
++	r := AuditSettings(pristineSettings)
++	if !r.ValidJSON {
++		t.Fatal("should be valid JSON")
++	}
++	if !r.HasPermissions || !r.HasDenyList || !r.GuardsDestructive || !r.HasHooks {
++		t.Errorf("pristine settings should have permissions+deny+destructive-guard+hooks: %+v", r)
++	}
++	if r.HasUnrestrictedAllow {
++		t.Error("pristine settings has no unrestricted allow")
++	}
++	if r.Score < 90 {
++		t.Errorf("pristine settings should score >=90, got %d (issues: %v)", r.Score, r.Issues)
++	}
++}
++
++func TestAuditSettings_InvalidJSON(t *testing.T) {
++	r := AuditSettings("{ not valid json,, }")
++	if r.ValidJSON {
++		t.Error("should detect invalid JSON")
++	}
++	if r.Score != 0 {
++		t.Errorf("invalid JSON should score 0, got %d", r.Score)
++	}
++	if !settingsIssue(r.Issues, "invalid JSON") {
++		t.Errorf("expected invalid-JSON issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditSettings_NoPermissions(t *testing.T) {
++	r := AuditSettings(`{"hooks": {"Stop": []}}`)
++	if r.HasPermissions {
++		t.Error("should report no permissions block")
++	}
++	if !settingsIssue(r.Issues, "no 'permissions' block") {
++		t.Errorf("expected no-permissions issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditSettings_EmptyDeny(t *testing.T) {
++	r := AuditSettings(`{"permissions": {"allow": ["Bash(go test *)"]}, "hooks": {"Stop": []}}`)
++	if r.HasDenyList {
++		t.Error("should report empty deny list")
++	}
++	if !settingsIssue(r.Issues, "empty deny list") {
++		t.Errorf("expected empty-deny issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditSettings_DenyWithoutRmGuard(t *testing.T) {
++	r := AuditSettings(`{"permissions": {"deny": ["Bash(git push --force*)"]}, "hooks": {"Stop": []}}`)
++	if !r.HasDenyList {
++		t.Error("should detect a deny list")
++	}
++	if r.GuardsDestructive {
++		t.Error("deny without rm -rf should not count as guarding destructive")
++	}
++	if !settingsIssue(r.Issues, "rm -rf") {
++		t.Errorf("expected rm -rf guard issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditSettings_UnrestrictedAllow(t *testing.T) {
++	r := AuditSettings(`{"permissions": {"allow": ["Bash(*)"], "deny": ["Bash(rm -rf *)"]}, "hooks": {"Stop": []}}`)
++	if !r.HasUnrestrictedAllow {
++		t.Error("should detect unrestricted Bash allow")
++	}
++	if !settingsIssue(r.Issues, "unrestricted Bash allow") {
++		t.Errorf("expected unrestricted-allow issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditSettings_ScopedAllowOK(t *testing.T) {
++	// Edit(/docs/**) や Bash(go test *) のような scope 付き allow は flag しない。
++	r := AuditSettings(`{"permissions": {"allow": ["Edit(/docs/**)", "Bash(go test *)"], "deny": ["Bash(rm -rf *)"]}, "hooks": {"Stop": []}}`)
++	if r.HasUnrestrictedAllow {
++		t.Errorf("scoped allow rules should not be flagged: %+v", r)
++	}
++}
++
++func TestAuditSettings_NoHooksSuggestion(t *testing.T) {
++	r := AuditSettings(`{"permissions": {"deny": ["Bash(rm -rf *)"]}}`)
++	if r.HasHooks {
++		t.Error("should report no hooks")
++	}
++	if !settingsIssue(r.Suggestions, "format-on-edit hook") {
++		t.Errorf("expected hooks suggestion, got %v", r.Suggestions)
++	}
++}
++
++func TestAuditSettings_DefaultAgent(t *testing.T) {
++	r := AuditSettings(`{"agent": "yagura-reviewer", "permissions": {"deny": ["Bash(rm -rf *)"]}, "hooks": {"Stop": []}}`)
++	if !r.HasDefaultAgent {
++		t.Error("should detect default agent field")
++	}
++}
 diff --git a/yagura-v0.35.0/internal/harness/workflow_audit.go b/yagura-v0.35.0/internal/harness/workflow_audit.go
 new file mode 100644
 index 0000000..e0d9c3f
