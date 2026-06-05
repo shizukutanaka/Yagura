@@ -193,10 +193,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..e45ef5c 100644
+index 9b29eec..463fd9f 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,211 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,225 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -390,6 +390,20 @@ index 9b29eec..e45ef5c 100644
 +  ドッグフード: `.claude`(4 files)は 0 件でクリーン。一方 README/windsurf.md の
 +  example に残っていた実 home パス(`/home/m/...`)を検出 → placeholder
 +  (`/home/you/...`)へ修正(scanner 自身の suggestion を適用)。回帰テスト 10 本。
++- **監査ファミリを MCP サーフェスでも提供(self-review の改善点 #2)**
++  (`internal/mcp/tools_audit.go`)。これまで `workflow-audit` / `settings-audit` /
++  `agent-config-audit` / `plugin-audit` / `publicity-scan` は CLI 専用で、MCP 駆動の
++  agent から叩けなかった(`yagura_skill_audit` / `yagura_subagent_audit` は既に MCP に
++  あったのに非対称)。既存 pure 関数(`harness.AuditWorkflow/Settings/AgentConfig/
++  PluginManifest`, `publicityscan.Scan`)を content-based で wrap した 5 tool を追加:
++  `yagura_workflow_audit` / `yagura_settings_audit` / `yagura_agent_config_audit` /
++  `yagura_plugin_audit` / `yagura_publicity_scan`。これで監査7種が CLI と MCP の両
++  サーフェスで揃う。tool 数 48 → **53**(`integration_test` / `MCP_TOOLS.md` 更新)。
++  新 package なし、stdlib のみ。
++- **ドキュメント drift 修正(self-review の改善点 #1)**。`CLAUDE.md` の
++  「31 internal packages」→ 42、「38 tool definitions」→ 53 に更新し、今期追加の
++  package(`agentparallel` / `riskreason` / `publicityscan`)を Map に追記、
++  `harness` の説明を audit ファミリ全体に更新。README / QUICKSTART のツール数も 53 に統一。
 +
 +### What's not yet
 +
@@ -408,8 +422,47 @@ index 9b29eec..e45ef5c 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
+diff --git a/yagura-v0.35.0/CLAUDE.md b/yagura-v0.35.0/CLAUDE.md
+index bc406e1..3c412de 100644
+--- a/yagura-v0.35.0/CLAUDE.md
++++ b/yagura-v0.35.0/CLAUDE.md
+@@ -21,18 +21,19 @@ cortex flywheel 4 段階すべてを単体で機械化:
+ - マルチエージェント orchestrator(MCP server 一品)
+ - code generation tool(yagura は audit/orchestrate のみ)
+ 
+-## Map — 31 internal packages
++## Map — 42 internal packages
+ 
+ ### Core orchestration
+ - `internal/registry` — 23+ projects の inventory CRUD
+ - `internal/project` — Project struct + validation
+-- `internal/mcp` — MCP server + 38 tool definitions
++- `internal/mcp` — MCP server + 53 tool definitions
+ - `internal/audit` — JSONL audit log + replay
+ - `internal/config` — env / flag 設定
+ 
+ ### Quality guides (pre-emptive)
+ - `internal/qualitycheck` — code lint (as any, TODO/FIXME 等)
+ - `internal/secretscan` — gitleaks-like secret 検出
++- `internal/publicityscan` — 公開前 leak 検出(home パス/内部 host/private IP/email)★ v0.35
+ - `internal/sbom` — CycloneDX SBOM 生成
+ - `internal/ghaaudit` — GitHub Actions workflow audit
+ - `internal/pindrift` — 依存 pin 漏れ検出
+@@ -49,7 +50,11 @@ cortex flywheel 4 段階すべてを単体で機械化:
+ - `internal/handoff` — handoff session management
+ - `internal/agentlauncher` — agent process spawn
+ - `internal/workspace` — session save/load
+-- `internal/harness` — Claude Code harness skill audit
++- `internal/harness` — .claude/ artifact 監査(skill/subagent/workflow/settings/agent-config/plugin)
++
++### Reasoning / multi-AI (★ v0.35)
++- `internal/agentparallel` — 複数 AI への deterministic な並列 dispatch planner(LPT)
++- `internal/riskreason` — Cyber Risk Reasoning Layer(CVSS+資産+到達性+攻撃性の複合判断)
+ 
+ ### Graph / dependencies
+ - `internal/projectgraph` — depends_on graph(neighbors / impact / stats)
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..fb14324 100644
+index 986f84e..c592796 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -417,7 +470,7 @@ index 986f84e..fb14324 100644
  **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
  
 -Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
-+Status: **v0.35.0** — 48 MCP tools, 42 internal packages, CLI direct mode, 30 consecutive reproducible releases.
++Status: **v0.35.0** — 53 MCP tools, 42 internal packages, CLI direct mode, 30 consecutive reproducible releases.
  
  ---
  
@@ -426,7 +479,7 @@ index 986f84e..fb14324 100644
  │  ┌────────────────────────────────────────────────┐  │
  │  │  yagura daemon (single binary, ~9 MB)          │  │
 -│  │  - 46 MCP tools                                │  │
-+│  │  - 48 MCP tools                                │  │
++│  │  - 53 MCP tools                                │  │
  │  │  - HTTP hook receiver                          │  │
  │  │  - Prometheus /metrics                         │  │
  │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -466,7 +519,7 @@ index 986f84e..fb14324 100644
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
  
 -## MCP tools (46 total)
-+## MCP tools (48 total)
++## MCP tools (53 total)
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -2687,15 +2740,18 @@ index 0000000..84f7971
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
-index cfb6e51..9dad632 100644
+index cfb6e51..6422e05 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
 +++ b/yagura-v0.35.0/cmd/yagura/integration_test.go
-@@ -164,6 +164,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
+@@ -164,6 +164,11 @@ func TestIntegration_MCPToolsList(t *testing.T) {
  		// v0.27 — cortex flywheel ④ Alert-Fix
  		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
  		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",
 +		// v0.35 — 複数 AI を使った処理の並列化 + Cyber Risk Reasoning Layer
 +		"yagura_parallel_plan", "yagura_risk_triage",
++		// v0.35 — .claude/ artifact 監査(content-based, MCP surface)
++		"yagura_workflow_audit", "yagura_settings_audit", "yagura_agent_config_audit",
++		"yagura_plugin_audit", "yagura_publicity_scan",
  	}
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
@@ -2794,14 +2850,14 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..a088e79 100644
+index 689c182..292e163 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
  # MCP tools reference
  
 -Generated from a live yagura — **46 tools**.
-+Generated from a live yagura — **48 tools**.
++Generated from a live yagura — **53 tools**.
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -2810,7 +2866,7 @@ index 689c182..a088e79 100644
  - [Harness (guides)](#harness-guides) (8)
  - [Inventory](#inventory) (8)
 -- [Misc](#misc) (8)
-+- [Misc](#misc) (10)
++- [Misc](#misc) (15)
  - [Observability](#observability) (4)
  - [Plan tracking](#plan-tracking) (2)
  - [Security (sensors)](#security-sensors) (10)
@@ -2846,7 +2902,26 @@ index 689c182..a088e79 100644
  | `query` (string) |  | slug/name/notes/tags を横断する部分一致 |
  | `stage` (string) |  | active / maintenance / paused / archived |
  | `tag` (string) |  | tag 完全一致 (大文字小文字無視) |
-@@ -329,6 +336,22 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -311,6 +318,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ 
+ ## Misc
+ 
++### `yagura_agent_config_audit`
++
++[G] OpenClaw-style openclaw.json audit: security + reliability + model refs.
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `content` (string) | ★ | full openclaw.json text |
++
++---
++
+ ### `yagura_dedupe_stats`
+ 
+ [S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.
+@@ -329,6 +348,46 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -2866,10 +2941,34 @@ index 689c182..a088e79 100644
 +
 +---
 +
++### `yagura_plugin_audit`
++
++[G] Claude Code plugin.json / marketplace.json audit (auto-detected).
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `content` (string) | ★ | full plugin.json or marketplace.json text |
++
++---
++
++### `yagura_publicity_scan`
++
++[S] Pre-publish leak scan: home paths, internal hosts, private IPs, emails.
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `content` (string) | ★ | text content to scan before publishing (SKILL.md, docs, diff) |
++
++---
++
  ### `yagura_quota_forecast`
  
  [S] Empty-time linreg forecast. Needs ≥3 samples.
-@@ -341,6 +364,23 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -341,6 +400,23 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -2893,7 +2992,45 @@ index 689c182..a088e79 100644
  ### `yagura_session_load`
  
  [S] Load handoff context. Null if none.
-@@ -576,7 +616,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -366,6 +442,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ 
+ ---
+ 
++### `yagura_settings_audit`
++
++[G] .claude/settings.json audit: permissions deny, unrestricted allow, hooks.
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `content` (string) | ★ | full settings.json text |
++
++---
++
+ ### `yagura_token_stats`
+ 
+ [S] Per-tool byte counts since daemon start.
+@@ -397,6 +485,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ 
+ ---
+ 
++### `yagura_workflow_audit`
++
++[G] Dynamic Workflow JS audit: token budget, /goal, quarantine, fan-out.
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `content` (string) | ★ | full workflow JavaScript source |
++
++---
++
+ ## Observability
+ 
+ ### `yagura_agent_status`
+@@ -576,7 +676,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -2903,7 +3040,7 @@ index 689c182..a088e79 100644
  **Arguments:**
  
 diff --git a/yagura-v0.35.0/docs/QUICKSTART.md b/yagura-v0.35.0/docs/QUICKSTART.md
-index 62e02cd..1e32a1b 100644
+index 62e02cd..38611d7 100644
 --- a/yagura-v0.35.0/docs/QUICKSTART.md
 +++ b/yagura-v0.35.0/docs/QUICKSTART.md
 @@ -177,7 +177,7 @@ The process drains for 5 seconds (`/readyz` returns 503) then shuts down gracefu
@@ -2911,7 +3048,7 @@ index 62e02cd..1e32a1b 100644
  ## What next?
  
 -- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 46 tools.
-+- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 48 tools.
++- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 53 tools.
  - [WINDOWS.md](WINDOWS.md) — Task Scheduler / NSSM / Windows service setup.
  - [ARCHITECTURE.md](../ARCHITECTURE.md) — internals and design rationale.
  - [security-spec.md](security-spec.md) — threat model.
@@ -5105,10 +5242,10 @@ index 0000000..ad2196b
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..fbf385c 100644
+index 939a67e..711534b 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
-@@ -188,6 +188,10 @@ func RegisterDefaultTools(s *Server, d Deps) {
+@@ -188,6 +188,16 @@ func RegisterDefaultTools(s *Server, d Deps) {
  	s.Register(buildHookStatsTool(s))
  	s.Register(buildProgressFileTool(d, s))
  	s.Register(buildInitShTool(d))
@@ -5116,10 +5253,16 @@ index 939a67e..fbf385c 100644
 +	s.Register(buildParallelPlanTool(d))
 +	// [v0.35.0] Cyber Risk Reasoning Layer(複合判断による脆弱性 triage)
 +	s.Register(buildRiskTriageTool(d))
++	// [v0.35.0] .claude/ artifact 監査を MCP からも(content-based)
++	s.Register(buildWorkflowAuditTool(d))
++	s.Register(buildSettingsAuditTool(d))
++	s.Register(buildAgentConfigAuditTool(d))
++	s.Register(buildPluginAuditTool(d))
++	s.Register(buildPublicityScanTool(d))
  }
  
  // ─── yagura_list ─────────────────────────────────────────────
-@@ -198,8 +202,8 @@ type listOut struct {
+@@ -198,8 +208,8 @@ type listOut struct {
  	Stage          string `json:"stage"`
  	Priority       int    `json:"priority"`
  	Language       string `json:"language,omitempty"`
@@ -5130,7 +5273,7 @@ index 939a67e..fbf385c 100644
  	CIStatus       string `json:"ci_status,omitempty"`
  	LatestVersion  string `json:"latest_version,omitempty"`
  	DaysSinceCommit int   `json:"days_since_commit"`
-@@ -245,7 +249,7 @@ type todayItem struct {
+@@ -245,7 +255,7 @@ type todayItem struct {
  func buildSecretScanTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_secretscan",
@@ -5139,7 +5282,7 @@ index 939a67e..fbf385c 100644
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
-@@ -766,7 +770,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+@@ -766,7 +776,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_skill_audit",
@@ -5148,6 +5291,148 @@ index 939a67e..fbf385c 100644
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
+diff --git a/yagura-v0.35.0/internal/mcp/tools_audit.go b/yagura-v0.35.0/internal/mcp/tools_audit.go
+new file mode 100644
+index 0000000..4d6f3b2
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_audit.go
+@@ -0,0 +1,82 @@
++// tools_audit.go: .claude/ artifact 監査を MCP からも叩けるようにする content-based tool 群。
++//
++// CLI(yagura workflow-audit 等)は disk を走査するが、MCP 駆動の agent は手元の
++// content を渡して監査したい。既存の yagura_skill_audit / yagura_subagent_audit と同じく
++// content を受けて pure な harness.AuditX / publicityscan.Scan を呼ぶだけの薄い wrapper。
++// これで監査ファミリ(skill / subagent / workflow / settings / agent-config / plugin /
++// publicity)が CLI と MCP の両サーフェスで揃う。
++
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++
++	"github.com/shizukutanaka/yagura/internal/harness"
++	"github.com/shizukutanaka/yagura/internal/publicityscan"
++)
++
++// contentAuditTool は「content 文字列を受けて任意の audit 関数を呼ぶ」共通ビルダー。
++func contentAuditTool(name, desc, contentDesc string, audit func(string) any) *Tool {
++	return &Tool{
++		Name:        name,
++		Description: desc,
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"content": map[string]any{"type": "string", "description": contentDesc},
++			},
++			"required": []string{"content"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Content string `json:"content"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if in.Content == "" {
++				return nil, &ToolError{Code: "invalid_input", Message: "content required"}
++			}
++			return audit(in.Content), nil
++		},
++	}
++}
++
++func buildWorkflowAuditTool(d Deps) *Tool {
++	return contentAuditTool("yagura_workflow_audit",
++		"[G] Dynamic Workflow JS audit: token budget, /goal, quarantine, fan-out.",
++		"full workflow JavaScript source",
++		func(c string) any { return harness.AuditWorkflow(c) })
++}
++
++func buildSettingsAuditTool(d Deps) *Tool {
++	return contentAuditTool("yagura_settings_audit",
++		"[G] .claude/settings.json audit: permissions deny, unrestricted allow, hooks.",
++		"full settings.json text",
++		func(c string) any { return harness.AuditSettings(c) })
++}
++
++func buildAgentConfigAuditTool(d Deps) *Tool {
++	return contentAuditTool("yagura_agent_config_audit",
++		"[G] OpenClaw-style openclaw.json audit: security + reliability + model refs.",
++		"full openclaw.json text",
++		func(c string) any { return harness.AuditAgentConfig(c) })
++}
++
++func buildPluginAuditTool(d Deps) *Tool {
++	return contentAuditTool("yagura_plugin_audit",
++		"[G] Claude Code plugin.json / marketplace.json audit (auto-detected).",
++		"full plugin.json or marketplace.json text",
++		func(c string) any { return harness.AuditPluginManifest(c) })
++}
++
++func buildPublicityScanTool(d Deps) *Tool {
++	return contentAuditTool("yagura_publicity_scan",
++		"[S] Pre-publish leak scan: home paths, internal hosts, private IPs, emails.",
++		"text content to scan before publishing (SKILL.md, docs, diff)",
++		func(c string) any {
++			f := publicityscan.Scan(c)
++			return map[string]any{"findings": f, "summary": publicityscan.Summarize(f)}
++		})
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_audit_test.go b/yagura-v0.35.0/internal/mcp/tools_audit_test.go
+new file mode 100644
+index 0000000..90b70e7
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_audit_test.go
+@@ -0,0 +1,48 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++)
++
++func TestContentAuditTools_Basic(t *testing.T) {
++	d := newDeps(t)
++	cases := []struct {
++		tool    *Tool
++		content string
++		wantKey string // a json key expected in the result
++	}{
++		{buildWorkflowAuditTool(d), `const r = await agent("x", {model:"opus", maxTokens:2000})`, "score"},
++		{buildSettingsAuditTool(d), `{"permissions":{"deny":["Bash(rm -rf *)"]},"hooks":{"Stop":[]}}`, "score"},
++		{buildAgentConfigAuditTool(d), `{"agents":{"defaults":{"model":{"primary":"p/m"}}},"models":{"providers":{"p":{"apiKey":"EMPTY","models":[{"id":"m","contextWindow":1000,"maxTokens":100}]}}}}`, "score"},
++		{buildPluginAuditTool(d), `{"name":"yagura","version":"1.0.0"}`, "score"},
++		{buildPublicityScanTool(d), "see /Users/hiroro/x", "summary"},
++	}
++	for _, c := range cases {
++		res := mustCall(t, c.tool, map[string]any{"content": c.content})
++		b, _ := json.Marshal(res)
++		var m map[string]json.RawMessage
++		if err := json.Unmarshal(b, &m); err != nil {
++			t.Fatalf("%s: json %v", c.tool.Name, err)
++		}
++		if _, ok := m[c.wantKey]; !ok {
++			t.Errorf("%s: expected key %q in result, got %s", c.tool.Name, c.wantKey, b)
++		}
++	}
++}
++
++func TestContentAuditTools_EmptyContentRejected(t *testing.T) {
++	d := newDeps(t)
++	for _, tool := range []*Tool{
++		buildWorkflowAuditTool(d), buildSettingsAuditTool(d), buildAgentConfigAuditTool(d),
++		buildPluginAuditTool(d), buildPublicityScanTool(d),
++	} {
++		b, _ := json.Marshal(map[string]any{"content": ""})
++		if _, err := tool.Handler(tCtx(), b); err == nil {
++			t.Errorf("%s: expected error on empty content", tool.Name)
++		}
++	}
++}
++
++func tCtx() context.Context { return context.Background() }
 diff --git a/yagura-v0.35.0/internal/mcp/tools_inventory.go b/yagura-v0.35.0/internal/mcp/tools_inventory.go
 index e08cf8f..1b592ad 100644
 --- a/yagura-v0.35.0/internal/mcp/tools_inventory.go
