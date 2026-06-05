@@ -229,10 +229,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..b69fee1 100644
+index 9b29eec..28acadb 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,247 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,257 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -462,6 +462,16 @@ index 9b29eec..b69fee1 100644
 +  成果物に適用(現状すべて 100 点で pass、スコア低下で fail)。回帰テスト
 +  `TestCLI_AuditMinScoreGate`(default→0 / floor超過→非0 / 低floor→0)。
 +  stdlib のみ、tool 数(53)不変。
++- **`internal/atomicfile` にテスト追加(self-review #8 の調査で発覚した実ギャップ)**。
++  per-package coverage を測ったところ、registry / audit / handoff / secrets の永続化が
++  依存する critical primitive `atomicfile`(temp→fsync→rename の crash-safe write)が
++  **テスト皆無(0%)**だった。round-trip + mode、atomic overwrite(古い内容が残らない)、
++  親ディレクトリ自動作成、空 data、親がファイルで失敗するエラー経路 + temp leak 無し、
++  並行書き込みの atomicity(torn write 無し / `-race`)、distinct path の非干渉 — の
++  7 ケースを追加し **0% → 60%**(残りは fault injection が要る到達困難な error 分岐)。
++  なお per-package coverage floor の CI 化(分析 #8)は、integration_test が
++  `internal/mcp` を `cmd/yagura` 側で広くカバーする構造上、per-package 値が実カバレッジを
++  過小評価する(mcp 45.9% 等)ため**見送り**(naive な floor は偽陽性を生む)。
 +
 +### What's not yet
 +
@@ -3644,6 +3654,186 @@ index 0000000..46f2e48
 +	if as.Waves != 2 {
 +		t.Errorf("concurrency<=0 defaults to 1 → 2 waves, got %d", as.Waves)
 +	}
++}
+diff --git a/yagura-v0.35.0/internal/atomicfile/atomicfile_test.go b/yagura-v0.35.0/internal/atomicfile/atomicfile_test.go
+new file mode 100644
+index 0000000..d5f9fd6
+--- /dev/null
++++ b/yagura-v0.35.0/internal/atomicfile/atomicfile_test.go
+@@ -0,0 +1,174 @@
++package atomicfile
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++	"sort"
++	"sync"
++	"testing"
++)
++
++// noTempLeak は dir 配下に .atomic-* の残骸が無いことを確認する。
++func noTempLeak(t *testing.T, dir string) {
++	t.Helper()
++	entries, err := os.ReadDir(dir)
++	if err != nil {
++		t.Fatalf("readdir %s: %v", dir, err)
++	}
++	for _, e := range entries {
++		if len(e.Name()) >= 8 && e.Name()[:8] == ".atomic-" {
++			t.Errorf("leftover temp file: %s", e.Name())
++		}
++	}
++}
++
++func TestWrite_RoundTripAndMode(t *testing.T) {
++	dir := t.TempDir()
++	p := filepath.Join(dir, "f.txt")
++	want := []byte("hello\nworld")
++	if err := Write(p, want, 0o644); err != nil {
++		t.Fatalf("Write: %v", err)
++	}
++	got, err := os.ReadFile(p)
++	if err != nil {
++		t.Fatalf("read: %v", err)
++	}
++	if string(got) != string(want) {
++		t.Errorf("content = %q, want %q", got, want)
++	}
++	info, err := os.Stat(p)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if info.Mode().Perm() != 0o644 {
++		t.Errorf("mode = %v, want 0644", info.Mode().Perm())
++	}
++	noTempLeak(t, dir)
++}
++
++func TestWrite_AtomicOverwrite(t *testing.T) {
++	dir := t.TempDir()
++	p := filepath.Join(dir, "f.txt")
++	if err := Write(p, []byte("old-content-longer"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if err := Write(p, []byte("new"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	got, _ := os.ReadFile(p)
++	if string(got) != "new" {
++		t.Errorf("overwrite content = %q, want %q (no leftover bytes of old)", got, "new")
++	}
++	noTempLeak(t, dir)
++}
++
++func TestWrite_CreatesParentDirs(t *testing.T) {
++	dir := t.TempDir()
++	p := filepath.Join(dir, "a", "b", "c", "f.txt")
++	if err := Write(p, []byte("x"), 0o644); err != nil {
++		t.Fatalf("Write into missing dirs: %v", err)
++	}
++	if _, err := os.Stat(p); err != nil {
++		t.Errorf("file not created: %v", err)
++	}
++	// 親ディレクトリは 0755 で作られる。
++	di, err := os.Stat(filepath.Join(dir, "a"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !di.IsDir() {
++		t.Error("parent is not a directory")
++	}
++}
++
++func TestWrite_EmptyData(t *testing.T) {
++	dir := t.TempDir()
++	p := filepath.Join(dir, "empty")
++	if err := Write(p, nil, 0o644); err != nil {
++		t.Fatalf("Write empty: %v", err)
++	}
++	got, err := os.ReadFile(p)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(got) != 0 {
++		t.Errorf("expected empty file, got %d bytes", len(got))
++	}
++	noTempLeak(t, dir)
++}
++
++func TestWrite_ErrorWhenParentIsFile_NoLeak(t *testing.T) {
++	dir := t.TempDir()
++	// 既存の通常ファイルを「親ディレクトリ」に見立てる → MkdirAll が失敗する。
++	blocker := filepath.Join(dir, "blocker")
++	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	p := filepath.Join(blocker, "child.txt") // blocker はファイルなので親作成不可
++	if err := Write(p, []byte("data"), 0o644); err == nil {
++		t.Error("expected error when parent path is a file, got nil")
++	}
++	// temp は dir 直下に作られないこと(MkdirAll が先に失敗するため)。
++	noTempLeak(t, dir)
++}
++
++func TestWrite_ConcurrentAtomic(t *testing.T) {
++	dir := t.TempDir()
++	p := filepath.Join(dir, "shared")
++	const n = 24
++	valid := make(map[string]bool, n)
++	for i := 0; i < n; i++ {
++		valid[fmt.Sprintf("value-%02d-payload", i)] = true
++	}
++	var wg sync.WaitGroup
++	for i := 0; i < n; i++ {
++		wg.Add(1)
++		go func(i int) {
++			defer wg.Done()
++			if err := Write(p, []byte(fmt.Sprintf("value-%02d-payload", i)), 0o644); err != nil {
++				t.Errorf("concurrent Write: %v", err)
++			}
++		}(i)
++	}
++	wg.Wait()
++	// 最終ファイルは「いずれかの完全な値」でなければならない(torn write 無し)。
++	got, err := os.ReadFile(p)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !valid[string(got)] {
++		t.Errorf("final content %q is not one of the complete written values (torn write?)", got)
++	}
++	noTempLeak(t, dir)
++}
++
++func TestWrite_DistinctPathsNoCrossTalk(t *testing.T) {
++	dir := t.TempDir()
++	var wg sync.WaitGroup
++	for i := 0; i < 10; i++ {
++		wg.Add(1)
++		go func(i int) {
++			defer wg.Done()
++			p := filepath.Join(dir, fmt.Sprintf("f%02d", i))
++			_ = Write(p, []byte(fmt.Sprintf("content-%02d", i)), 0o644)
++		}(i)
++	}
++	wg.Wait()
++	var got []string
++	for i := 0; i < 10; i++ {
++		b, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("f%02d", i)))
++		if err != nil {
++			t.Fatalf("read f%02d: %v", i, err)
++		}
++		got = append(got, string(b))
++	}
++	sort.Strings(got)
++	for i := 0; i < 10; i++ {
++		want := fmt.Sprintf("content-%02d", i)
++		if got[i] != want {
++			t.Errorf("file %d = %q, want %q", i, got[i], want)
++		}
++	}
++	noTempLeak(t, dir)
 +}
 diff --git a/yagura-v0.35.0/internal/config/config.go b/yagura-v0.35.0/internal/config/config.go
 index af23d66..6b601a7 100644
