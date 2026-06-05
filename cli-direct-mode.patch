@@ -229,10 +229,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..38de83a 100644
+index 9b29eec..ddd51c7 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,270 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,285 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -485,6 +485,21 @@ index 9b29eec..38de83a 100644
 +  boilerplate なし)。例: `{"known_exploited": 40, "band_now": 80}`。tool 数(53)不変、
 +  stdlib のみ。テスト: `ScoreWith` の default 一致 / custom tuning / zero-factor、
 +  tool の override 反映 / 不正 weights 拒否。`MCP_TOOLS.md` 再生成。
++- **`yagura_recovery_decide`: self-healing orchestration の決定論的 recovery 判断**
++  (`internal/recovery/recovery.go`、MCP tool #54)。「オーケストレーションの次世代」
++  research(arXiv 2606.01416 Self-Healing Agentic Orchestrators / 2601.16280 tool-
++  failure taxonomy)を踏まえた、Yagura を「brain ではなく deterministic control plane」
++  にする reliability 層。MCP client が task の失敗(failure class + 試行回数 + budget)
++  を報告すると、次の recovery action を根拠付きで返す: `retry` / `backoff_retry`
++  (指数 backoff)/ `repair_args` / `substitute_tool` / `substitute_agent` /
++  `refresh_context`(圧縮)/ `replan`(verifier reject 時は盲目 retry せず再計画)/
++  `degrade`(低 severity × budget 切れ)/ `escalate`(HITL)。budget(既定 3 試行)で
++  無限ループを防ぎ、**auth/permission 系は決して自動 retry せず即 escalate**(trust
++  base / security)。Yagura は LLM を呼ばず agent も実行しない — 判断だけを決定論的に
++  返し、実行は client(`parallel_plan` の 1→N dispatch と組で control plane を成す)。
++  新 package `internal/recovery`(42→43)、tool 数 53 → **54**。stdlib のみ
++  (ADR-0001)。failure class は別名正規化(`429`/`403` 等)。テスト 11 本(各 class、
++  budget 切れ、低 severity degrade、別名、決定論)+ tool テスト、live dogfood 済み。
 +
 +### What's not yet
 +
@@ -504,7 +519,7 @@ index 9b29eec..38de83a 100644
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
 diff --git a/yagura-v0.35.0/CLAUDE.md b/yagura-v0.35.0/CLAUDE.md
-index bc406e1..3c412de 100644
+index bc406e1..d6be225 100644
 --- a/yagura-v0.35.0/CLAUDE.md
 +++ b/yagura-v0.35.0/CLAUDE.md
 @@ -21,18 +21,19 @@ cortex flywheel 4 段階すべてを単体で機械化:
@@ -512,13 +527,13 @@ index bc406e1..3c412de 100644
  - code generation tool(yagura は audit/orchestrate のみ)
  
 -## Map — 31 internal packages
-+## Map — 42 internal packages
++## Map — 43 internal packages
  
  ### Core orchestration
  - `internal/registry` — 23+ projects の inventory CRUD
  - `internal/project` — Project struct + validation
 -- `internal/mcp` — MCP server + 38 tool definitions
-+- `internal/mcp` — MCP server + 53 tool definitions
++- `internal/mcp` — MCP server + 54 tool definitions
  - `internal/audit` — JSONL audit log + replay
  - `internal/config` — env / flag 設定
  
@@ -529,7 +544,7 @@ index bc406e1..3c412de 100644
  - `internal/sbom` — CycloneDX SBOM 生成
  - `internal/ghaaudit` — GitHub Actions workflow audit
  - `internal/pindrift` — 依存 pin 漏れ検出
-@@ -49,7 +50,11 @@ cortex flywheel 4 段階すべてを単体で機械化:
+@@ -49,7 +50,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
  - `internal/handoff` — handoff session management
  - `internal/agentlauncher` — agent process spawn
  - `internal/workspace` — session save/load
@@ -539,11 +554,12 @@ index bc406e1..3c412de 100644
 +### Reasoning / multi-AI (★ v0.35)
 +- `internal/agentparallel` — 複数 AI への deterministic な並列 dispatch planner(LPT)
 +- `internal/riskreason` — Cyber Risk Reasoning Layer(CVSS+資産+到達性+攻撃性の複合判断)
++- `internal/recovery` — self-healing orchestration の決定論的 recovery 判断(retry/replan/escalate)
  
  ### Graph / dependencies
  - `internal/projectgraph` — depends_on graph(neighbors / impact / stats)
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..c592796 100644
+index 986f84e..694a9a6 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -551,7 +567,7 @@ index 986f84e..c592796 100644
  **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
  
 -Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
-+Status: **v0.35.0** — 53 MCP tools, 42 internal packages, CLI direct mode, 30 consecutive reproducible releases.
++Status: **v0.35.0** — 54 MCP tools, 43 internal packages, CLI direct mode, 30 consecutive reproducible releases.
  
  ---
  
@@ -560,7 +576,7 @@ index 986f84e..c592796 100644
  │  ┌────────────────────────────────────────────────┐  │
  │  │  yagura daemon (single binary, ~9 MB)          │  │
 -│  │  - 46 MCP tools                                │  │
-+│  │  - 53 MCP tools                                │  │
++│  │  - 54 MCP tools                                │  │
  │  │  - HTTP hook receiver                          │  │
  │  │  - Prometheus /metrics                         │  │
  │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -600,7 +616,7 @@ index 986f84e..c592796 100644
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
  
 -## MCP tools (46 total)
-+## MCP tools (53 total)
++## MCP tools (54 total)
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -2936,10 +2952,10 @@ index 0000000..b176013
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
-index cfb6e51..6422e05 100644
+index cfb6e51..89edce0 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
 +++ b/yagura-v0.35.0/cmd/yagura/integration_test.go
-@@ -164,6 +164,11 @@ func TestIntegration_MCPToolsList(t *testing.T) {
+@@ -164,6 +164,13 @@ func TestIntegration_MCPToolsList(t *testing.T) {
  		// v0.27 — cortex flywheel ④ Alert-Fix
  		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
  		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",
@@ -2948,6 +2964,8 @@ index cfb6e51..6422e05 100644
 +		// v0.35 — .claude/ artifact 監査(content-based, MCP surface)
 +		"yagura_workflow_audit", "yagura_settings_audit", "yagura_agent_config_audit",
 +		"yagura_plugin_audit", "yagura_publicity_scan",
++		// v0.35 — self-healing orchestration の recovery 判断
++		"yagura_recovery_decide",
  	}
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
@@ -3046,14 +3064,14 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..6e6a674 100644
+index 689c182..d152f2a 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
  # MCP tools reference
  
 -Generated from a live yagura — **46 tools**.
-+Generated from a live yagura — **53 tools**.
++Generated from a live yagura — **54 tools**.
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -3062,7 +3080,7 @@ index 689c182..6e6a674 100644
  - [Harness (guides)](#harness-guides) (8)
  - [Inventory](#inventory) (8)
 -- [Misc](#misc) (8)
-+- [Misc](#misc) (15)
++- [Misc](#misc) (16)
  - [Observability](#observability) (4)
  - [Plan tracking](#plan-tracking) (2)
  - [Security (sensors)](#security-sensors) (10)
@@ -3164,10 +3182,26 @@ index 689c182..6e6a674 100644
  ### `yagura_quota_forecast`
  
  [S] Empty-time linreg forecast. Needs ≥3 samples.
-@@ -341,6 +400,24 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -341,6 +400,40 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
++### `yagura_recovery_decide`
++
++[G] Pick the next recovery action for a failed agent task (retry/replan/escalate...).
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `agent` (string) |  | current agent (used for substitute decisions). |
++| `attempt` (integer) |  | 1-based attempt count for this task. |
++| `class` (string) | ★ | failure class: timeout/rate_limit/tool_init/bad_args/tool_error/auth/quota/context_overflow/wrong_result/unknown (aliases like 429/403 accepted). |
++| `max_attempts` (integer) |  | recovery budget (default 3). |
++| `severity` (string) |  | 'low' lets an exhausted budget degrade gracefully instead of escalating. |
++
++---
++
 +### `yagura_risk_triage`
 +
 +[G] Composite fix-priority for CVEs (asset+reach+exploit, with rationale).
@@ -3189,7 +3223,7 @@ index 689c182..6e6a674 100644
  ### `yagura_session_load`
  
  [S] Load handoff context. Null if none.
-@@ -366,6 +443,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -366,6 +459,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -3208,7 +3242,7 @@ index 689c182..6e6a674 100644
  ### `yagura_token_stats`
  
  [S] Per-tool byte counts since daemon start.
-@@ -397,6 +486,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -397,6 +502,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -3227,7 +3261,7 @@ index 689c182..6e6a674 100644
  ## Observability
  
  ### `yagura_agent_status`
-@@ -576,7 +677,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -576,7 +693,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -3237,7 +3271,7 @@ index 689c182..6e6a674 100644
  **Arguments:**
  
 diff --git a/yagura-v0.35.0/docs/QUICKSTART.md b/yagura-v0.35.0/docs/QUICKSTART.md
-index 62e02cd..38611d7 100644
+index 62e02cd..c2a217b 100644
 --- a/yagura-v0.35.0/docs/QUICKSTART.md
 +++ b/yagura-v0.35.0/docs/QUICKSTART.md
 @@ -177,7 +177,7 @@ The process drains for 5 seconds (`/readyz` returns 503) then shuts down gracefu
@@ -3245,7 +3279,7 @@ index 62e02cd..38611d7 100644
  ## What next?
  
 -- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 46 tools.
-+- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 53 tools.
++- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 54 tools.
  - [WINDOWS.md](WINDOWS.md) — Task Scheduler / NSSM / Windows service setup.
  - [ARCHITECTURE.md](../ARCHITECTURE.md) — internals and design rationale.
  - [security-spec.md](security-spec.md) — threat model.
@@ -5619,10 +5653,10 @@ index 0000000..ad2196b
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..711534b 100644
+index 939a67e..da97cf4 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
-@@ -188,6 +188,16 @@ func RegisterDefaultTools(s *Server, d Deps) {
+@@ -188,6 +188,18 @@ func RegisterDefaultTools(s *Server, d Deps) {
  	s.Register(buildHookStatsTool(s))
  	s.Register(buildProgressFileTool(d, s))
  	s.Register(buildInitShTool(d))
@@ -5636,10 +5670,12 @@ index 939a67e..711534b 100644
 +	s.Register(buildAgentConfigAuditTool(d))
 +	s.Register(buildPluginAuditTool(d))
 +	s.Register(buildPublicityScanTool(d))
++	// [v0.35.0] self-healing orchestration の決定論的 recovery 判断
++	s.Register(buildRecoveryDecideTool(d))
  }
  
  // ─── yagura_list ─────────────────────────────────────────────
-@@ -198,8 +208,8 @@ type listOut struct {
+@@ -198,8 +210,8 @@ type listOut struct {
  	Stage          string `json:"stage"`
  	Priority       int    `json:"priority"`
  	Language       string `json:"language,omitempty"`
@@ -5650,7 +5686,7 @@ index 939a67e..711534b 100644
  	CIStatus       string `json:"ci_status,omitempty"`
  	LatestVersion  string `json:"latest_version,omitempty"`
  	DaysSinceCommit int   `json:"days_since_commit"`
-@@ -245,7 +255,7 @@ type todayItem struct {
+@@ -245,7 +257,7 @@ type todayItem struct {
  func buildSecretScanTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_secretscan",
@@ -5659,7 +5695,7 @@ index 939a67e..711534b 100644
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
-@@ -766,7 +776,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+@@ -766,7 +778,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_skill_audit",
@@ -6344,6 +6380,121 @@ index 0000000..c469356
 +				t.Errorf("%s: expected error, got nil", c.name)
 +			}
 +		})
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_recovery.go b/yagura-v0.35.0/internal/mcp/tools_recovery.go
+new file mode 100644
+index 0000000..c2e1f28
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_recovery.go
+@@ -0,0 +1,60 @@
++// tools_recovery.go: yagura_recovery_decide — self-healing orchestration の決定論的
++// recovery 判断(internal/recovery)。
++//
++// MCP client が task の失敗を報告すると、Yagura が failure class + 試行回数 + budget から
++// 次の recovery action(retry / backoff_retry / repair_args / substitute_tool /
++// substitute_agent / refresh_context / replan / degrade / escalate)を根拠付きで返す。
++// 実際の実行は client 側。parallel_plan(1→N dispatch)と組で reliability control plane
++// を成す。Yagura は LLM を呼ばず、判断は rule-based で再現可能(audit/HITL 前提)。
++
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++
++	"github.com/shizukutanaka/yagura/internal/recovery"
++)
++
++func buildRecoveryDecideTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_recovery_decide",
++		Description: "[G] Pick the next recovery action for a failed agent task (retry/replan/escalate...).",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"class": map[string]any{
++					"type":        "string",
++					"description": "failure class: timeout/rate_limit/tool_init/bad_args/tool_error/auth/quota/context_overflow/wrong_result/unknown (aliases like 429/403 accepted).",
++				},
++				"attempt":      map[string]any{"type": "integer", "description": "1-based attempt count for this task."},
++				"max_attempts": map[string]any{"type": "integer", "description": "recovery budget (default 3)."},
++				"agent":        map[string]any{"type": "string", "description": "current agent (used for substitute decisions)."},
++				"severity":     map[string]any{"type": "string", "description": "'low' lets an exhausted budget degrade gracefully instead of escalating."},
++			},
++			"required": []string{"class"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Class       string `json:"class"`
++				Attempt     int    `json:"attempt"`
++				MaxAttempts int    `json:"max_attempts"`
++				Agent       string `json:"agent"`
++				Severity    string `json:"severity"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if in.Class == "" {
++				return nil, &ToolError{Code: "invalid_input", Message: "failure 'class' is required"}
++			}
++			return recovery.Decide(recovery.Event{
++				Class:       recovery.FailureClass(in.Class),
++				Attempt:     in.Attempt,
++				MaxAttempts: in.MaxAttempts,
++				Agent:       in.Agent,
++				Severity:    in.Severity,
++			}), nil
++		},
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_recovery_test.go b/yagura-v0.35.0/internal/mcp/tools_recovery_test.go
+new file mode 100644
+index 0000000..66a8e44
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_recovery_test.go
+@@ -0,0 +1,43 @@
++package mcp
++
++import (
++	"encoding/json"
++	"testing"
++)
++
++func TestRecoveryDecideTool(t *testing.T) {
++	tool := buildRecoveryDecideTool(newDeps(t))
++	res := mustCall(t, tool, map[string]any{"class": "quota", "attempt": 1, "agent": "claude_code"})
++	b, _ := json.Marshal(res)
++	var out struct {
++		Action string `json:"action"`
++		Budget struct {
++			Remaining int `json:"remaining"`
++		} `json:"budget"`
++	}
++	if err := json.Unmarshal(b, &out); err != nil {
++		t.Fatalf("json: %v", err)
++	}
++	if out.Action != "substitute_agent" {
++		t.Errorf("quota should substitute_agent, got %q", out.Action)
++	}
++	if out.Budget.Remaining != 2 { // default max 3, attempt 1
++		t.Errorf("budget remaining should be 2, got %d", out.Budget.Remaining)
++	}
++	// alias + escalate path.
++	r2 := mustCall(t, tool, map[string]any{"class": "403", "attempt": 1})
++	b2, _ := json.Marshal(r2)
++	var o2 struct {
++		Action   string `json:"action"`
++		Terminal bool   `json:"terminal"`
++	}
++	_ = json.Unmarshal(b2, &o2)
++	if o2.Action != "escalate" || !o2.Terminal {
++		t.Errorf("'403' (auth) should escalate terminally, got %+v", o2)
++	}
++	// missing class → error.
++	bad, _ := json.Marshal(map[string]any{"attempt": 1})
++	if _, err := tool.Handler(tCtx(), bad); err == nil {
++		t.Error("expected error when class is missing")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_risk.go b/yagura-v0.35.0/internal/mcp/tools_risk.go
@@ -7044,6 +7195,335 @@ index 0000000..2bd70b4
 +	}
 +	if got != 1 {
 +		t.Errorf("expected 1 private-ip (CIDRs skipped), got %d: %+v", got, fs)
++	}
++}
+diff --git a/yagura-v0.35.0/internal/recovery/recovery.go b/yagura-v0.35.0/internal/recovery/recovery.go
+new file mode 100644
+index 0000000..dadfa3e
+--- /dev/null
++++ b/yagura-v0.35.0/internal/recovery/recovery.go
+@@ -0,0 +1,215 @@
++// Package recovery は agentic orchestration の「self-healing(自己修復)」判断を
++// rule-based / deterministic に行う層。
++//
++// 着想は arXiv 2606.01416 "Self-Healing Agentic Orchestrators" — orchestration を
++// monitor → detect → root-cause classify → budgeted recovery-policy 選択 →
++// post-recovery verify → observe に分解し、failure class を recovery action
++// (retry / argument repair / tool substitution / replan / graceful degradation /
++// escalation 等)へ budget 付きでマップする。
++//
++// Yagura は LLM を呼ばず agent を実行もしない(control plane / not brain)。本層は
++// 「失敗が報告されたとき、次にどの recovery action を取るべきか」を決定論的に返す
++// 判断エンジンで、実際の retry/replan は MCP client が行う。budget(最大試行回数)で
++// 無限ループを防ぎ、credential/permission 系は決して自動 retry せず human へ escalate
++// する(Human-in-the-Loop / trust base)。parallel_plan(dispatch)と組で、Yagura を
++// fleet の reliability control plane にする。
++package recovery
++
++import (
++	"fmt"
++	"strings"
++)
++
++// FailureClass は失敗の根本原因カテゴリ(arXiv 2601.16280 の tool-failure taxonomy 準拠)。
++type FailureClass string
++
++const (
++	ClassTimeout         FailureClass = "timeout"          // 一時的・タイムアウト
++	ClassRateLimit       FailureClass = "rate_limit"       // 429 等・backoff 対象
++	ClassToolInit        FailureClass = "tool_init"        // tool 初期化/接続失敗
++	ClassBadArgs         FailureClass = "bad_args"         // 引数/パラメータ不正
++	ClassToolError       FailureClass = "tool_error"       // tool 実行エラー
++	ClassAuth            FailureClass = "auth"             // 認証/権限 → 自動 retry 禁止
++	ClassQuota           FailureClass = "quota"            // agent quota 枯渇 → 別 agent へ
++	ClassContextOverflow FailureClass = "context_overflow" // context 溢れ → 圧縮/replan
++	ClassWrongResult     FailureClass = "wrong_result"     // 検証失敗(verifier が reject)
++	ClassUnknown         FailureClass = "unknown"
++)
++
++// Action は次に取る recovery 操作。
++type Action string
++
++const (
++	ActionRetry           Action = "retry"
++	ActionBackoffRetry    Action = "backoff_retry"
++	ActionRepairArgs      Action = "repair_args"
++	ActionSubstituteTool  Action = "substitute_tool"
++	ActionSubstituteAgent Action = "substitute_agent"
++	ActionRefreshContext  Action = "refresh_context" // 圧縮 / retrieval refresh
++	ActionReplan          Action = "replan"
++	ActionDegrade         Action = "degrade"  // graceful degradation(低 severity)
++	ActionEscalate        Action = "escalate" // Human-in-the-Loop
++)
++
++// Event は 1 つの失敗報告。Yagura はこれだけで決定論的に判断する(stateless)。
++type Event struct {
++	Class       FailureClass `json:"class"`
++	Attempt     int          `json:"attempt"`      // この task の試行回数(1-based)
++	MaxAttempts int          `json:"max_attempts"` // budget。<=0 で既定 3
++	Agent       string       `json:"agent"`        // 現在の agent(substitute 判断用)
++	Severity    string       `json:"severity"`     // "low" なら budget 切れ時に degrade
++}
++
++// Budget は試行予算の状態。
++type Budget struct {
++	AttemptsUsed int `json:"attempts_used"`
++	MaxAttempts  int `json:"max_attempts"`
++	Remaining    int `json:"remaining"`
++}
++
++// Decision は recovery 判断の結果。
++type Decision struct {
++	Action            Action `json:"action"`
++	Reason            string `json:"reason"`
++	Terminal          bool   `json:"terminal"`                      // これ以上の自動 recovery が無い
++	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"` // backoff 用
++	Budget            Budget `json:"budget"`
++}
++
++const defaultMaxAttempts = 3
++
++// Decide は failure event から次の recovery action を決定論的に選ぶ。
++func Decide(e Event) Decision {
++	maxAtt := e.MaxAttempts
++	if maxAtt <= 0 {
++		maxAtt = defaultMaxAttempts
++	}
++	attempt := e.Attempt
++	if attempt < 1 {
++		attempt = 1
++	}
++	if attempt > maxAtt {
++		attempt = maxAtt
++	}
++	budget := Budget{AttemptsUsed: attempt, MaxAttempts: maxAtt, Remaining: maxAtt - attempt}
++	exhausted := attempt >= maxAtt
++	low := strings.EqualFold(strings.TrimSpace(e.Severity), "low")
++
++	d := Decision{Budget: budget}
++	// budget 切れ時の終端: 低 severity は degrade、それ以外は escalate。
++	exhaust := func(reason string) Decision {
++		if low {
++			d.Action, d.Terminal, d.Reason = ActionDegrade, true,
++				"recovery budget exhausted on a low-severity task — accept the degraded result instead of paging a human"
++			return d
++		}
++		d.Action, d.Terminal, d.Reason = ActionEscalate, true, reason
++		return d
++	}
++
++	switch normClass(e.Class) {
++	case ClassAuth:
++		// 認証/権限は決して自動 retry しない(security / trust base)。
++		d.Action, d.Terminal, d.Reason = ActionEscalate, true,
++			"auth/permission failure — never auto-retried; a human must check credentials/scope"
++		return d
++	case ClassQuota:
++		if exhausted {
++			return exhaust("agent quota exhausted and no recovery budget left — escalate to re-plan capacity")
++		}
++		d.Action, d.Reason = ActionSubstituteAgent,
++			fmt.Sprintf("agent %q is out of quota — route this task to another capable agent", strings.TrimSpace(e.Agent))
++		return d
++	case ClassBadArgs:
++		if exhausted {
++			return exhaust("argument repair did not converge within budget")
++		}
++		d.Action, d.Reason = ActionRepairArgs, "parameter/argument error — repair the call arguments, then retry"
++		return d
++	case ClassToolInit:
++		if attempt == 1 {
++			d.Action, d.Reason, d.RetryAfterSeconds = ActionBackoffRetry, "tool init failure on first attempt — may be transient; retry with backoff", backoff(attempt)
++			return d
++		}
++		if exhausted {
++			return exhaust("tool keeps failing to initialize within budget")
++		}
++		d.Action, d.Reason = ActionSubstituteTool, "tool repeatedly fails to initialize — substitute an equivalent tool"
++		return d
++	case ClassToolError:
++		if exhausted {
++			return exhaust("tool keeps erroring within budget")
++		}
++		if attempt == 1 {
++			d.Action, d.Reason = ActionRetry, "tool execution error — retry"
++			return d
++		}
++		d.Action, d.Reason = ActionSubstituteTool, "tool keeps erroring — substitute an equivalent tool"
++		return d
++	case ClassTimeout, ClassRateLimit:
++		if exhausted {
++			return exhaust("transient failures did not clear within budget")
++		}
++		d.Action, d.Reason, d.RetryAfterSeconds = ActionBackoffRetry, "transient failure (timeout/rate-limit) — retry with exponential backoff", backoff(attempt)
++		return d
++	case ClassContextOverflow:
++		if exhausted {
++			return exhaust("context still overflows after compaction/replan budget")
++		}
++		d.Action, d.Reason = ActionRefreshContext, "context window overflow — compact/refresh context (or split the task) and retry"
++		return d
++	case ClassWrongResult:
++		if exhausted {
++			return exhaust("output keeps failing verification within budget")
++		}
++		d.Action, d.Reason = ActionReplan, "verifier rejected the output — replan the approach (do not just retry the same plan)"
++		return d
++	default: // unknown
++		if attempt == 1 {
++			d.Action, d.Reason = ActionRetry, "unknown failure on first attempt — retry once before replanning"
++			return d
++		}
++		if exhausted {
++			return exhaust("unknown failure persisted through the recovery budget")
++		}
++		d.Action, d.Reason = ActionReplan, "unknown failure persists — replan the approach"
++		return d
++	}
++}
++
++// normClass は別名/表記ゆれを正規化する(tool 入力に寛容に)。
++func normClass(c FailureClass) FailureClass {
++	switch strings.ToLower(strings.TrimSpace(string(c))) {
++	case "timeout", "deadline", "deadline_exceeded":
++		return ClassTimeout
++	case "rate_limit", "ratelimit", "429", "throttled", "throttle":
++		return ClassRateLimit
++	case "tool_init", "tool-init", "init", "connect", "connection", "unavailable":
++		return ClassToolInit
++	case "bad_args", "bad-args", "invalid_args", "invalid_argument", "params", "parameter", "schema":
++		return ClassBadArgs
++	case "tool_error", "tool-error", "execution", "exec":
++		return ClassToolError
++	case "auth", "authentication", "authorization", "permission", "forbidden", "401", "403", "credential":
++		return ClassAuth
++	case "quota", "exhausted", "out_of_quota", "no_capacity":
++		return ClassQuota
++	case "context_overflow", "context", "overflow", "token_limit", "context_length":
++		return ClassContextOverflow
++	case "wrong_result", "verification_failed", "verify_failed", "rejected", "incorrect":
++		return ClassWrongResult
++	}
++	return ClassUnknown
++}
++
++// backoff は attempt(1-based)に対する指数 backoff 秒(2,4,8,... 上限 60)。
++func backoff(attempt int) int {
++	s := 1
++	for i := 0; i < attempt; i++ {
++		s *= 2
++		if s >= 60 {
++			return 60
++		}
++	}
++	return s
++}
+diff --git a/yagura-v0.35.0/internal/recovery/recovery_test.go b/yagura-v0.35.0/internal/recovery/recovery_test.go
+new file mode 100644
+index 0000000..02c05df
+--- /dev/null
++++ b/yagura-v0.35.0/internal/recovery/recovery_test.go
+@@ -0,0 +1,102 @@
++package recovery
++
++import "testing"
++
++func TestDecide_AuthNeverAutoRetries(t *testing.T) {
++	d := Decide(Event{Class: ClassAuth, Attempt: 1})
++	if d.Action != ActionEscalate || !d.Terminal {
++		t.Errorf("auth must escalate terminally, got %+v", d)
++	}
++}
++
++func TestDecide_TransientBackoffThenEscalate(t *testing.T) {
++	first := Decide(Event{Class: ClassTimeout, Attempt: 1, MaxAttempts: 3})
++	if first.Action != ActionBackoffRetry || first.RetryAfterSeconds <= 0 {
++		t.Errorf("first timeout should backoff_retry with a delay, got %+v", first)
++	}
++	// backoff grows.
++	second := Decide(Event{Class: ClassRateLimit, Attempt: 2, MaxAttempts: 3})
++	if second.RetryAfterSeconds <= first.RetryAfterSeconds {
++		t.Errorf("backoff should grow: a1=%d a2=%d", first.RetryAfterSeconds, second.RetryAfterSeconds)
++	}
++	// budget exhausted → escalate.
++	last := Decide(Event{Class: ClassTimeout, Attempt: 3, MaxAttempts: 3})
++	if last.Action != ActionEscalate || !last.Terminal {
++		t.Errorf("exhausted transient should escalate, got %+v", last)
++	}
++}
++
++func TestDecide_BudgetExhaustedLowSeverityDegrades(t *testing.T) {
++	d := Decide(Event{Class: ClassTimeout, Attempt: 3, MaxAttempts: 3, Severity: "low"})
++	if d.Action != ActionDegrade || !d.Terminal {
++		t.Errorf("low-severity exhausted should degrade, got %+v", d)
++	}
++}
++
++func TestDecide_QuotaSubstitutesAgent(t *testing.T) {
++	d := Decide(Event{Class: ClassQuota, Attempt: 1, MaxAttempts: 3, Agent: "claude_code"})
++	if d.Action != ActionSubstituteAgent {
++		t.Errorf("quota should substitute agent, got %+v", d)
++	}
++	// when budget is gone, even quota escalates.
++	if e := Decide(Event{Class: ClassQuota, Attempt: 3, MaxAttempts: 3}); e.Action != ActionEscalate {
++		t.Errorf("exhausted quota should escalate, got %+v", e)
++	}
++}
++
++func TestDecide_BadArgsRepairs(t *testing.T) {
++	if d := Decide(Event{Class: ClassBadArgs, Attempt: 1}); d.Action != ActionRepairArgs {
++		t.Errorf("bad_args should repair_args, got %+v", d)
++	}
++}
++
++func TestDecide_ToolInitRetryThenSubstitute(t *testing.T) {
++	if d := Decide(Event{Class: ClassToolInit, Attempt: 1, MaxAttempts: 4}); d.Action != ActionBackoffRetry {
++		t.Errorf("tool_init attempt 1 should backoff_retry, got %+v", d)
++	}
++	if d := Decide(Event{Class: ClassToolInit, Attempt: 2, MaxAttempts: 4}); d.Action != ActionSubstituteTool {
++		t.Errorf("tool_init attempt 2 should substitute_tool, got %+v", d)
++	}
++}
++
++func TestDecide_WrongResultReplans(t *testing.T) {
++	d := Decide(Event{Class: ClassWrongResult, Attempt: 1, MaxAttempts: 3})
++	if d.Action != ActionReplan {
++		t.Errorf("verification failure should replan (not blind retry), got %+v", d)
++	}
++}
++
++func TestDecide_ContextOverflowRefreshes(t *testing.T) {
++	if d := Decide(Event{Class: ClassContextOverflow, Attempt: 1, MaxAttempts: 3}); d.Action != ActionRefreshContext {
++		t.Errorf("context overflow should refresh_context, got %+v", d)
++	}
++}
++
++func TestDecide_UnknownRetryThenReplan(t *testing.T) {
++	if d := Decide(Event{Class: ClassUnknown, Attempt: 1, MaxAttempts: 4}); d.Action != ActionRetry {
++		t.Errorf("unknown attempt 1 should retry, got %+v", d)
++	}
++	if d := Decide(Event{Class: ClassUnknown, Attempt: 2, MaxAttempts: 4}); d.Action != ActionReplan {
++		t.Errorf("unknown attempt 2 should replan, got %+v", d)
++	}
++}
++
++func TestDecide_BudgetAndAliasesAndDeterminism(t *testing.T) {
++	// default budget = 3 when unset.
++	d := Decide(Event{Class: ClassTimeout, Attempt: 1})
++	if d.Budget.MaxAttempts != 3 || d.Budget.Remaining != 2 {
++		t.Errorf("default budget should be 3 (remaining 2), got %+v", d.Budget)
++	}
++	// alias normalization: "429" → rate_limit, "403" → auth.
++	if Decide(Event{Class: "429", Attempt: 1}).Action != ActionBackoffRetry {
++		t.Error("'429' should normalize to rate_limit")
++	}
++	if Decide(Event{Class: "403", Attempt: 1}).Action != ActionEscalate {
++		t.Error("'403' should normalize to auth")
++	}
++	// deterministic.
++	e := Event{Class: ClassToolError, Attempt: 2, MaxAttempts: 5, Agent: "x"}
++	if Decide(e) != Decide(e) {
++		t.Error("Decide must be deterministic")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/riskreason/riskreason.go b/yagura-v0.35.0/internal/riskreason/riskreason.go
