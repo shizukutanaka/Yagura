@@ -126,7 +126,7 @@ index 47411e5..9739b1c 100644
      labels:
        - dependencies
 diff --git a/yagura-v0.35.0/.github/workflows/ci.yml b/yagura-v0.35.0/.github/workflows/ci.yml
-index 63e57d5..4158e72 100644
+index 63e57d5..8f5bc16 100644
 --- a/yagura-v0.35.0/.github/workflows/ci.yml
 +++ b/yagura-v0.35.0/.github/workflows/ci.yml
 @@ -27,10 +27,10 @@ jobs:
@@ -177,7 +177,7 @@ index 63e57d5..4158e72 100644
          with:
            go-version-file: go.mod
            cache: true
-@@ -107,3 +107,34 @@ jobs:
+@@ -107,3 +107,35 @@ jobs:
  
        - name: Fuzz aiverify.Scan
          run: go test -fuzz=FuzzScan -fuzztime=10s ./internal/aiverify/
@@ -205,13 +205,14 @@ index 63e57d5..4158e72 100644
 +          ./yagura publicity-scan --strict --dir docs
 +          ./yagura publicity-scan --strict README.md
 +
-+      # Dogfood the .claude/ artifact audits on yagura's own config (report mode).
++      # Dogfood the .claude/ artifact audits on yagura's own config — as real
++      # gates (--min-score): a regression that drops a score fails the job.
 +      - name: Self-audit .claude artifacts
 +        run: |
-+          ./yagura skill-audit --dir .claude/skills
-+          ./yagura settings-audit --dir .claude
-+          ./yagura plugin-audit .claude-plugin/plugin.json
-+          ./yagura plugin-audit .claude-plugin/marketplace.json
++          ./yagura skill-audit --dir .claude/skills --min-score 90
++          ./yagura settings-audit --dir .claude --min-score 90
++          ./yagura plugin-audit .claude-plugin/plugin.json --min-score 90
++          ./yagura plugin-audit .claude-plugin/marketplace.json --min-score 90
 diff --git a/yagura-v0.35.0/.github/workflows/release.yml b/yagura-v0.35.0/.github/workflows/release.yml
 index 6fc4715..34fe274 100644
 --- a/yagura-v0.35.0/.github/workflows/release.yml
@@ -228,10 +229,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..e3dc512 100644
+index 9b29eec..b69fee1 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,237 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,247 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -451,6 +452,16 @@ index 9b29eec..e3dc512 100644
 +    を自分の `.claude` 成果物に対して走らせる(report)。Action は既存と同じ
 +    検証済み SHA で pin。ローカルで全ゲートが pass する事を確認済み(現状クリーン)。
 +  - 回帰テスト `TestCLI_PublicityScanStrict`(clean→0 / leak→非0 / 非strict→0)。
++- **監査 CLI を CI ゲート化(publish-gate の強化)**。`--strict`(publicity-scan)に
++  続き、score を出す 5 監査 CLI(`skill-audit` / `workflow-audit` / `settings-audit` /
++  `agent-config-audit` / `plugin-audit`)に **`--min-score N`** を追加: いずれかの
++  item が N 未満なら非ゼロ終了(0=off で従来どおり report-only・後方互換)。共有
++  ヘルパ `minScoreGate` で実装し決定論的な違反順序。これにより CI の `publish-gate`
++  job が監査を report ではなく**実ゲート**として実行できるようになり、`skill-audit`
++  `settings-audit` `plugin-audit` を `--min-score 90` で yagura 自身の `.claude`
++  成果物に適用(現状すべて 100 点で pass、スコア低下で fail)。回帰テスト
++  `TestCLI_AuditMinScoreGate`(default→0 / floor超過→非0 / 低floor→0)。
++  stdlib のみ、tool 数(53)不変。
 +
 +### What's not yet
 +
@@ -580,10 +591,10 @@ index 986f84e..c592796 100644
  
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..c65fe99
+index 0000000..7ae323a
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,1172 @@
+@@ -0,0 +1,1217 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -1200,11 +1211,31 @@ index 0000000..c65fe99
 +// cliSkillAudit は dir 配下の SKILL.md を走査し、品質スコアと retire 候補を
 +// まとめて報告する(MUSE-Autoskill のライブラリ単位の self-cleaning を CLI で
 +// 実用化)。disk 走査なので MCP の単発 yagura_skill_audit ではなく CLI 側に置く。
++// minScoreGate は --min-score 用の CI ゲート。score < min の item があれば error
++// を返す(min<=0 で無効)。結果自体は呼び出し側で既に出力済み。決定論的な順序。
++func minScoreGate(min int, scored map[string]int) error {
++	if min <= 0 {
++		return nil
++	}
++	var below []string
++	for path, sc := range scored {
++		if sc < min {
++			below = append(below, fmt.Sprintf("%s (%d)", path, sc))
++		}
++	}
++	if len(below) == 0 {
++		return nil
++	}
++	sort.Strings(below)
++	return fmt.Errorf("%d item(s) below --min-score %d: %s", len(below), min, strings.Join(below, ", "))
++}
++
 +func cliSkillAudit(args []string, stdout, stderr io.Writer) error {
 +	fs := newFlagSet("skill-audit", stderr)
 +	jsonOut := fs.Bool("json", false, "JSON output")
 +	dir := fs.String("dir", ".claude/skills", "directory to scan for SKILL.md files")
 +	retireOnly := fs.Bool("retire-only", false, "show only retire candidates")
++	minScore := fs.Int("min-score", 0, "exit non-zero if any skill scores below N (CI gate; 0=off)")
 +	if err := fs.Parse(args); err != nil {
 +		return errUsage
 +	}
@@ -1213,6 +1244,7 @@ index 0000000..c65fe99
 +		return err
 +	}
 +	entries := make([]skillAuditEntry, 0, len(paths))
++	scored := make(map[string]int, len(paths))
 +	retireCount := 0
 +	for _, p := range paths {
 +		data, err := os.ReadFile(p)
@@ -1220,6 +1252,7 @@ index 0000000..c65fe99
 +			return fmt.Errorf("read %s: %w", p, err)
 +		}
 +		res := harness.AuditSkill(string(data))
++		scored[p] = res.Score
 +		if res.RetireRecommended {
 +			retireCount++
 +		}
@@ -1229,14 +1262,17 @@ index 0000000..c65fe99
 +		entries = append(entries, skillAuditEntry{Path: p, SkillAuditResult: res})
 +	}
 +	if *jsonOut {
-+		return emitJSON(stdout, map[string]any{
++		if err := emitJSON(stdout, map[string]any{
 +			"scanned":           len(paths),
 +			"retire_candidates": retireCount,
 +			"skills":            entries,
-+		})
++		}); err != nil {
++			return err
++		}
++	} else {
++		humanSkillAudit(stdout, entries, len(paths), retireCount)
 +	}
-+	humanSkillAudit(stdout, entries, len(paths), retireCount)
-+	return nil
++	return minScoreGate(*minScore, scored)
 +}
 +
 +// findSkillFiles は dir 配下(再帰)の "SKILL.md" を slug 昇順で返す。
@@ -1276,6 +1312,7 @@ index 0000000..c65fe99
 +	jsonOut := fs.Bool("json", false, "JSON output")
 +	dir := fs.String("dir", ".claude/workflows", "directory to scan for workflow .js/.mjs files")
 +	flaggedOnly := fs.Bool("flagged-only", false, "show only workflows with at least one issue")
++	minScore := fs.Int("min-score", 0, "exit non-zero if any workflow scores below N (CI gate; 0=off)")
 +	if err := fs.Parse(args); err != nil {
 +		return errUsage
 +	}
@@ -1284,6 +1321,7 @@ index 0000000..c65fe99
 +		return err
 +	}
 +	entries := make([]workflowAuditEntry, 0, len(paths))
++	scored := make(map[string]int, len(paths))
 +	flaggedCount := 0
 +	for _, p := range paths {
 +		data, err := os.ReadFile(p)
@@ -1291,6 +1329,7 @@ index 0000000..c65fe99
 +			return fmt.Errorf("read %s: %w", p, err)
 +		}
 +		res := harness.AuditWorkflow(string(data))
++		scored[p] = res.Score
 +		if len(res.Issues) > 0 {
 +			flaggedCount++
 +		}
@@ -1300,14 +1339,17 @@ index 0000000..c65fe99
 +		entries = append(entries, workflowAuditEntry{Path: p, WorkflowAuditResult: res})
 +	}
 +	if *jsonOut {
-+		return emitJSON(stdout, map[string]any{
++		if err := emitJSON(stdout, map[string]any{
 +			"scanned":   len(paths),
 +			"flagged":   flaggedCount,
 +			"workflows": entries,
-+		})
++		}); err != nil {
++			return err
++		}
++	} else {
++		humanWorkflowAudit(stdout, entries, len(paths), flaggedCount)
 +	}
-+	humanWorkflowAudit(stdout, entries, len(paths), flaggedCount)
-+	return nil
++	return minScoreGate(*minScore, scored)
 +}
 +
 +// findWorkflowFiles は dir 配下(再帰)の *.js / *.mjs を path 昇順で返す。
@@ -1351,11 +1393,13 @@ index 0000000..c65fe99
 +	fs := newFlagSet("settings-audit", stderr)
 +	jsonOut := fs.Bool("json", false, "JSON output")
 +	dir := fs.String("dir", ".claude", "directory to scan for settings.json / settings.local.json")
++	minScore := fs.Int("min-score", 0, "exit non-zero if any settings file scores below N (CI gate; 0=off)")
 +	if err := fs.Parse(args); err != nil {
 +		return errUsage
 +	}
 +	paths := findSettingsFiles(*dir)
 +	entries := make([]settingsAuditEntry, 0, len(paths))
++	scored := make(map[string]int, len(paths))
 +	flaggedCount := 0
 +	for _, p := range paths {
 +		data, err := os.ReadFile(p)
@@ -1363,20 +1407,24 @@ index 0000000..c65fe99
 +			return fmt.Errorf("read %s: %w", p, err)
 +		}
 +		res := harness.AuditSettings(string(data))
++		scored[p] = res.Score
 +		if len(res.Issues) > 0 {
 +			flaggedCount++
 +		}
 +		entries = append(entries, settingsAuditEntry{Path: p, SettingsAuditResult: res})
 +	}
 +	if *jsonOut {
-+		return emitJSON(stdout, map[string]any{
++		if err := emitJSON(stdout, map[string]any{
 +			"scanned":  len(paths),
 +			"flagged":  flaggedCount,
 +			"settings": entries,
-+		})
++		}); err != nil {
++			return err
++		}
++	} else {
++		humanSettingsAudit(stdout, entries, len(paths), flaggedCount)
 +	}
-+	humanSettingsAudit(stdout, entries, len(paths), flaggedCount)
-+	return nil
++	return minScoreGate(*minScore, scored)
 +}
 +
 +// findSettingsFiles は dir 直下の settings.json / settings.local.json のうち実在
@@ -1402,6 +1450,7 @@ index 0000000..c65fe99
 +	fs := newFlagSet("agent-config-audit", stderr)
 +	jsonOut := fs.Bool("json", false, "JSON output")
 +	file := fs.String("file", "openclaw.json", "path to the OpenClaw-style agent config JSON")
++	minScore := fs.Int("min-score", 0, "exit non-zero if the config scores below N (CI gate; 0=off)")
 +	rest, err := parseArgs(fs, args)
 +	if err != nil {
 +		return errUsage
@@ -1429,14 +1478,17 @@ index 0000000..c65fe99
 +	}
 +	entry := agentConfigAuditEntry{Path: path, AgentConfigAuditResult: res}
 +	if *jsonOut {
-+		return emitJSON(stdout, map[string]any{
++		if err := emitJSON(stdout, map[string]any{
 +			"scanned": 1,
 +			"flagged": flagged,
 +			"configs": []agentConfigAuditEntry{entry},
-+		})
++		}); err != nil {
++			return err
++		}
++	} else {
++		humanAgentConfigAudit(stdout, entry, flagged)
 +	}
-+	humanAgentConfigAudit(stdout, entry, flagged)
-+	return nil
++	return minScoreGate(*minScore, map[string]int{path: res.Score})
 +}
 +
 +// agentConfigAuditEntry は 1 つの openclaw.json の監査結果(path 付き)。
@@ -1451,6 +1503,7 @@ index 0000000..c65fe99
 +	fs := newFlagSet("plugin-audit", stderr)
 +	jsonOut := fs.Bool("json", false, "JSON output")
 +	file := fs.String("file", ".claude-plugin/plugin.json", "path to plugin.json or marketplace.json")
++	minScore := fs.Int("min-score", 0, "exit non-zero if the manifest scores below N (CI gate; 0=off)")
 +	rest, err := parseArgs(fs, args)
 +	if err != nil {
 +		return errUsage
@@ -1477,14 +1530,17 @@ index 0000000..c65fe99
 +	}
 +	entry := pluginAuditEntry{Path: path, PluginAuditResult: res}
 +	if *jsonOut {
-+		return emitJSON(stdout, map[string]any{
++		if err := emitJSON(stdout, map[string]any{
 +			"scanned":   1,
 +			"flagged":   flagged,
 +			"manifests": []pluginAuditEntry{entry},
-+		})
++		}); err != nil {
++			return err
++		}
++	} else {
++		humanPluginAudit(stdout, entry, flagged)
 +	}
-+	humanPluginAudit(stdout, entry, flagged)
-+	return nil
++	return minScoreGate(*minScore, map[string]int{path: res.Score})
 +}
 +
 +// pluginAuditEntry は 1 つの plugin/marketplace manifest の監査結果(path 付き)。
@@ -2204,10 +2260,10 @@ index 0000000..08fe122
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
 new file mode 100644
-index 0000000..08af4db
+index 0000000..b176013
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
-@@ -0,0 +1,616 @@
+@@ -0,0 +1,648 @@
 +package main
 +
 +import (
@@ -2822,6 +2878,38 @@ index 0000000..08af4db
 +	// without --strict, the same leak exits 0 (report-only).
 +	if code2, _, _ := runCLICapture(t, "publicity-scan", "--dir", dir); code2 != 0 {
 +		t.Errorf("non-strict should exit 0 even with findings, got %d", code2)
++	}
++}
++
++func TestCLI_AuditMinScoreGate(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	dir := t.TempDir()
++	mustSkill := func(sub, content string) {
++		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
++			t.Fatal(err)
++		}
++		if err := os.WriteFile(filepath.Join(dir, sub, "SKILL.md"), []byte(content), 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++	mustSkill("good", "---\nname: go-test\ndescription: Use when the user asks to fix Go tests.\n---\n\n# Go\n\n## Gotchas\n\n- use t.TempDir\n")
++	mustSkill("stub", "# placeholder\n\nTODO\n") // low score / retire candidate
++
++	// no --min-score → exit 0 even with a weak skill (report-only, backward compat).
++	if code, _, _ := runCLICapture(t, "skill-audit", "--dir", dir); code != 0 {
++		t.Errorf("default skill-audit should exit 0, got %d", code)
++	}
++	// --min-score 90 → the stub is below the floor → non-zero exit, reason on stderr.
++	code, _, errOut := runCLICapture(t, "skill-audit", "--dir", dir, "--min-score", "90")
++	if code == 0 {
++		t.Errorf("--min-score 90 should fail when a skill is below floor")
++	}
++	if !strings.Contains(errOut, "min-score") {
++		t.Errorf("stderr should explain the min-score failure, got %q", errOut)
++	}
++	// a low floor everything clears → exit 0.
++	if code2, _, _ := runCLICapture(t, "skill-audit", "--dir", dir, "--min-score", "1"); code2 != 0 {
++		t.Errorf("--min-score 1 should pass, got %d", code2)
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
