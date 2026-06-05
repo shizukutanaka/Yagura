@@ -1,8 +1,82 @@
+diff --git a/yagura-v0.35.0/.claude-plugin/marketplace.json b/yagura-v0.35.0/.claude-plugin/marketplace.json
+new file mode 100644
+index 0000000..0093a88
+--- /dev/null
++++ b/yagura-v0.35.0/.claude-plugin/marketplace.json
+@@ -0,0 +1,17 @@
++{
++  "$schema": "https://json.schemastore.org/claude-code-marketplace-manifest.json",
++  "name": "yagura",
++  "owner": {
++    "name": "shizukutanaka"
++  },
++  "description": "Yagura — a zero-dependency Go MCP server for orchestrating a solo-dev project portfolio, installable as a Claude Code plugin.",
++  "plugins": [
++    {
++      "name": "yagura",
++      "source": "./",
++      "description": "Portfolio orchestrator MCP server + the yagura skill and reviewer agent.",
++      "category": "productivity",
++      "keywords": ["mcp", "portfolio", "security", "orchestrator"]
++    }
++  ]
++}
+diff --git a/yagura-v0.35.0/.claude-plugin/plugin.json b/yagura-v0.35.0/.claude-plugin/plugin.json
+new file mode 100644
+index 0000000..16ce440
+--- /dev/null
++++ b/yagura-v0.35.0/.claude-plugin/plugin.json
+@@ -0,0 +1,32 @@
++{
++  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
++  "name": "yagura",
++  "displayName": "Yagura",
++  "version": "0.35.0",
++  "description": "Zero-dependency Go MCP server for orchestrating a solo-dev project portfolio: registry, security sensors (SBOM/vulns/secrets/GHA/pin-drift), harness artifacts, composite risk reasoning, and .claude/ artifact auditing.",
++  "author": {
++    "name": "shizukutanaka",
++    "url": "https://github.com/shizukutanaka/yagura"
++  },
++  "homepage": "https://github.com/shizukutanaka/yagura",
++  "repository": "https://github.com/shizukutanaka/yagura",
++  "license": "MIT",
++  "keywords": [
++    "mcp",
++    "portfolio",
++    "orchestrator",
++    "security",
++    "sbom",
++    "vulnerability",
++    "harness",
++    "risk-reasoning"
++  ],
++  "skills": ["./.claude/skills/"],
++  "agents": ["./.claude/agents/yagura-reviewer.md"],
++  "mcpServers": {
++    "yagura": {
++      "type": "http",
++      "url": "http://127.0.0.1:8090/mcp"
++    }
++  }
++}
+diff --git a/yagura-v0.35.0/.claude/skills/yagura/SKILL.md b/yagura-v0.35.0/.claude/skills/yagura/SKILL.md
+index 53c27ee..b24842c 100644
+--- a/yagura-v0.35.0/.claude/skills/yagura/SKILL.md
++++ b/yagura-v0.35.0/.claude/skills/yagura/SKILL.md
+@@ -5,7 +5,7 @@ description: Use when the user asks about portfolio status, project registry, de
+ 
+ # yagura — Portfolio Orchestrator Skill
+ 
+-yagura is a long-running daemon that manages m's 23+ project portfolio. It exposes 30 MCP tools. Call them via the local MCP endpoint instead of guessing portfolio state from memory.
++yagura is a long-running daemon that manages m's 23+ project portfolio. It exposes 48 MCP tools. Call them via the local MCP endpoint instead of guessing portfolio state from memory.
+ 
+ ## Mental model
+ 
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..d455526 100644
+index 9b29eec..374169a 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,148 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,164 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -133,6 +207,22 @@ index 9b29eec..d455526 100644
 +  score 降順で根拠付き triage を返す。Yagura は判断を自動実行せず、人間(SOC/CSIRT/
 +  脆弱性管理/経営)が検証できる形(audit log + Human-in-the-Loop 前提)。新 package
 +  `internal/riskreason`、tool 数 47 → **48**(40 → 41 packages)。stdlib のみ。
++- **Claude Code プラグイン化 + `yagura plugin-audit`**
++  (`internal/harness/plugin_audit.go` / `.claude-plugin/`)。Claude Code の
++  プラグインは skills/commands/hooks/agents/MCP server をまとめて配布する仕組み。
++  Yagura はその全部品を既に持つので、**プラグイン manifest を同梱して installable に
++  した**:`.claude-plugin/plugin.json`(既存の `yagura` skill + `yagura-reviewer`
++  agent + MCP server 接続を束ねる)と `.claude-plugin/marketplace.json`
++  (`claude plugin marketplace add shizukutanaka/yagura` → `claude plugin install
++  yagura@yagura`)。あわせて、`.claude/` artifact 監査ファミリ(skill/subagent/
++  workflow/settings/agent-config)に **plugin** を追加: `AuditPluginManifest` が
++  plugin.json / marketplace.json を content から自動判定し、name の kebab-case、
++  component path の `./` 始まり・`../` traversal 禁止、mcpServers inline entry の
++  command/url、marketplace の owner.name / plugin source / 重複名などを検査する
++  (公式 plugins-reference / plugin-marketplaces のルール準拠)。CLI
++  `yagura plugin-audit [file]`(`--json`)。yagura 自身の plugin.json /
++  marketplace.json は 100 点(dogfood)。同梱 SKILL.md のツール数表記を 30 → 48 に
++  更新。disk 読みなので CLI 側、MCP tool 数(48)不変。stdlib `encoding/json` のみ。
 +
 +### What's not yet
 +
@@ -152,7 +242,7 @@ index 9b29eec..d455526 100644
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..9b7a671 100644
+index 986f84e..c3f8fb8 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -173,7 +263,29 @@ index 986f84e..9b7a671 100644
  │  │  - HTTP hook receiver                          │  │
  │  │  - Prometheus /metrics                         │  │
  │  │  - .well-known/mcp (2026 spec)                 │  │
-@@ -151,7 +151,7 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
+@@ -96,6 +96,21 @@ Requires Go 1.22+. No other build tools.
+ make build-all          # → bin/yagura-{linux,darwin,windows}-{amd64,arm64}{.exe}
+ ```
+ 
++### As a Claude Code plugin
++
++Yagura ships a plugin manifest (`.claude-plugin/`) that bundles the `yagura`
++skill, the `yagura-reviewer` agent, and the MCP server connection. Add this repo
++as a marketplace and install:
++
++```bash
++claude plugin marketplace add shizukutanaka/yagura
++claude plugin install yagura@yagura
++```
++
++The plugin connects to a locally running `yagura` daemon (HTTP MCP at
++`127.0.0.1:8090`), so start `yagura` first. Validate the manifest with
++`yagura plugin-audit`.
++
+ ## Quickstart
+ 
+ ```bash
+@@ -151,7 +166,7 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
  
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
  
@@ -182,7 +294,7 @@ index 986f84e..9b7a671 100644
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
-@@ -166,6 +166,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -166,6 +181,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  | Handoff | 8 tools | Plan / Run / Handoff for cross-session work |
  | Observability | `hook_timeline`, `hook_stats`, `agent_status`, `quota_report` | Claude Code activity |
  | Graph | 3 tools | Cross-project dependencies |
@@ -192,10 +304,10 @@ index 986f84e..9b7a671 100644
  
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..bc2e948
+index 0000000..a299a25
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,1025 @@
+@@ -0,0 +1,1075 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -258,7 +370,7 @@ index 0000000..bc2e948
 +	"register": true, "update": true, "unregister": true,
 +	"sbom": true, "secretscan": true, "gha-audit": true, "pin-drift": true,
 +	"skill-audit": true, "workflow-audit": true, "settings-audit": true,
-+	"agent-config-audit": true,
++	"agent-config-audit": true, "plugin-audit": true,
 +}
 +
 +// runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -295,6 +407,8 @@ index 0000000..bc2e948
 +		err = cliSettingsAudit(args, stdout, stderr)
 +	case "agent-config-audit":
 +		err = cliAgentConfigAudit(args, stdout, stderr)
++	case "plugin-audit":
++		err = cliPluginAudit(args, stdout, stderr)
 +	default:
 +		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 +		return 2
@@ -1052,6 +1166,54 @@ index 0000000..bc2e948
 +	harness.AgentConfigAuditResult
 +}
 +
++// cliPluginAudit は Claude Code プラグイン / マーケットプレイス manifest を監査する。
++// content から plugin / marketplace を自動判定。単一ファイルなので --file(or 位置引数)。
++func cliPluginAudit(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("plugin-audit", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	file := fs.String("file", ".claude-plugin/plugin.json", "path to plugin.json or marketplace.json")
++	rest, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	path := *file
++	if len(rest) > 0 {
++		path = rest[0]
++	}
++	if _, err := os.Stat(path); os.IsNotExist(err) {
++		if *jsonOut {
++			return emitJSON(stdout, map[string]any{"scanned": 0, "flagged": 0, "manifests": []any{}})
++		}
++		fmt.Fprintln(stdout, "scanned: 0   flagged: 0")
++		return nil
++	}
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return fmt.Errorf("read %s: %w", path, err)
++	}
++	res := harness.AuditPluginManifest(string(data))
++	flagged := 0
++	if len(res.Issues) > 0 {
++		flagged = 1
++	}
++	entry := pluginAuditEntry{Path: path, PluginAuditResult: res}
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{
++			"scanned":   1,
++			"flagged":   flagged,
++			"manifests": []pluginAuditEntry{entry},
++		})
++	}
++	humanPluginAudit(stdout, entry, flagged)
++	return nil
++}
++
++// pluginAuditEntry は 1 つの plugin/marketplace manifest の監査結果(path 付き)。
++type pluginAuditEntry struct {
++	Path string `json:"path"`
++	harness.PluginAuditResult
++}
++
 +// ─── shared helpers ──────────────────────────────────────────
 +
 +// filterProjects は stage/tag/language/query で registry を絞り込む。
@@ -1223,10 +1385,10 @@ index 0000000..bc2e948
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
 new file mode 100644
-index 0000000..0094baa
+index 0000000..2a477ec
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
-@@ -0,0 +1,409 @@
+@@ -0,0 +1,423 @@
 +// cli_format.go: output formatters for CLI direct mode (v0.35.0).
 +//
 +// 2 つの出力経路:
@@ -1621,6 +1783,20 @@ index 0000000..0094baa
 +	}
 +}
 +
++// ─── plugin-audit ────────────────────────────────────────────
++
++func humanPluginAudit(w io.Writer, e pluginAuditEntry, flagged int) {
++	fmt.Fprintf(w, "scanned: 1   flagged: %d\n", flagged)
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	fmt.Fprintln(tw, "SCORE\tKIND\tNAME\tCOMPONENTS\tPATH")
++	fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n",
++		e.Score, e.Kind, dash(e.Name), dash(strings.Join(e.Components, ",")), e.Path)
++	_ = tw.Flush()
++	for _, iss := range e.Issues {
++		fmt.Fprintf(w, "  %s: %s\n", e.Path, iss)
++	}
++}
++
 +// ─── small helpers ───────────────────────────────────────────
 +
 +func dash(s string) string {
@@ -1638,10 +1814,10 @@ index 0000000..0094baa
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
 new file mode 100644
-index 0000000..5b35646
+index 0000000..854c06b
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
-@@ -0,0 +1,497 @@
+@@ -0,0 +1,542 @@
 +package main
 +
 +import (
@@ -2139,6 +2315,51 @@ index 0000000..5b35646
 +		t.Errorf("missing file: code=%d out=%q", code, mout)
 +	}
 +}
++
++func TestCLI_PluginAudit(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	dir := t.TempDir()
++	// a plugin.json with a non-kebab name + non-relative agent path → flagged.
++	plugin := `{"name":"My_Plugin","agents":["agents/x.md"]}`
++	ppath := filepath.Join(dir, "plugin.json")
++	if err := os.WriteFile(ppath, []byte(plugin), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	_, out, _ := runCLICapture(t, "plugin-audit", "--file", ppath, "--json")
++	var r struct {
++		Scanned   int `json:"scanned"`
++		Flagged   int `json:"flagged"`
++		Manifests []struct {
++			Kind      string `json:"kind"`
++			Score     int    `json:"score"`
++			NameValid bool   `json:"name_valid"`
++		} `json:"manifests"`
++	}
++	if err := json.Unmarshal([]byte(out), &r); err != nil {
++		t.Fatalf("json: %v\n%s", err, out)
++	}
++	if r.Scanned != 1 || r.Flagged != 1 {
++		t.Errorf("expected scanned=1 flagged=1, got %+v", r)
++	}
++	if len(r.Manifests) != 1 || r.Manifests[0].Kind != "plugin" || r.Manifests[0].NameValid {
++		t.Errorf("expected a flagged plugin with invalid name, got %+v", r.Manifests)
++	}
++
++	// a marketplace.json is auto-detected.
++	mkt := `{"name":"mk","owner":{"name":"o"},"plugins":[{"name":"p","source":"./p"}]}`
++	mpath := filepath.Join(dir, "marketplace.json")
++	if err := os.WriteFile(mpath, []byte(mkt), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	if _, mout, _ := runCLICapture(t, "plugin-audit", mpath); !strings.Contains(mout, "marketplace") {
++		t.Errorf("marketplace should be auto-detected: %q", mout)
++	}
++
++	// missing file → scanned 0, exit 0.
++	if code, nout, _ := runCLICapture(t, "plugin-audit", "--file", filepath.Join(dir, "nope.json")); code != 0 || !strings.Contains(nout, "scanned: 0") {
++		t.Errorf("missing file: code=%d out=%q", code, nout)
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
 index cfb6e51..9dad632 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
@@ -2153,7 +2374,7 @@ index cfb6e51..9dad632 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..2b1eda0 100644
+index bd1fe39..e76bcd1 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -57,7 +57,7 @@ import (
@@ -2176,7 +2397,7 @@ index bd1fe39..2b1eda0 100644
  	}
  	if err := run(); err != nil {
  		fmt.Fprintf(stderr, "yagura: %v\n", err)
-@@ -128,6 +132,17 @@ Usage:
+@@ -128,6 +132,18 @@ Usage:
    yagura secret get <name>     Decrypt and print <name> to stdout
    yagura secret delete <name>  Remove <name>
  
@@ -2188,13 +2409,14 @@ index bd1fe39..2b1eda0 100644
 +  yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)
 +  yagura settings-audit                    Audit .claude/settings.json (permissions/hooks)
 +  yagura agent-config-audit [file]         Audit OpenClaw-style openclaw.json (security/reliability)
++  yagura plugin-audit [file]               Audit Claude Code plugin.json / marketplace.json
 +  Add --json to any of the above for machine-readable output.
 +  pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
 +
  Set passphrase via YAGURA_SECRET_PASSPHRASE for set/get.
  Configuration is via environment variables. See documentation.
  `
-@@ -152,11 +167,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
+@@ -152,11 +168,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
  		return nil
  	}
  
@@ -2209,7 +2431,7 @@ index bd1fe39..2b1eda0 100644
  	if err != nil {
  		return fmt.Errorf("init store: %w", err)
  	}
-@@ -239,15 +255,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
+@@ -239,15 +256,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
  // この関数は GITHUB_TOKEN を読まない — verify は通常運用とは独立して
  // オフラインでも実行できる(disaster recovery を意識)。
  func verifyAudit(out io.Writer) error {
@@ -3407,6 +3629,442 @@ index fbc29eb..766c691 100644
  func TestAuditSkill_VagueDescription(t *testing.T) {
  	content := `---
  name: helper
+diff --git a/yagura-v0.35.0/internal/harness/plugin_audit.go b/yagura-v0.35.0/internal/harness/plugin_audit.go
+new file mode 100644
+index 0000000..6f238a3
+--- /dev/null
++++ b/yagura-v0.35.0/internal/harness/plugin_audit.go
+@@ -0,0 +1,300 @@
++// plugin_audit.go: Claude Code プラグイン / マーケットプレイス manifest の heuristic 評価。
++//
++// Claude Code のプラグインは skills / commands / hooks / agents / MCP server を 1 つに
++// まとめて配布する仕組みで、`.claude-plugin/plugin.json`(plugin)と
++// `.claude-plugin/marketplace.json`(marketplace)が manifest。公式ドキュメント
++// (code.claude.com/docs/en/plugins-reference, plugin-marketplaces)の構造ルールを
++// 構造ベースの lint rule にする:
++//
++//	plugin.json:
++//	  - name 必須 + kebab-case(^[a-z0-9-]+$)。namespacing /<plugin>:<command> の鍵
++//	  - component path 群(skills/commands/agents/hooks/mcpServers/...)は "./" 始まりの
++//	    相対 path、`../`(path traversal)禁止
++//	  - mcpServers の inline entry は command か url を持つ
++//	  - version は semver 形式(任意)
++//	marketplace.json:
++//	  - name(kebab)/ owner.name / plugins[] 必須
++//	  - plugin name は kebab かつ unique、source は相対 path("./" 始まり)か object
++//
++// AuditSkill / AuditSubagent / AuditWorkflow / AuditSettings / AuditAgentConfig と同じ
++// shape(Score + Issues + Suggestions)。stdlib encoding/json のみ(ADR-0001)。
++package harness
++
++import (
++	"encoding/json"
++	"fmt"
++	"regexp"
++	"sort"
++	"strings"
++)
++
++// PluginAuditResult は plugin.json / marketplace.json 評価結果。
++type PluginAuditResult struct {
++	Score       int      `json:"score"`
++	Kind        string   `json:"kind"` // "plugin" | "marketplace"
++	ValidJSON   bool     `json:"valid_json"`
++	Name        string   `json:"name,omitempty"`
++	NameValid   bool     `json:"name_valid"`
++	Components  []string `json:"components,omitempty"` // plugin: 宣言された component 種別 / marketplace: plugin 名
++	Issues      []string `json:"issues,omitempty"`
++	Suggestions []string `json:"suggestions,omitempty"`
++}
++
++var (
++	reKebab  = regexp.MustCompile(`^[a-z0-9-]+$`)
++	reSemver = regexp.MustCompile(`^\d+\.\d+\.\d+([-+].*)?$`)
++)
++
++// AuditPluginManifest は content を plugin / marketplace のどちらかと判定して評価する。
++// marketplace は top-level に "plugins"(配列)と "owner" を持つことで判別する。
++func AuditPluginManifest(content string) PluginAuditResult {
++	var top map[string]json.RawMessage
++	if err := json.Unmarshal([]byte(content), &top); err != nil {
++		return PluginAuditResult{Score: 0, ValidJSON: false, Kind: "plugin",
++			Issues:      []string{"invalid JSON — Claude Code cannot load this manifest at all"},
++			Suggestions: []string{"plugin.json / marketplace.json must be strict JSON."}}
++	}
++	if _, hasPlugins := top["plugins"]; hasPlugins {
++		if _, hasOwner := top["owner"]; hasOwner {
++			return auditMarketplace(top)
++		}
++	}
++	return auditPlugin(top)
++}
++
++func auditPlugin(top map[string]json.RawMessage) PluginAuditResult {
++	r := PluginAuditResult{Score: 100, Kind: "plugin", ValidJSON: true}
++
++	r.Name = jsonString(top["name"])
++	if r.Name == "" {
++		r.Score -= 30
++		r.Issues = append(r.Issues, "missing 'name' — required, and the namespacing key for /<plugin>:<command>")
++	} else if !reKebab.MatchString(r.Name) {
++		r.Score -= 20
++		r.Issues = append(r.Issues, fmt.Sprintf("name %q is not kebab-case (^[a-z0-9-]+$) — no spaces/uppercase/underscore", r.Name))
++	} else {
++		r.NameValid = true
++	}
++
++	if v := jsonString(top["version"]); v != "" && !reSemver.MatchString(v) {
++		r.Score -= 6
++		r.Issues = append(r.Issues, fmt.Sprintf("version %q is not semantic (MAJOR.MINOR.PATCH)", v))
++	}
++	if jsonString(top["description"]) == "" {
++		r.Score -= 3
++		r.Suggestions = append(r.Suggestions, "add a 'description' — shown in the plugin manager.")
++	}
++	// author は object(.name)であるべき。bare string は誤り。
++	if a, ok := top["author"]; ok && len(a) > 0 && a[0] == '"' {
++		r.Score -= 4
++		r.Suggestions = append(r.Suggestions, "author should be an object {name, email?, url?}, not a bare string.")
++	}
++
++	// component path 群(string | []string | inline object)。
++	for _, field := range []string{"skills", "commands", "agents", "hooks", "mcpServers", "lspServers", "outputStyles"} {
++		raw, ok := top[field]
++		if !ok || len(raw) == 0 {
++			continue
++		}
++		r.Components = append(r.Components, field)
++		checkComponentPaths(field, raw, &r)
++	}
++	sort.Strings(r.Components)
++	// mcpServers が inline object なら各 server に command/url が要る。
++	if raw, ok := top["mcpServers"]; ok && len(raw) > 0 && raw[0] == '{' {
++		checkMCPServers(raw, &r)
++	}
++
++	if r.Score < 0 {
++		r.Score = 0
++	}
++	return r
++}
++
++func auditMarketplace(top map[string]json.RawMessage) PluginAuditResult {
++	r := PluginAuditResult{Score: 100, Kind: "marketplace", ValidJSON: true}
++
++	r.Name = jsonString(top["name"])
++	if r.Name == "" {
++		r.Score -= 25
++		r.Issues = append(r.Issues, "missing marketplace 'name' (required)")
++	} else if !reKebab.MatchString(r.Name) {
++		r.Score -= 15
++		r.Issues = append(r.Issues, fmt.Sprintf("marketplace name %q is not kebab-case", r.Name))
++	} else {
++		r.NameValid = true
++	}
++
++	// owner.name 必須。
++	ownerName := ""
++	if raw, ok := top["owner"]; ok {
++		var o struct {
++			Name string `json:"name"`
++		}
++		_ = json.Unmarshal(raw, &o)
++		ownerName = o.Name
++	}
++	if ownerName == "" {
++		r.Score -= 15
++		r.Issues = append(r.Issues, "owner.name is required")
++	}
++
++	var plugins []struct {
++		Name        string          `json:"name"`
++		Source      json.RawMessage `json:"source"`
++		Description string          `json:"description"`
++	}
++	_ = json.Unmarshal(top["plugins"], &plugins)
++	if len(plugins) == 0 {
++		r.Score -= 20
++		r.Issues = append(r.Issues, "plugins[] is empty — a marketplace lists at least one plugin")
++	}
++	seen := map[string]bool{}
++	for i, p := range plugins {
++		label := p.Name
++		if label == "" {
++			label = fmt.Sprintf("#%d", i)
++		}
++		r.Components = append(r.Components, label)
++		if p.Name == "" {
++			r.Score -= 10
++			r.Issues = append(r.Issues, fmt.Sprintf("plugin %s: missing name", label))
++		} else if !reKebab.MatchString(p.Name) {
++			r.Score -= 8
++			r.Issues = append(r.Issues, fmt.Sprintf("plugin %q name is not kebab-case", p.Name))
++		}
++		if p.Name != "" {
++			if seen[p.Name] {
++				r.Score -= 10
++				r.Issues = append(r.Issues, fmt.Sprintf("duplicate plugin name %q in plugins[]", p.Name))
++			}
++			seen[p.Name] = true
++		}
++		checkMarketplaceSource(label, p.Source, &r)
++	}
++	sort.Strings(r.Components)
++
++	if r.Score < 0 {
++		r.Score = 0
++	}
++	return r
++}
++
++// ─── helpers ───
++
++// jsonString は RawMessage を string として読む(失敗時 "")。
++func jsonString(raw json.RawMessage) string {
++	if len(raw) == 0 {
++		return ""
++	}
++	var s string
++	if err := json.Unmarshal(raw, &s); err != nil {
++		return ""
++	}
++	return s
++}
++
++// checkComponentPaths は string / []string の path を検証する(object は path 検査対象外)。
++func checkComponentPaths(field string, raw json.RawMessage, r *PluginAuditResult) {
++	var paths []string
++	switch raw[0] {
++	case '"':
++		paths = []string{jsonString(raw)}
++	case '[':
++		_ = json.Unmarshal(raw, &paths)
++	case '{':
++		return // inline object(hooks/mcpServers 等)は path ではない
++	default:
++		return
++	}
++	badRel, traversal := false, false
++	for _, p := range paths {
++		if p == "" {
++			continue
++		}
++		if !strings.HasPrefix(p, "./") {
++			badRel = true
++		}
++		if strings.Contains(p, "../") {
++			traversal = true
++		}
++	}
++	if badRel {
++		r.Score -= 10
++		r.Issues = append(r.Issues, fmt.Sprintf("%s: component paths must be relative and start with \"./\"", field))
++	}
++	if traversal {
++		r.Score -= 15
++		r.Issues = append(r.Issues, fmt.Sprintf("%s: path traversal (\"../\") is not allowed", field))
++	}
++}
++
++// checkMCPServers は inline mcpServers の各 entry に command か url があるか検証する。
++func checkMCPServers(raw json.RawMessage, r *PluginAuditResult) {
++	var servers map[string]struct {
++		Command string `json:"command"`
++		URL     string `json:"url"`
++		Type    string `json:"type"`
++	}
++	if json.Unmarshal(raw, &servers) != nil {
++		return
++	}
++	names := make([]string, 0, len(servers))
++	for n := range servers {
++		names = append(names, n)
++	}
++	sort.Strings(names)
++	for _, n := range names {
++		s := servers[n]
++		if s.Command == "" && s.URL == "" {
++			r.Score -= 10
++			r.Issues = append(r.Issues, fmt.Sprintf("mcp server %q: needs a 'command' (stdio) or a 'url' (http/sse)", n))
++		}
++	}
++}
++
++// checkMarketplaceSource は plugin source(相対 path string か object)を検証する。
++func checkMarketplaceSource(label string, raw json.RawMessage, r *PluginAuditResult) {
++	if len(raw) == 0 {
++		r.Score -= 10
++		r.Issues = append(r.Issues, fmt.Sprintf("plugin %s: missing 'source'", label))
++		return
++	}
++	switch raw[0] {
++	case '"':
++		s := jsonString(raw)
++		if !strings.HasPrefix(s, "./") {
++			r.Score -= 8
++			r.Issues = append(r.Issues, fmt.Sprintf("plugin %s: relative source %q must start with \"./\"", label, s))
++		}
++		if strings.Contains(s, "../") {
++			r.Score -= 12
++			r.Issues = append(r.Issues, fmt.Sprintf("plugin %s: source has path traversal (\"../\")", label))
++		}
++	case '{':
++		var o struct {
++			Source string `json:"source"`
++			Repo   string `json:"repo"`
++			URL    string `json:"url"`
++			Path   string `json:"path"`
++		}
++		_ = json.Unmarshal(raw, &o)
++		switch o.Source {
++		case "github":
++			if o.Repo == "" {
++				r.Score -= 8
++				r.Issues = append(r.Issues, fmt.Sprintf("plugin %s: github source needs 'repo' (owner/repo)", label))
++			}
++		case "git-subdir":
++			if o.URL == "" || o.Path == "" {
++				r.Score -= 8
++				r.Issues = append(r.Issues, fmt.Sprintf("plugin %s: git-subdir source needs both 'url' and 'path'", label))
++			}
++		case "url", "npm", "":
++			// url/npm は最低限の field を持つ前提(ここでは緩く許容)
++		}
++	default:
++		r.Score -= 8
++		r.Issues = append(r.Issues, fmt.Sprintf("plugin %s: source must be a relative path string or an object", label))
++	}
++}
+diff --git a/yagura-v0.35.0/internal/harness/plugin_audit_test.go b/yagura-v0.35.0/internal/harness/plugin_audit_test.go
+new file mode 100644
+index 0000000..7f03d87
+--- /dev/null
++++ b/yagura-v0.35.0/internal/harness/plugin_audit_test.go
+@@ -0,0 +1,124 @@
++package harness
++
++import (
++	"strings"
++	"testing"
++)
++
++func plgIssue(issues []string, substr string) bool {
++	for _, i := range issues {
++		if strings.Contains(i, substr) {
++			return true
++		}
++	}
++	return false
++}
++
++const cleanPlugin = `{
++  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
++  "name": "yagura",
++  "displayName": "Yagura",
++  "version": "0.35.0",
++  "description": "Portfolio orchestrator MCP server.",
++  "author": {"name": "shizukutanaka", "url": "https://github.com/shizukutanaka/yagura"},
++  "license": "MIT",
++  "skills": ["./.claude/skills/"],
++  "agents": ["./.claude/agents/yagura-reviewer.md"],
++  "mcpServers": {"yagura": {"type": "http", "url": "http://127.0.0.1:8090/mcp"}}
++}`
++
++func TestAuditPlugin_Clean(t *testing.T) {
++	r := AuditPluginManifest(cleanPlugin)
++	if r.Kind != "plugin" || !r.ValidJSON || !r.NameValid {
++		t.Fatalf("expected valid plugin, got %+v", r)
++	}
++	if r.Score != 100 {
++		t.Errorf("clean plugin should score 100, got %d (issues %v)", r.Score, r.Issues)
++	}
++	// declared components recorded.
++	want := map[string]bool{"skills": true, "agents": true, "mcpServers": true}
++	for _, c := range r.Components {
++		delete(want, c)
++	}
++	if len(want) != 0 {
++		t.Errorf("missing components in %v", r.Components)
++	}
++}
++
++func TestAuditPlugin_InvalidJSON(t *testing.T) {
++	r := AuditPluginManifest(`{ "name": }`)
++	if r.ValidJSON || r.Score != 0 {
++		t.Errorf("invalid JSON → score 0, got %+v", r)
++	}
++}
++
++func TestAuditPlugin_NameRules(t *testing.T) {
++	missing := AuditPluginManifest(`{"description":"x"}`)
++	if missing.NameValid || !plgIssue(missing.Issues, "missing 'name'") {
++		t.Errorf("expected missing-name issue, got %+v", missing)
++	}
++	bad := AuditPluginManifest(`{"name":"My_Plugin"}`)
++	if bad.NameValid || !plgIssue(bad.Issues, "kebab-case") {
++		t.Errorf("expected kebab-case issue, got %+v", bad)
++	}
++}
++
++func TestAuditPlugin_PathRules(t *testing.T) {
++	notRel := AuditPluginManifest(`{"name":"p","agents":["agents/x.md"]}`)
++	if !plgIssue(notRel.Issues, "start with") {
++		t.Errorf("expected ./ path issue, got %v", notRel.Issues)
++	}
++	traversal := AuditPluginManifest(`{"name":"p","skills":["./../escape/"]}`)
++	if !plgIssue(traversal.Issues, "traversal") {
++		t.Errorf("expected traversal issue, got %v", traversal.Issues)
++	}
++}
++
++func TestAuditPlugin_MCPServerNeedsCommandOrURL(t *testing.T) {
++	r := AuditPluginManifest(`{"name":"p","mcpServers":{"x":{"args":["a"]}}}`)
++	if !plgIssue(r.Issues, "command") {
++		t.Errorf("expected mcp command/url issue, got %v", r.Issues)
++	}
++	ok := AuditPluginManifest(`{"name":"p","mcpServers":{"x":{"command":"./bin/x"}}}`)
++	if plgIssue(ok.Issues, "command") {
++		t.Errorf("command-based server should be fine, got %v", ok.Issues)
++	}
++}
++
++const cleanMarketplace = `{
++  "name": "yagura",
++  "owner": {"name": "shizukutanaka"},
++  "description": "Yagura marketplace.",
++  "plugins": [
++    {"name": "yagura", "source": "./", "description": "Portfolio orchestrator."}
++  ]
++}`
++
++func TestAuditMarketplace_Clean(t *testing.T) {
++	r := AuditPluginManifest(cleanMarketplace)
++	if r.Kind != "marketplace" {
++		t.Fatalf("should detect marketplace, got %q", r.Kind)
++	}
++	if r.Score != 100 || !r.NameValid {
++		t.Errorf("clean marketplace should score 100, got %d (issues %v)", r.Score, r.Issues)
++	}
++}
++
++func TestAuditMarketplace_Rules(t *testing.T) {
++	noOwner := AuditPluginManifest(`{"name":"m","plugins":[{"name":"p","source":"./p"}],"owner":{}}`)
++	if !plgIssue(noOwner.Issues, "owner.name") {
++		t.Errorf("expected owner.name issue, got %v", noOwner.Issues)
++	}
++	dup := AuditPluginManifest(`{"name":"m","owner":{"name":"o"},"plugins":[{"name":"p","source":"./a"},{"name":"p","source":"./b"}]}`)
++	if !plgIssue(dup.Issues, "duplicate") {
++		t.Errorf("expected duplicate issue, got %v", dup.Issues)
++	}
++	badSrc := AuditPluginManifest(`{"name":"m","owner":{"name":"o"},"plugins":[{"name":"p","source":"plugins/p"}]}`)
++	if !plgIssue(badSrc.Issues, "must start with") {
++		t.Errorf("expected source ./ issue, got %v", badSrc.Issues)
++	}
++	githubOK := AuditPluginManifest(`{"name":"m","owner":{"name":"o"},"plugins":[{"name":"p","source":{"source":"github","repo":"o/r"}}]}`)
++	if githubOK.Score != 100 {
++		t.Errorf("github source with repo should be clean, got %d: %v", githubOK.Score, githubOK.Issues)
++	}
++}
 diff --git a/yagura-v0.35.0/internal/harness/settings_audit.go b/yagura-v0.35.0/internal/harness/settings_audit.go
 new file mode 100644
 index 0000000..60bf69d
