@@ -229,10 +229,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..ddd51c7 100644
+index 9b29eec..ff5d104 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,285 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,298 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -500,6 +500,19 @@ index 9b29eec..ddd51c7 100644
 +  新 package `internal/recovery`(42→43)、tool 数 53 → **54**。stdlib のみ
 +  (ADR-0001)。failure class は別名正規化(`429`/`403` 等)。テスト 11 本(各 class、
 +  budget 切れ、低 severity degrade、別名、決定論)+ tool テスト、live dogfood 済み。
++
++- **`risk_triage` を SSVC / EPSS 整合へ(同種ソフト+arXiv research の改善点 B1)**
++  (`internal/riskreason/ssvc.go`)。脆弱性優先度づけの業界標準 **CISA SSVC**(決定論的
++  決定木)と **EPSS**(exploit 予測確率)に整合。SSVC は決定木そのもので Yagura の
++  rule-based 思想に完全適合: Yagura のシグナルを SSVC deployer 決定点(Exploitation/
++  Exposure/Automatable/Mission Impact)へマップし **Act/Attend/Track\*/Track** を決定点
++  付きで返す(独自 score に加え業界標準語彙で監査可能)。Input に `epss`(0-1)/
++  `automatable` を追加し、EPSS は composite score の factor(>=0.5 高 / >=0.1 中=CISA
++  "act" 閾値)兼 SSVC automatable の代理シグナルに。未指定 EPSS は unknowns へ surface。
++  `Score`/既定重みは後方互換(全既存テスト pass)。`yagura_risk_triage` の findings に
++  epss/automatable を受け、各結果に `ssvc` を返す。参考: arXiv 2508.13644(scoring 比較)
++  / 2506.01220(CVSS+EPSS+KEV chaining)/ CISA SSVC。テスト: SSVC 各分岐 + EPSS factor/
++  unknown。tool 数(54)不変、stdlib のみ。`MCP_TOOLS.md` 再生成。
 +
 +### What's not yet
 +
@@ -6499,10 +6512,10 @@ index 0000000..66a8e44
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_risk.go b/yagura-v0.35.0/internal/mcp/tools_risk.go
 new file mode 100644
-index 0000000..c66d705
+index 0000000..592651b
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_risk.go
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,148 @@
 +// tools_risk.go: yagura_risk_triage — Cyber Risk Reasoning Layer。
 +//
 +// 「AIセキュリティは検知ロジックから複合判断へ」— CVSS 単体ではなく、脆弱性深刻度 +
@@ -6566,6 +6579,8 @@ index 0000000..c66d705
 +					WAFProtected        *bool   `json:"waf_protected"`
 +					KnownExploited      *bool   `json:"known_exploited"`
 +					PublicExploit       *bool   `json:"public_exploit"`
++					EPSS                float64 `json:"epss"`
++					Automatable         *bool   `json:"automatable"`
 +					PatchBlocksBusiness *bool   `json:"patch_blocks_business"`
 +				} `json:"findings"`
 +				Slug          string          `json:"slug"`
@@ -6621,6 +6636,7 @@ index 0000000..c66d705
 +					AssetPriority: assetPriority, Stage: stage, Tags: tags,
 +					InternetExposed: f.InternetExposed, AuthRequired: f.AuthRequired, WAFProtected: f.WAFProtected,
 +					KnownExploited: f.KnownExploited, PublicExploit: f.PublicExploit,
++					EPSS: f.EPSS, Automatable: f.Automatable,
 +					Dependents: dependents, PatchBlocksBusiness: f.PatchBlocksBusiness,
 +				})
 +			}
@@ -7528,10 +7544,10 @@ index 0000000..02c05df
 +}
 diff --git a/yagura-v0.35.0/internal/riskreason/riskreason.go b/yagura-v0.35.0/internal/riskreason/riskreason.go
 new file mode 100644
-index 0000000..967a3b1
+index 0000000..f3c7ae5
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/riskreason/riskreason.go
-@@ -0,0 +1,391 @@
+@@ -0,0 +1,407 @@
 +// Package riskreason は脆弱性の「複合判断」を rule-based / deterministic に行う
 +// Cyber Risk Reasoning Layer。
 +//
@@ -7591,8 +7607,10 @@ index 0000000..967a3b1
 +	WAFProtected    *bool `json:"waf_protected"`
 +
 +	// 攻撃可能性(脅威インテリジェンス)。
-+	KnownExploited *bool `json:"known_exploited"` // CISA KEV 等、実環境で悪用中
-+	PublicExploit  *bool `json:"public_exploit"`  // エクスプロイトコード公開
++	KnownExploited *bool   `json:"known_exploited"` // CISA KEV 等、実環境で悪用中
++	PublicExploit  *bool   `json:"public_exploit"`  // エクスプロイトコード公開
++	EPSS           float64 `json:"epss"`            // Exploit Prediction Scoring System 確率 0-1(0=不明)
++	Automatable    *bool   `json:"automatable"`     // SSVC: 攻撃が自動化/wormable か
 +
 +	// 横展開の blast radius(projectgraph の Impact 由来 = 依存元数)。
 +	Dependents int `json:"dependents"`
@@ -7612,7 +7630,8 @@ index 0000000..967a3b1
 +type Result struct {
 +	CVE            string   `json:"cve"`
 +	Score          int      `json:"score"`              // 0-100 の複合リスク
-+	Priority       Priority `json:"priority"`           // 修正優先度バンド
++	Priority       Priority `json:"priority"`           // 修正優先度バンド(Yagura 独自)
++	SSVC           SSVC     `json:"ssvc"`               // CISA SSVC 整合の決定木出力(Act/Attend/...)
 +	Factors        []Factor `json:"factors"`            // 根拠(加点/減点の内訳)
 +	Unknowns       []string `json:"unknowns,omitempty"` // 評価できなかった文脈ギャップ
 +	Recommendation string   `json:"recommendation"`
@@ -7647,6 +7666,8 @@ index 0000000..967a3b1
 +	// (4) 攻撃可能性
 +	KnownExploited int `json:"known_exploited"` // KEV
 +	PublicExploit  int `json:"public_exploit"`
++	EPSSHigh       int `json:"epss_high"`   // EPSS >= 0.5
++	EPSSMedium     int `json:"epss_medium"` // EPSS >= 0.1 (CISA "act" 閾値)
 +	// (5) 横展開
 +	BlastRadiusPerDep int `json:"blast_radius_per_dep"` // 依存元 1 件あたり
 +	BlastRadiusCap    int `json:"blast_radius_cap"`     // 上限
@@ -7668,6 +7689,7 @@ index 0000000..967a3b1
 +		NoAuth: 12, AuthRequired: -6,
 +		NoWAF: 4, WAFProtected: -8,
 +		KnownExploited: 28, PublicExploit: 12,
++		EPSSHigh: 20, EPSSMedium: 10,
 +		BlastRadiusPerDep: 3, BlastRadiusCap: 18,
 +		BandNow: 75, BandSoon: 55, BandScheduled: 35, BandMonitor: 15,
 +	}
@@ -7735,6 +7757,15 @@ index 0000000..967a3b1
 +		"actively exploited in the wild (e.g. CISA KEV)", "known-exploited status (CISA KEV)")
 +	triHi(in.PublicExploit, &r, &score, "public_exploit", w.PublicExploit,
 +		"public exploit code available", "public exploit availability")
++	// EPSS(exploit 予測確率)。>=0.5 高 / >=0.1 中(CISA "act" 閾値)。0 は不明。
++	switch {
++	case in.EPSS >= 0.5:
++		add("epss", w.EPSSHigh, fmt.Sprintf("EPSS %.2f — high predicted exploitation probability", in.EPSS))
++	case in.EPSS >= 0.1:
++		add("epss", w.EPSSMedium, fmt.Sprintf("EPSS %.2f — elevated exploitation probability (>=0.1)", in.EPSS))
++	case in.EPSS <= 0:
++		r.Unknowns = append(r.Unknowns, "exploit probability (EPSS)")
++	}
 +
 +	// ── (5) 横展開 blast radius ──
 +	if in.Dependents > 0 {
@@ -7759,6 +7790,7 @@ index 0000000..967a3b1
 +	}
 +	r.Score = score
 +	r.Priority = band(score, w)
++	r.SSVC = evalSSVC(in)
 +	r.Recommendation = recommend(r.Priority, in, r.Unknowns)
 +	return r
 +}
@@ -7925,10 +7957,10 @@ index 0000000..967a3b1
 +}
 diff --git a/yagura-v0.35.0/internal/riskreason/riskreason_test.go b/yagura-v0.35.0/internal/riskreason/riskreason_test.go
 new file mode 100644
-index 0000000..0dd1293
+index 0000000..620daed
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/riskreason/riskreason_test.go
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,245 @@
 +package riskreason
 +
 +import (
@@ -8118,6 +8150,196 @@ index 0000000..0dd1293
 +	r := ScoreWith(in, w)
 +	if r.Score != 0 || r.Priority != PriorityDefer {
 +		t.Errorf("zero factor weights should yield score 0 / DEFER, got %d / %s", r.Score, r.Priority)
++	}
++}
++
++func TestSSVC_ActiveExploitExposedIsAct(t *testing.T) {
++	r := Score(Input{CVE: "a", CVSS: 9.8, AssetPriority: 5,
++		InternetExposed: b(true), KnownExploited: b(true)})
++	if r.SSVC.Priority != SSVCAct {
++		t.Errorf("active+open+high should be SSVC Act, got %s (%+v)", r.SSVC.Priority, r.SSVC)
++	}
++	if r.SSVC.Exploitation != "active" || r.SSVC.Exposure != "open" || r.SSVC.Impact != "high" {
++		t.Errorf("decision points wrong: %+v", r.SSVC)
++	}
++}
++
++func TestSSVC_NoExploitInternalLowIsTrack(t *testing.T) {
++	r := Score(Input{CVE: "a", CVSS: 5.0, AssetPriority: 1,
++		InternetExposed: b(false), KnownExploited: b(false), PublicExploit: b(false)})
++	if r.SSVC.Priority != SSVCTrack {
++		t.Errorf("none+small+low should be SSVC Track, got %s (%+v)", r.SSVC.Priority, r.SSVC)
++	}
++}
++
++func TestSSVC_PocExposedHighIsAct(t *testing.T) {
++	r := Score(Input{CVE: "a", CVSS: 8.0, AssetPriority: 5,
++		InternetExposed: b(true), PublicExploit: b(true), KnownExploited: b(false)})
++	if r.SSVC.Priority != SSVCAct {
++		t.Errorf("poc+open+high should be Act, got %s", r.SSVC.Priority)
++	}
++}
++
++func TestSSVC_AutomatableFromHighEPSS(t *testing.T) {
++	r := Score(Input{CVE: "a", CVSS: 9.0, EPSS: 0.9, InternetExposed: b(false), KnownExploited: b(true)})
++	if r.SSVC.Automatable != "yes" {
++		t.Errorf("high EPSS should infer automatable=yes, got %q", r.SSVC.Automatable)
++	}
++}
++
++func TestScore_EPSSFactorAndUnknown(t *testing.T) {
++	// high EPSS adds points + an epss factor.
++	hi := Score(Input{CVE: "a", CVSS: 5.0, EPSS: 0.8})
++	lo := Score(Input{CVE: "b", CVSS: 5.0, EPSS: 0.05})
++	if hi.Score <= lo.Score {
++		t.Errorf("high EPSS should outrank near-zero EPSS: hi=%d lo=%d", hi.Score, lo.Score)
++	}
++	// EPSS unset → surfaced as unknown.
++	none := Score(Input{CVE: "c", CVSS: 5.0})
++	found := false
++	for _, u := range none.Unknowns {
++		if u == "exploit probability (EPSS)" {
++			found = true
++		}
++	}
++	if !found {
++		t.Errorf("missing EPSS should be an unknown, got %+v", none.Unknowns)
++	}
++}
+diff --git a/yagura-v0.35.0/internal/riskreason/ssvc.go b/yagura-v0.35.0/internal/riskreason/ssvc.go
+new file mode 100644
+index 0000000..c75d626
+--- /dev/null
++++ b/yagura-v0.35.0/internal/riskreason/ssvc.go
+@@ -0,0 +1,130 @@
++package riskreason
++
++import "strings"
++
++// SSVC は CISA SSVC(Stakeholder-Specific Vulnerability Categorization)整合の
++// 決定木出力。SSVC は決定論的決定木そのものなので Yagura の rule-based 思想に完全に
++// 適合する。Yagura が持つシグナルを SSVC の deployer 決定点(Exploitation / Exposure /
++// Automatable / Mission&Well-being Impact)へマップし、Act/Attend/Track*/Track を返す。
++// 各決定点の値も返すので判断が監査可能(独自スコアと違い業界標準語彙)。
++//
++// 参考: CISA SSVC, arXiv 2508.13644(scoring system 比較), 2506.01220(CVSS+EPSS+KEV chaining)。
++// 注: CISA の完全な lookup table の bit-exact 再現ではなく、Yagura の利用可能シグナルへの
++// 透明なマッピング + SSVC の意図に沿った決定。決定点を出力するので解釈は追跡可能。
++type SSVC struct {
++	Priority     SSVCPriority `json:"priority"`
++	Exploitation string       `json:"exploitation"` // none / poc / active
++	Exposure     string       `json:"exposure"`     // small / controlled / open
++	Automatable  string       `json:"automatable"`  // no / yes
++	Impact       string       `json:"impact"`       // low / medium / high
++}
++
++// SSVCPriority は SSVC の deployer outcome。
++type SSVCPriority string
++
++const (
++	SSVCAct       SSVCPriority = "Act"    // 即対応
++	SSVCAttend    SSVCPriority = "Attend" // 通常より早く対応
++	SSVCTrackStar SSVCPriority = "Track*" // 注意して追跡
++	SSVCTrack     SSVCPriority = "Track"  // 通常サイクルで追跡
++)
++
++// evalSSVC は Input を SSVC 決定点へマップし、決定木を適用する。決定論的。
++func evalSSVC(in Input) SSVC {
++	s := SSVC{
++		Exploitation: ssvcExploitation(in),
++		Exposure:     ssvcExposure(in),
++		Automatable:  ssvcAutomatable(in),
++		Impact:       ssvcImpact(in),
++	}
++	s.Priority = ssvcDecide(s.Exploitation, s.Exposure, s.Automatable, s.Impact)
++	return s
++}
++
++func ssvcExploitation(in Input) string {
++	if isTrue(in.KnownExploited) {
++		return "active"
++	}
++	if isTrue(in.PublicExploit) {
++		return "poc"
++	}
++	return "none"
++}
++
++func ssvcExposure(in Input) string {
++	if in.InternetExposed == nil {
++		return "controlled" // 不明は中間
++	}
++	if *in.InternetExposed {
++		return "open"
++	}
++	return "small"
++}
++
++func ssvcAutomatable(in Input) string {
++	// 明示があれば従う。無ければ高 EPSS を automatable の代理シグナルとみなす。
++	if in.Automatable != nil {
++		if *in.Automatable {
++			return "yes"
++		}
++		return "no"
++	}
++	if in.EPSS >= 0.5 {
++		return "yes"
++	}
++	return "no"
++}
++
++func ssvcImpact(in Input) string {
++	sensitive, production := false, false
++	for _, t := range in.Tags {
++		switch strings.ToLower(strings.TrimSpace(t)) {
++		case "pii", "secret", "financial", "payment", "audit", "confidential":
++			sensitive = true
++		case "production", "prod", "external", "public", "internet-facing":
++			production = true
++		}
++	}
++	if in.AssetPriority >= 4 || sensitive {
++		return "high"
++	}
++	if in.AssetPriority >= 2 || production {
++		return "medium"
++	}
++	return "low"
++}
++
++// ssvcDecide は SSVC 決定点 → outcome(CISA deployer tree の意図に沿った決定)。
++func ssvcDecide(exploitation, exposure, automatable, impact string) SSVCPriority {
++	high := impact == "high"
++	open := exposure == "open"
++	auto := automatable == "yes"
++
++	switch exploitation {
++	case "active":
++		if high || open || auto {
++			return SSVCAct
++		}
++		return SSVCAttend
++	case "poc":
++		switch {
++		case high && open:
++			return SSVCAct
++		case high || open || auto:
++			return SSVCAttend
++		case impact == "medium" || exposure == "controlled":
++			return SSVCTrackStar
++		default:
++			return SSVCTrack
++		}
++	default: // none
++		switch {
++		case high && open:
++			return SSVCAttend
++		case high || open:
++			return SSVCTrackStar
++		default:
++			return SSVCTrack
++		}
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/secretscan/secretscan.go b/yagura-v0.35.0/internal/secretscan/secretscan.go
