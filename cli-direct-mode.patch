@@ -1,8 +1,8 @@
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..cf8255f 100644
+index 9b29eec..d455526 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,132 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,148 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -117,6 +117,22 @@ index 9b29eec..cf8255f 100644
 +  外部エージェント設定の監査が揃う。記事の実 config は 70 点(LAN/HTTP の security
 +  トレードオフのみ flag、参照・context・compaction は健全)。disk 読みなので CLI 側、
 +  MCP tool 数(47)は不変。stdlib `encoding/json` のみ。
++- **`yagura_risk_triage`: Cyber Risk Reasoning Layer(MCP tool #48)**
++  (`internal/riskreason/riskreason.go`)。「AIセキュリティは検知ロジックから複合
++  判断へ」— CVSS 単体ではなく、(1) 深刻度、(2) 資産の業務重要度(registry の
++  priority/stage/tags)、(3) 到達可能性(公開/認証/WAF)、(4) 攻撃可能性
++  (KEV/公開エクスプロイト)、(5) 横展開 blast radius(projectgraph の Impact =
++  依存元数)、(6) パッチの業務影響を合わせて修正優先度(NOW/SOON/SCHEDULED/
++  MONITOR/DEFER)を出す rule-based / deterministic な推論層。記事の設計要件を構造で
++  満たす:**根拠提示**(どの factor が何点動かしたか=`factors`)、**再現性**(LLM
++  不使用の決定論)、**文脈ギャップの明示**(評価できなかった要因を `unknowns` に出し
++  「複合判断できる文脈を組織が持っているか」を可視化)、**リスクと対応の分離**(パッチ
++  業務影響は score を下げず recommendation 側に効く=今すぐ遮断/監視強化/例外承認/
++  経営報告)。`yagura_risk_triage` は findings(`yagura_vulns` 出力を流せる)を入力に、
++  `slug` があれば registry から asset 文脈、graph から blast radius を自動補完し、
++  score 降順で根拠付き triage を返す。Yagura は判断を自動実行せず、人間(SOC/CSIRT/
++  脆弱性管理/経営)が検証できる形(audit log + Human-in-the-Loop 前提)。新 package
++  `internal/riskreason`、tool 数 47 → **48**(40 → 41 packages)。stdlib のみ。
 +
 +### What's not yet
 +
@@ -136,7 +152,7 @@ index 9b29eec..cf8255f 100644
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..b454692 100644
+index 986f84e..9b7a671 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -144,7 +160,7 @@ index 986f84e..b454692 100644
  **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
  
 -Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
-+Status: **v0.35.0** — 47 MCP tools, 40 internal packages, CLI direct mode, 30 consecutive reproducible releases.
++Status: **v0.35.0** — 48 MCP tools, 41 internal packages, CLI direct mode, 30 consecutive reproducible releases.
  
  ---
  
@@ -153,10 +169,27 @@ index 986f84e..b454692 100644
  │  ┌────────────────────────────────────────────────┐  │
  │  │  yagura daemon (single binary, ~9 MB)          │  │
 -│  │  - 46 MCP tools                                │  │
-+│  │  - 47 MCP tools                                │  │
++│  │  - 48 MCP tools                                │  │
  │  │  - HTTP hook receiver                          │  │
  │  │  - Prometheus /metrics                         │  │
  │  │  - .well-known/mcp (2026 spec)                 │  │
+@@ -151,7 +151,7 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
+ 
+ Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
+ 
+-## MCP tools (46 total)
++## MCP tools (48 total)
+ 
+ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
+ 
+@@ -166,6 +166,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+ | Handoff | 8 tools | Plan / Run / Handoff for cross-session work |
+ | Observability | `hook_timeline`, `hook_stats`, `agent_status`, `quota_report` | Claude Code activity |
+ | Graph | 3 tools | Cross-project dependencies |
++| Reasoning `[G]` | `risk_triage`, `parallel_plan` | Composite vuln fix-priority / multi-AI parallel fan-out |
+ 
+ Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
+ 
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
 index 0000000..bc2e948
@@ -2107,15 +2140,15 @@ index 0000000..5b35646
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
-index cfb6e51..b5b973a 100644
+index cfb6e51..9dad632 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
 +++ b/yagura-v0.35.0/cmd/yagura/integration_test.go
 @@ -164,6 +164,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
  		// v0.27 — cortex flywheel ④ Alert-Fix
  		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
  		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",
-+		// v0.35 — 複数 AI を使った処理の並列化
-+		"yagura_parallel_plan",
++		// v0.35 — 複数 AI を使った処理の並列化 + Cyber Risk Reasoning Layer
++		"yagura_parallel_plan", "yagura_risk_triage",
  	}
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
@@ -2212,14 +2245,14 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..68c6675 100644
+index 689c182..a088e79 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
  # MCP tools reference
  
 -Generated from a live yagura — **46 tools**.
-+Generated from a live yagura — **47 tools**.
++Generated from a live yagura — **48 tools**.
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -2228,7 +2261,7 @@ index 689c182..68c6675 100644
  - [Harness (guides)](#harness-guides) (8)
  - [Inventory](#inventory) (8)
 -- [Misc](#misc) (8)
-+- [Misc](#misc) (9)
++- [Misc](#misc) (10)
  - [Observability](#observability) (4)
  - [Plan tracking](#plan-tracking) (2)
  - [Security (sensors)](#security-sensors) (10)
@@ -2287,7 +2320,31 @@ index 689c182..68c6675 100644
  ### `yagura_quota_forecast`
  
  [S] Empty-time linreg forecast. Needs ≥3 samples.
-@@ -576,7 +599,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -341,6 +364,23 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ 
+ ---
+ 
++### `yagura_risk_triage`
++
++[G] Composite fix-priority for CVEs (asset+reach+exploit, with rationale).
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `asset_priority` (integer) |  |  |
++| `dependents` (integer) |  |  |
++| `findings` (array) | ★ | Vulnerabilities to triage. Each: {cve, cvss?, severity?, internet_exposed?, auth_required?, waf_protected?, known_exploited?, public_exploit?, patch_blocks_business?}. |
++| `slug` (string) |  | Registered asset slug — auto-fills asset_priority/stage/tags and blast radius (dependents) from the registry + dependency graph. |
++| `stage` (string) |  |  |
++| `tags` (array) |  |  |
++
++---
++
+ ### `yagura_session_load`
+ 
+ [S] Load handoff context. Null if none.
+@@ -576,7 +616,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -2297,7 +2354,7 @@ index 689c182..68c6675 100644
  **Arguments:**
  
 diff --git a/yagura-v0.35.0/docs/QUICKSTART.md b/yagura-v0.35.0/docs/QUICKSTART.md
-index 62e02cd..ad352ff 100644
+index 62e02cd..1e32a1b 100644
 --- a/yagura-v0.35.0/docs/QUICKSTART.md
 +++ b/yagura-v0.35.0/docs/QUICKSTART.md
 @@ -177,7 +177,7 @@ The process drains for 5 seconds (`/readyz` returns 503) then shuts down gracefu
@@ -2305,7 +2362,7 @@ index 62e02cd..ad352ff 100644
  ## What next?
  
 -- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 46 tools.
-+- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 47 tools.
++- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 48 tools.
  - [WINDOWS.md](WINDOWS.md) — Task Scheduler / NSSM / Windows service setup.
  - [ARCHITECTURE.md](../ARCHITECTURE.md) — internals and design rationale.
  - [security-spec.md](security-spec.md) — threat model.
@@ -4033,19 +4090,21 @@ index 0000000..39f5b43
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..66b91d0 100644
+index 939a67e..fbf385c 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
-@@ -188,6 +188,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
+@@ -188,6 +188,10 @@ func RegisterDefaultTools(s *Server, d Deps) {
  	s.Register(buildHookStatsTool(s))
  	s.Register(buildProgressFileTool(d, s))
  	s.Register(buildInitShTool(d))
 +	// [v0.35.0] 複数 AI を使った処理の並列化(deterministic dispatch planner)
 +	s.Register(buildParallelPlanTool(d))
++	// [v0.35.0] Cyber Risk Reasoning Layer(複合判断による脆弱性 triage)
++	s.Register(buildRiskTriageTool(d))
  }
  
  // ─── yagura_list ─────────────────────────────────────────────
-@@ -198,8 +200,8 @@ type listOut struct {
+@@ -198,8 +202,8 @@ type listOut struct {
  	Stage          string `json:"stage"`
  	Priority       int    `json:"priority"`
  	Language       string `json:"language,omitempty"`
@@ -4056,7 +4115,7 @@ index 939a67e..66b91d0 100644
  	CIStatus       string `json:"ci_status,omitempty"`
  	LatestVersion  string `json:"latest_version,omitempty"`
  	DaysSinceCommit int   `json:"days_since_commit"`
-@@ -245,7 +247,7 @@ type todayItem struct {
+@@ -245,7 +249,7 @@ type todayItem struct {
  func buildSecretScanTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_secretscan",
@@ -4065,7 +4124,7 @@ index 939a67e..66b91d0 100644
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
-@@ -766,7 +768,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+@@ -766,7 +770,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_skill_audit",
@@ -4610,6 +4669,243 @@ index 0000000..c469356
 +		})
 +	}
 +}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_risk.go b/yagura-v0.35.0/internal/mcp/tools_risk.go
+new file mode 100644
+index 0000000..3009547
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_risk.go
+@@ -0,0 +1,117 @@
++// tools_risk.go: yagura_risk_triage — Cyber Risk Reasoning Layer。
++//
++// 「AIセキュリティは検知ロジックから複合判断へ」— CVSS 単体ではなく、脆弱性深刻度 +
++// 資産の業務重要度 + 到達可能性 + 攻撃可能性 + 横展開 blast radius + パッチ業務影響を
++// 合わせて修正優先度を出す(internal/riskreason)。Yagura は LLM を使わず rule-based /
++// deterministic に判断し、根拠(factors)と評価できなかった文脈(unknowns)を必ず返す
++// ので、SOC/CSIRT/脆弱性管理/経営が検証できる(Human-in-the-Loop / audit 前提)。
++//
++// findings(CVE+CVSS 等、yagura_vulns の出力を流せる)を入力に取り、slug が registry に
++// あれば asset_priority/stage/tags を自動補完し、projectgraph の Impact で blast radius
++// (依存元数)を埋める。これが記事の言う「技術ログ・脆弱性・到達性・業務影響を 1 つの
++// 説明可能な判断にまとめる」層にあたる。
++
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++
++	"github.com/shizukutanaka/yagura/internal/projectgraph"
++	"github.com/shizukutanaka/yagura/internal/riskreason"
++)
++
++func buildRiskTriageTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_risk_triage",
++		Description: "[G] Composite fix-priority for CVEs (asset+reach+exploit, with rationale).",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"findings": map[string]any{
++					"type":        "array",
++					"description": "Vulnerabilities to triage. Each: {cve, cvss?, severity?, internet_exposed?, auth_required?, waf_protected?, known_exploited?, public_exploit?, patch_blocks_business?}.",
++					"items":       map[string]any{"type": "object"},
++				},
++				"slug": map[string]any{
++					"type":        "string",
++					"description": "Registered asset slug — auto-fills asset_priority/stage/tags and blast radius (dependents) from the registry + dependency graph.",
++				},
++				// slug が無い/未登録のときに資産文脈を明示する任意フィールド。
++				"asset_priority": map[string]any{"type": "integer"},
++				"stage":          map[string]any{"type": "string"},
++				"tags":           map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
++				"dependents":     map[string]any{"type": "integer"},
++			},
++			"required": []string{"findings"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Findings []struct {
++					CVE                 string  `json:"cve"`
++					CVSS                float64 `json:"cvss"`
++					Severity            string  `json:"severity"`
++					InternetExposed     *bool   `json:"internet_exposed"`
++					AuthRequired        *bool   `json:"auth_required"`
++					WAFProtected        *bool   `json:"waf_protected"`
++					KnownExploited      *bool   `json:"known_exploited"`
++					PublicExploit       *bool   `json:"public_exploit"`
++					PatchBlocksBusiness *bool   `json:"patch_blocks_business"`
++				} `json:"findings"`
++				Slug          string   `json:"slug"`
++				AssetPriority int      `json:"asset_priority"`
++				Stage         string   `json:"stage"`
++				Tags          []string `json:"tags"`
++				Dependents    int      `json:"dependents"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if len(in.Findings) == 0 {
++				return nil, &ToolError{Code: "invalid_input", Message: "at least one finding is required"}
++			}
++
++			// slug があれば registry + graph から資産文脈を補完。
++			assetPriority, stage, tags, dependents := in.AssetPriority, in.Stage, in.Tags, in.Dependents
++			resolvedSlug := ""
++			if in.Slug != "" && d.Registry != nil {
++				if p, err := d.Registry.Get(in.Slug); err == nil && p != nil {
++					resolvedSlug = p.Slug
++					assetPriority = p.Priority
++					stage = string(p.Stage)
++					tags = p.Tags
++					g := projectgraph.Build(toGraphProjects(d.Registry.List()))
++					dependents = g.Impact(p.Slug).ImpactCount
++				}
++			}
++
++			inputs := make([]riskreason.Input, 0, len(in.Findings))
++			for _, f := range in.Findings {
++				inputs = append(inputs, riskreason.Input{
++					CVE: f.CVE, CVSS: f.CVSS, Severity: f.Severity,
++					AssetPriority: assetPriority, Stage: stage, Tags: tags,
++					InternetExposed: f.InternetExposed, AuthRequired: f.AuthRequired, WAFProtected: f.WAFProtected,
++					KnownExploited: f.KnownExploited, PublicExploit: f.PublicExploit,
++					Dependents: dependents, PatchBlocksBusiness: f.PatchBlocksBusiness,
++				})
++			}
++			results := riskreason.ScoreAll(inputs)
++
++			// priority 別サマリ(決定論)。
++			summary := map[string]int{}
++			for _, r := range results {
++				summary[string(r.Priority)]++
++			}
++			return map[string]any{
++				"asset": map[string]any{
++					"slug":           resolvedSlug,
++					"asset_priority": assetPriority,
++					"stage":          stage,
++					"dependents":     dependents,
++				},
++				"triaged": results,
++				"summary": summary,
++			}, nil
++		},
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_risk_test.go b/yagura-v0.35.0/internal/mcp/tools_risk_test.go
+new file mode 100644
+index 0000000..6ffd52d
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_risk_test.go
+@@ -0,0 +1,108 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/project"
++)
++
++func TestRiskTriage_RanksAndExplains(t *testing.T) {
++	tool := buildRiskTriageTool(newDeps(t))
++	res := mustCall(t, tool, map[string]any{
++		"findings": []map[string]any{
++			{"cve": "CVE-2026-1000", "cvss": 9.8, "internet_exposed": true, "known_exploited": true},
++			{"cve": "CVE-2026-2000", "cvss": 4.2},
++		},
++		"asset_priority": 5,
++		"tags":           []string{"production", "pii"},
++		"dependents":     3,
++	})
++	b, _ := json.Marshal(res)
++	var out struct {
++		Triaged []struct {
++			CVE      string `json:"cve"`
++			Score    int    `json:"score"`
++			Priority string `json:"priority"`
++			Factors  []struct {
++				Name string `json:"name"`
++			} `json:"factors"`
++			Recommendation string `json:"recommendation"`
++		} `json:"triaged"`
++		Summary map[string]int `json:"summary"`
++	}
++	if err := json.Unmarshal(b, &out); err != nil {
++		t.Fatalf("json: %v\n%s", err, b)
++	}
++	if len(out.Triaged) != 2 {
++		t.Fatalf("expected 2 triaged, got %d", len(out.Triaged))
++	}
++	// highest risk first; the exploited+exposed critical must lead and be NOW.
++	if out.Triaged[0].CVE != "CVE-2026-1000" || out.Triaged[0].Priority != "NOW" {
++		t.Errorf("expected critical exploited CVE first as NOW, got %+v", out.Triaged[0])
++	}
++	if len(out.Triaged[0].Factors) == 0 {
++		t.Error("triage must include a rationale (factors)")
++	}
++	if out.Summary["NOW"] < 1 {
++		t.Errorf("summary should count a NOW, got %+v", out.Summary)
++	}
++}
++
++func TestRiskTriage_SlugFillsAssetContext(t *testing.T) {
++	d := newDeps(t)
++	// register two assets: "core" with a dependent "web" → core has blast radius 1.
++	if err := d.Registry.Add(sampleProject("core", func(p *project.Project) {
++		p.Priority = 5
++		p.Tags = []string{"production"}
++	})); err != nil {
++		t.Fatal(err)
++	}
++	if err := d.Registry.Add(sampleProject("web", func(p *project.Project) {
++		p.DependsOn = []string{"core"}
++	})); err != nil {
++		t.Fatal(err)
++	}
++	tool := buildRiskTriageTool(d)
++	res := mustCall(t, tool, map[string]any{
++		"slug":     "core",
++		"findings": []map[string]any{{"cve": "CVE-2026-3000", "cvss": 7.5}},
++	})
++	b, _ := json.Marshal(res)
++	var out struct {
++		Asset struct {
++			Slug          string `json:"slug"`
++			AssetPriority int    `json:"asset_priority"`
++			Dependents    int    `json:"dependents"`
++		} `json:"asset"`
++		Triaged []struct {
++			Factors []struct {
++				Name string `json:"name"`
++			} `json:"factors"`
++		} `json:"triaged"`
++	}
++	_ = json.Unmarshal(b, &out)
++	if out.Asset.Slug != "core" || out.Asset.AssetPriority != 5 {
++		t.Errorf("slug should fill asset context from registry, got %+v", out.Asset)
++	}
++	if out.Asset.Dependents != 1 {
++		t.Errorf("blast radius should come from the graph (1 dependent), got %d", out.Asset.Dependents)
++	}
++	// the filled priority + blast radius must appear as rationale factors.
++	names := map[string]bool{}
++	for _, f := range out.Triaged[0].Factors {
++		names[f.Name] = true
++	}
++	if !names["asset_priority"] || !names["blast_radius"] {
++		t.Errorf("expected asset_priority + blast_radius factors from registry/graph, got %+v", out.Triaged[0].Factors)
++	}
++}
++
++func TestRiskTriage_NoFindings(t *testing.T) {
++	tool := buildRiskTriageTool(newDeps(t))
++	b, _ := json.Marshal(map[string]any{"findings": []any{}})
++	if _, err := tool.Handler(context.Background(), b); err == nil {
++		t.Error("expected error for empty findings")
++	}
++}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_test.go b/yagura-v0.35.0/internal/mcp/tools_test.go
 index 31ea232..e4a7a4c 100644
 --- a/yagura-v0.35.0/internal/mcp/tools_test.go
@@ -4690,6 +4986,474 @@ index 9ca620a..f400aba 100644
  // SortBySlug は slug 昇順ソート。
  func SortBySlug(ps []*Project) {
  	sort.Slice(ps, func(i, j int) bool { return ps[i].Slug < ps[j].Slug })
+diff --git a/yagura-v0.35.0/internal/riskreason/riskreason.go b/yagura-v0.35.0/internal/riskreason/riskreason.go
+new file mode 100644
+index 0000000..05d922f
+--- /dev/null
++++ b/yagura-v0.35.0/internal/riskreason/riskreason.go
+@@ -0,0 +1,331 @@
++// Package riskreason は脆弱性の「複合判断」を rule-based / deterministic に行う
++// Cyber Risk Reasoning Layer。
++//
++// 着想は「AIセキュリティは検知ロジックから複合判断へ」— CVSS 単体では本当の
++// 修正優先度は決まらず、(1) 脆弱性深刻度、(2) 資産の業務重要度、(3) 到達可能性
++// (公開/認証/WAF)、(4) 攻撃可能性(KEV/公開エクスプロイト)、(5) 横展開の
++// blast radius(依存元数)、(6) パッチの業務影響を合わせて初めて優先度が出る、
++// という考え方を構造化したもの。
++//
++// この層の設計要件(記事準拠)を rule-based で満たす:
++//   - 根拠提示: Score がどの factor をどれだけ加点/減点したか(Factors)を返す
++//   - 再現性 : 同じ入力 → 同じ判断。LLM を使わない決定論(Yagura の trust base)
++//   - 文脈ギャップの明示: 評価できなかった要因(公開状況/エクスプロイト等)を
++//     Unknowns として出す ——「AI が複合判断できる文脈を組織が持っているか」が
++//     次の勝負、という記事の主張をそのまま機械可読にする
++//   - リスクと対応の分離: パッチの業務影響は risk score を下げず、Recommendation
++//     (今すぐ遮断 / 監視強化 / パッチ / 例外承認 / 経営報告)側に効く
++//
++// Yagura は判断を「自動実行」しない。本層は人間(SOC/CSIRT/脆弱性管理/経営)が
++// 検証できる根拠付きの優先度を返す判断補助エンジンであり、audit log と併せて
++// Human-in-the-Loop を前提とする。
++package riskreason
++
++import (
++	"fmt"
++	"sort"
++	"strings"
++)
++
++// Priority は修正優先度バンド。
++type Priority string
++
++const (
++	PriorityNow       Priority = "NOW"       // 今すぐ(遮断/隔離も検討)
++	PrioritySoon      Priority = "SOON"      // 次の保守ウィンドウ
++	PriorityScheduled Priority = "SCHEDULED" // 計画的に
++	PriorityMonitor   Priority = "MONITOR"   // 監視継続・通常サイクル
++	PriorityDefer     Priority = "DEFER"     // 後回し(低重要度/archived)
++)
++
++// Input は 1 脆弱性 × 1 資産の複合エビデンス。
++// *bool は「不明(nil)」と「false」を区別する — 不明は Unknowns に積み、
++// 組織が整えるべき文脈ギャップとして可視化する。
++type Input struct {
++	CVE      string  `json:"cve"`
++	CVSS     float64 `json:"cvss"`     // 0-10 base score(0 = severity 文字列で判定)
++	Severity string  `json:"severity"` // CVSS が無い時の代替("critical"/"high"/...)
++
++	// 資産・業務文脈(registry 由来)。
++	AssetPriority int      `json:"asset_priority"` // 0-5(project.Priority)
++	Stage         string   `json:"stage"`          // active/maintenance/paused/archived
++	Tags          []string `json:"tags"`           // production / pii / external 等
++
++	// 到達可能性。
++	InternetExposed *bool `json:"internet_exposed"`
++	AuthRequired    *bool `json:"auth_required"`
++	WAFProtected    *bool `json:"waf_protected"`
++
++	// 攻撃可能性(脅威インテリジェンス)。
++	KnownExploited *bool `json:"known_exploited"` // CISA KEV 等、実環境で悪用中
++	PublicExploit  *bool `json:"public_exploit"`  // エクスプロイトコード公開
++
++	// 横展開の blast radius(projectgraph の Impact 由来 = 依存元数)。
++	Dependents int `json:"dependents"`
++
++	// パッチの業務影響(true = すぐ当てられない)。risk score ではなく対応に効く。
++	PatchBlocksBusiness *bool `json:"patch_blocks_business"`
++}
++
++// Factor は score を動かした 1 要因(根拠提示)。
++type Factor struct {
++	Name   string `json:"name"`
++	Delta  int    `json:"delta"`
++	Detail string `json:"detail"`
++}
++
++// Result は複合判断の出力。
++type Result struct {
++	CVE            string   `json:"cve"`
++	Score          int      `json:"score"`              // 0-100 の複合リスク
++	Priority       Priority `json:"priority"`           // 修正優先度バンド
++	Factors        []Factor `json:"factors"`            // 根拠(加点/減点の内訳)
++	Unknowns       []string `json:"unknowns,omitempty"` // 評価できなかった文脈ギャップ
++	Recommendation string   `json:"recommendation"`
++}
++
++// 重み(rule-based、決定論)。
++const (
++	wSevCritical = 45
++	wSevHigh     = 32
++	wSevMedium   = 18
++	wSevLow      = 7
++)
++
++// Score は複合エビデンスから修正優先度を導く。完全に決定論的。
++func Score(in Input) Result {
++	r := Result{CVE: in.CVE}
++	score := 0
++	add := func(name string, delta int, detail string) {
++		if delta != 0 {
++			r.Factors = append(r.Factors, Factor{Name: name, Delta: delta, Detail: detail})
++			score += delta
++		}
++	}
++
++	// ── (1) 深刻度ベース ──
++	switch sev := severityBucket(in.CVSS, in.Severity); sev {
++	case "critical":
++		add("severity", wSevCritical, "CVSS critical (>=9.0)")
++	case "high":
++		add("severity", wSevHigh, "CVSS high (7.0-8.9)")
++	case "medium":
++		add("severity", wSevMedium, "CVSS medium (4.0-6.9)")
++	case "low":
++		add("severity", wSevLow, "CVSS low (<4.0)")
++	default:
++		r.Unknowns = append(r.Unknowns, "severity (no CVSS or severity string provided)")
++	}
++
++	// ── (2) 資産の業務重要度 ──
++	if in.AssetPriority > 0 {
++		d := in.AssetPriority * 4 // 0-5 → 0-20
++		add("asset_priority", d, fmt.Sprintf("business criticality (priority %d/5)", in.AssetPriority))
++	}
++	switch strings.ToLower(strings.TrimSpace(in.Stage)) {
++	case "archived":
++		add("stage", -20, "asset archived (out of service)")
++	case "paused":
++		add("stage", -12, "asset paused")
++	case "maintenance":
++		add("stage", -3, "asset in maintenance")
++	}
++	add(tagSignal(in.Tags))
++
++	// ── (3) 到達可能性 ──
++	tri(in.InternetExposed, &r, &score,
++		"reachability", 15, "internet-exposed (reachable by external attackers)",
++		-10, "not internet-exposed (internal only)",
++		"internet exposure")
++	tri(in.AuthRequired, &r, &score,
++		"auth", -6, "authentication required to reach",
++		12, "reachable without authentication",
++		"authentication requirement")
++	tri(in.WAFProtected, &r, &score,
++		"waf", -8, "WAF/edge filtering in front",
++		4, "no WAF in front",
++		"WAF coverage")
++
++	// ── (4) 攻撃可能性 ──
++	triHi(in.KnownExploited, &r, &score, "known_exploited", 28,
++		"actively exploited in the wild (e.g. CISA KEV)", "known-exploited status (CISA KEV)")
++	triHi(in.PublicExploit, &r, &score, "public_exploit", 12,
++		"public exploit code available", "public exploit availability")
++
++	// ── (5) 横展開 blast radius ──
++	if in.Dependents > 0 {
++		d := in.Dependents * 3
++		if d > 18 {
++			d = 18
++		}
++		add("blast_radius", d, fmt.Sprintf("%d asset(s) depend on this (lateral blast radius)", in.Dependents))
++	}
++
++	if score < 0 {
++		score = 0
++	}
++	if score > 100 {
++		score = 100
++	}
++	r.Score = score
++	r.Priority = band(score)
++	r.Recommendation = recommend(r.Priority, in, r.Unknowns)
++	return r
++}
++
++// ScoreAll は複数 finding を score し、score 降順(tie は CVE 昇順)で返す。
++func ScoreAll(inputs []Input) []Result {
++	out := make([]Result, 0, len(inputs))
++	for _, in := range inputs {
++		out = append(out, Score(in))
++	}
++	sort.SliceStable(out, func(i, j int) bool {
++		if out[i].Score != out[j].Score {
++			return out[i].Score > out[j].Score
++		}
++		return out[i].CVE < out[j].CVE
++	})
++	return out
++}
++
++// ─── helpers ───
++
++func severityBucket(cvss float64, sev string) string {
++	if cvss > 0 {
++		switch {
++		case cvss >= 9.0:
++			return "critical"
++		case cvss >= 7.0:
++			return "high"
++		case cvss >= 4.0:
++			return "medium"
++		default:
++			return "low"
++		}
++	}
++	switch strings.ToLower(strings.TrimSpace(sev)) {
++	case "critical":
++		return "critical"
++	case "high":
++		return "high"
++	case "medium", "moderate":
++		return "medium"
++	case "low":
++		return "low"
++	}
++	return ""
++}
++
++// tagSignal は tags から 1 つの集約 factor を返す(production/data 機微 → 加点、
++// dev/test → 減点。多重加点を避けるため上限つき)。
++func tagSignal(tags []string) (string, int, string) {
++	exposure, sensitive, lowval := false, false, false
++	for _, t := range tags {
++		switch strings.ToLower(strings.TrimSpace(t)) {
++		case "production", "prod", "external", "public", "internet-facing":
++			exposure = true
++		case "pii", "secret", "financial", "payment", "audit", "confidential":
++			sensitive = true
++		case "internal", "dev", "development", "test", "staging", "sandbox", "experimental":
++			lowval = true
++		}
++	}
++	delta := 0
++	parts := []string{}
++	if exposure {
++		delta += 8
++		parts = append(parts, "production/external")
++	}
++	if sensitive {
++		delta += 8
++		parts = append(parts, "sensitive-data")
++	}
++	if lowval && delta == 0 {
++		delta -= 6
++		parts = append(parts, "non-production")
++	}
++	if delta == 0 {
++		return "tags", 0, ""
++	}
++	return "tags", delta, "asset tags: " + strings.Join(parts, ", ")
++}
++
++// tri は *bool(不明/真/偽)を factor に落とす(真と偽で別 detail、nil は Unknowns)。
++func tri(v *bool, r *Result, score *int, name string, dTrue int, detailTrue string, dFalse int, detailFalse string, unknownLabel string) {
++	if v == nil {
++		r.Unknowns = append(r.Unknowns, unknownLabel)
++		return
++	}
++	if *v {
++		if dTrue != 0 {
++			r.Factors = append(r.Factors, Factor{Name: name, Delta: dTrue, Detail: detailTrue})
++			*score += dTrue
++		}
++	} else if dFalse != 0 {
++		r.Factors = append(r.Factors, Factor{Name: name, Delta: dFalse, Detail: detailFalse})
++		*score += dFalse
++	}
++}
++
++// triHi は「真の時だけ加点、偽は無印、nil は Unknowns」の脅威インテル型 factor。
++func triHi(v *bool, r *Result, score *int, name string, dTrue int, detailTrue, unknownLabel string) {
++	if v == nil {
++		r.Unknowns = append(r.Unknowns, unknownLabel)
++		return
++	}
++	if *v {
++		r.Factors = append(r.Factors, Factor{Name: name, Delta: dTrue, Detail: detailTrue})
++		*score += dTrue
++	}
++}
++
++func band(score int) Priority {
++	switch {
++	case score >= 75:
++		return PriorityNow
++	case score >= 55:
++		return PrioritySoon
++	case score >= 35:
++		return PriorityScheduled
++	case score >= 15:
++		return PriorityMonitor
++	default:
++		return PriorityDefer
++	}
++}
++
++func isTrue(b *bool) bool { return b != nil && *b }
++
++func recommend(p Priority, in Input, unknowns []string) string {
++	var sb strings.Builder
++	switch p {
++	case PriorityNow:
++		if isTrue(in.KnownExploited) {
++			sb.WriteString("Actively exploited — ")
++		}
++		if isTrue(in.PatchBlocksBusiness) {
++			sb.WriteString("fix now, but patching has business impact: apply compensating controls (tighten access / WAF / raise monitoring), record a risk-acceptance exception, and escalate to management")
++		} else {
++			sb.WriteString("patch immediately and raise monitoring until patched")
++		}
++		if isTrue(in.InternetExposed) {
++			sb.WriteString("; restrict external reachability in the meantime")
++		}
++	case PrioritySoon:
++		sb.WriteString("patch in the next maintenance window; raise monitoring meanwhile")
++		if isTrue(in.PatchBlocksBusiness) {
++			sb.WriteString(" and record the deferral as a risk-acceptance exception")
++		}
++	case PriorityScheduled:
++		sb.WriteString("schedule a patch on the normal cadence")
++	case PriorityMonitor:
++		sb.WriteString("low active risk — keep monitoring; patch on the normal cadence")
++	case PriorityDefer:
++		sb.WriteString("defer (low criticality / archived asset); revisit if exposure or exploit status changes")
++	}
++	if len(unknowns) > 0 {
++		sb.WriteString(fmt.Sprintf(". %d risk factor(s) are unknown (%s) — wire that context in to sharpen this judgment",
++			len(unknowns), strings.Join(unknowns, ", ")))
++	}
++	return sb.String()
++}
+diff --git a/yagura-v0.35.0/internal/riskreason/riskreason_test.go b/yagura-v0.35.0/internal/riskreason/riskreason_test.go
+new file mode 100644
+index 0000000..4d58875
+--- /dev/null
++++ b/yagura-v0.35.0/internal/riskreason/riskreason_test.go
+@@ -0,0 +1,125 @@
++package riskreason
++
++import (
++	"strings"
++	"testing"
++)
++
++func b(v bool) *bool { return &v }
++
++func hasFactor(r Result, name string) bool {
++	for _, f := range r.Factors {
++		if f.Name == name {
++			return true
++		}
++	}
++	return false
++}
++
++func TestScore_CriticalExposedExploited_IsNow(t *testing.T) {
++	r := Score(Input{
++		CVE: "CVE-2026-0001", CVSS: 9.8, AssetPriority: 5,
++		Tags:            []string{"production", "pii"},
++		InternetExposed: b(true), AuthRequired: b(false),
++		KnownExploited: b(true), PublicExploit: b(true), Dependents: 4,
++	})
++	if r.Priority != PriorityNow {
++		t.Errorf("expected NOW, got %s (score %d)", r.Priority, r.Score)
++	}
++	for _, name := range []string{"severity", "asset_priority", "reachability", "known_exploited", "blast_radius"} {
++		if !hasFactor(r, name) {
++			t.Errorf("expected factor %q in rationale, got %+v", name, r.Factors)
++		}
++	}
++	if !strings.Contains(r.Recommendation, "Actively exploited") {
++		t.Errorf("recommendation should flag active exploitation: %q", r.Recommendation)
++	}
++}
++
++func TestScore_BusinessContextLowersPriority(t *testing.T) {
++	// Same critical CVE, but on an archived, internal, non-exposed asset → not urgent.
++	r := Score(Input{
++		CVE: "CVE-2026-0002", CVSS: 9.8, AssetPriority: 1,
++		Stage: "archived", Tags: []string{"internal", "dev"},
++		InternetExposed: b(false), KnownExploited: b(false), PublicExploit: b(false),
++	})
++	if r.Priority == PriorityNow {
++		t.Errorf("archived internal asset should not be NOW despite critical CVSS: score %d", r.Score)
++	}
++	if !hasFactor(r, "stage") {
++		t.Errorf("expected an archived stage factor lowering score: %+v", r.Factors)
++	}
++}
++
++func TestScore_UnknownsListed(t *testing.T) {
++	// Only CVE + CVSS — every reachability/exploit factor is unknown.
++	r := Score(Input{CVE: "CVE-2026-0003", CVSS: 7.5})
++	want := []string{"internet exposure", "authentication requirement", "WAF coverage",
++		"known-exploited status (CISA KEV)", "public exploit availability"}
++	for _, w := range want {
++		found := false
++		for _, u := range r.Unknowns {
++			if u == w {
++				found = true
++			}
++		}
++		if !found {
++			t.Errorf("expected unknown %q, got %+v", w, r.Unknowns)
++		}
++	}
++	if !strings.Contains(r.Recommendation, "unknown") {
++		t.Errorf("recommendation should mention context gaps: %q", r.Recommendation)
++	}
++}
++
++func TestScore_PatchImpactChangesResponseNotScore(t *testing.T) {
++	base := Input{CVE: "CVE-2026-0004", CVSS: 9.5, AssetPriority: 5,
++		InternetExposed: b(true), KnownExploited: b(true)}
++	a := Score(base)
++	withImpact := base
++	withImpact.PatchBlocksBusiness = b(true)
++	c := Score(withImpact)
++	if a.Score != c.Score {
++		t.Errorf("patch business impact must not change the risk score: %d vs %d", a.Score, c.Score)
++	}
++	if a.Recommendation == c.Recommendation {
++		t.Error("patch business impact should change the recommendation")
++	}
++	if !strings.Contains(c.Recommendation, "compensating controls") {
++		t.Errorf("blocked-patch NOW should suggest compensating controls: %q", c.Recommendation)
++	}
++}
++
++func TestScore_Deterministic(t *testing.T) {
++	in := Input{CVE: "CVE-2026-0005", CVSS: 8.1, AssetPriority: 3, Tags: []string{"production"},
++		InternetExposed: b(true), Dependents: 2}
++	if Score(in).Score != Score(in).Score {
++		t.Error("scoring must be deterministic")
++	}
++}
++
++func TestScoreAll_OrderedByScoreDesc(t *testing.T) {
++	rs := ScoreAll([]Input{
++		{CVE: "CVE-low", CVSS: 3.0, Stage: "archived"},
++		{CVE: "CVE-hi", CVSS: 9.8, AssetPriority: 5, InternetExposed: b(true), KnownExploited: b(true)},
++		{CVE: "CVE-mid", CVSS: 6.0, AssetPriority: 2},
++	})
++	if rs[0].CVE != "CVE-hi" || rs[len(rs)-1].CVE != "CVE-low" {
++		t.Errorf("expected score-desc order hi..low, got %s..%s", rs[0].CVE, rs[len(rs)-1].CVE)
++	}
++}
++
++func TestScore_SeverityFromStringWhenNoCVSS(t *testing.T) {
++	r := Score(Input{CVE: "CVE-2026-0006", Severity: "high", AssetPriority: 2})
++	if !hasFactor(r, "severity") {
++		t.Errorf("severity string should drive the base factor: %+v", r.Factors)
++	}
++}
++
++func TestScore_TagSignals(t *testing.T) {
++	prod := Score(Input{CVE: "a", CVSS: 5, Tags: []string{"production", "pii"}})
++	dev := Score(Input{CVE: "b", CVSS: 5, Tags: []string{"dev"}})
++	if prod.Score <= dev.Score {
++		t.Errorf("production+pii should outrank a dev asset: prod=%d dev=%d", prod.Score, dev.Score)
++	}
++}
 diff --git a/yagura-v0.35.0/internal/secretscan/secretscan.go b/yagura-v0.35.0/internal/secretscan/secretscan.go
 index f870332..8719b6c 100644
 --- a/yagura-v0.35.0/internal/secretscan/secretscan.go
