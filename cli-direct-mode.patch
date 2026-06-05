@@ -229,10 +229,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..28acadb 100644
+index 9b29eec..38de83a 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,257 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,270 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -472,6 +472,19 @@ index 9b29eec..28acadb 100644
 +  なお per-package coverage floor の CI 化(分析 #8)は、integration_test が
 +  `internal/mcp` を `cmd/yagura` 側で広くカバーする構造上、per-package 値が実カバレッジを
 +  過小評価する(mcp 45.9% 等)ため**見送り**(naive な floor は偽陽性を生む)。
++- **riskreason の重みを `Weights` で外出し(self-review #7: custom rule loading)**
++  (`internal/riskreason/riskreason.go` / `internal/mcp/tools_risk.go`)。これまで
++  scoring に散らばっていた ~20 個のマジックナンバー(severity 重み / asset_priority
++  係数 / stage / tag / 到達性 / 攻撃性 / blast radius / バンド閾値)を、命名済みの
++  `Weights` 構造体へ集約(altitude: 特殊値の羅列ではなく機構を一般化)。`DefaultWeights()`
++  が現行値で、`Score`/`ScoreAll` はそれに委譲するため **完全後方互換**(既存テスト全
++  pass で behavior-equivalence を担保)。新 API `ScoreWith` / `ScoreAllWith` で運用側が
++  組織のリスク許容度に合わせて調整可能に。`yagura_risk_triage` に任意の **`weights`**
++  override を追加(`json` タグ付き構造体なので、部分 JSON を `DefaultWeights()` の上に
++  Unmarshal するだけで「指定 factor だけ差し替え・未指定は既定」が効く — per-field の
++  boilerplate なし)。例: `{"known_exploited": 40, "band_now": 80}`。tool 数(53)不変、
++  stdlib のみ。テスト: `ScoreWith` の default 一致 / custom tuning / zero-factor、
++  tool の override 反映 / 不正 weights 拒否。`MCP_TOOLS.md` 再生成。
 +
 +### What's not yet
 +
@@ -3033,7 +3046,7 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..292e163 100644
+index 689c182..6e6a674 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
@@ -3151,7 +3164,7 @@ index 689c182..292e163 100644
  ### `yagura_quota_forecast`
  
  [S] Empty-time linreg forecast. Needs ≥3 samples.
-@@ -341,6 +400,23 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -341,6 +400,24 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -3169,13 +3182,14 @@ index 689c182..292e163 100644
 +| `slug` (string) |  | Registered asset slug — auto-fills asset_priority/stage/tags and blast radius (dependents) from the registry + dependency graph. |
 +| `stage` (string) |  |  |
 +| `tags` (array) |  |  |
++| `weights` (object) |  | Optional partial override of scoring weights (merged over defaults), e.g. {"known_exploited": 40, "band_now": 80}. |
 +
 +---
 +
  ### `yagura_session_load`
  
  [S] Load handoff context. Null if none.
-@@ -366,6 +442,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -366,6 +443,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -3194,7 +3208,7 @@ index 689c182..292e163 100644
  ### `yagura_token_stats`
  
  [S] Per-tool byte counts since daemon start.
-@@ -397,6 +485,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -397,6 +486,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -3213,7 +3227,7 @@ index 689c182..292e163 100644
  ## Observability
  
  ### `yagura_agent_status`
-@@ -576,7 +676,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -576,7 +677,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -6334,10 +6348,10 @@ index 0000000..c469356
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_risk.go b/yagura-v0.35.0/internal/mcp/tools_risk.go
 new file mode 100644
-index 0000000..25d5f7e
+index 0000000..c66d705
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_risk.go
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,145 @@
 +// tools_risk.go: yagura_risk_triage — Cyber Risk Reasoning Layer。
 +//
 +// 「AIセキュリティは検知ロジックから複合判断へ」— CVSS 単体ではなく、脆弱性深刻度 +
@@ -6383,6 +6397,10 @@ index 0000000..25d5f7e
 +				"stage":          map[string]any{"type": "string"},
 +				"tags":           map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 +				"dependents":     map[string]any{"type": "integer"},
++				"weights": map[string]any{
++					"type":        "object",
++					"description": "Optional partial override of scoring weights (merged over defaults), e.g. {\"known_exploited\": 40, \"band_now\": 80}.",
++				},
 +			},
 +			"required": []string{"findings"},
 +		},
@@ -6399,17 +6417,26 @@ index 0000000..25d5f7e
 +					PublicExploit       *bool   `json:"public_exploit"`
 +					PatchBlocksBusiness *bool   `json:"patch_blocks_business"`
 +				} `json:"findings"`
-+				Slug          string   `json:"slug"`
-+				AssetPriority int      `json:"asset_priority"`
-+				Stage         string   `json:"stage"`
-+				Tags          []string `json:"tags"`
-+				Dependents    int      `json:"dependents"`
++				Slug          string          `json:"slug"`
++				AssetPriority int             `json:"asset_priority"`
++				Stage         string          `json:"stage"`
++				Tags          []string        `json:"tags"`
++				Dependents    int             `json:"dependents"`
++				Weights       json.RawMessage `json:"weights"`
 +			}
 +			if err := json.Unmarshal(args, &in); err != nil {
 +				return nil, &ToolError{Code: "invalid_input", Cause: err}
 +			}
 +			if len(in.Findings) == 0 {
 +				return nil, &ToolError{Code: "invalid_input", Message: "at least one finding is required"}
++			}
++			// 任意の weights override: DefaultWeights() の上に部分 JSON を被せる
++			// (未指定 field は既定のまま)。組織のリスク許容度に合わせた custom rule。
++			weights := riskreason.DefaultWeights()
++			if len(in.Weights) > 0 {
++				if err := json.Unmarshal(in.Weights, &weights); err != nil {
++					return nil, &ToolError{Code: "invalid_input", Message: "invalid weights override: " + err.Error()}
++				}
 +			}
 +
 +			// slug があれば registry + graph から資産文脈を補完。
@@ -6446,7 +6473,7 @@ index 0000000..25d5f7e
 +					Dependents: dependents, PatchBlocksBusiness: f.PatchBlocksBusiness,
 +				})
 +			}
-+			results := riskreason.ScoreAll(inputs)
++			results := riskreason.ScoreAllWith(inputs, weights)
 +
 +			// priority 別サマリ(決定論)。
 +			summary := map[string]int{}
@@ -6472,10 +6499,10 @@ index 0000000..25d5f7e
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_risk_test.go b/yagura-v0.35.0/internal/mcp/tools_risk_test.go
 new file mode 100644
-index 0000000..bbbef4f
+index 0000000..c0946c4
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_risk_test.go
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,161 @@
 +package mcp
 +
 +import (
@@ -6606,6 +6633,35 @@ index 0000000..bbbef4f
 +	}
 +	if len(out.Warnings) == 0 || !strings.Contains(out.Warnings[0], "not found in registry") {
 +		t.Errorf("expected a not-found warning, got %+v", out.Warnings)
++	}
++}
++
++func TestRiskTriage_WeightsOverride(t *testing.T) {
++	tool := buildRiskTriageTool(newDeps(t))
++	args := map[string]any{
++		"findings": []map[string]any{{"cve": "CVE-1", "cvss": 9.8, "known_exploited": true}},
++		// drastically down-weight so the same finding is no longer NOW.
++		"weights": map[string]any{"sev_critical": 1, "known_exploited": 1, "band_now": 90},
++	}
++	res := mustCall(t, tool, args)
++	b, _ := json.Marshal(res)
++	var out struct {
++		Triaged []struct {
++			Priority string `json:"priority"`
++			Score    int    `json:"score"`
++		} `json:"triaged"`
++	}
++	_ = json.Unmarshal(b, &out)
++	if out.Triaged[0].Priority == "NOW" {
++		t.Errorf("down-weighted critical+KEV should not be NOW, got %+v", out.Triaged[0])
++	}
++	// invalid weights → error.
++	bad, _ := json.Marshal(map[string]any{
++		"findings": []map[string]any{{"cve": "x", "cvss": 5}},
++		"weights":  "not-an-object",
++	})
++	if _, err := tool.Handler(tCtx(), bad); err == nil {
++		t.Error("expected error for invalid weights override")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_test.go b/yagura-v0.35.0/internal/mcp/tools_test.go
@@ -6992,10 +7048,10 @@ index 0000000..2bd70b4
 +}
 diff --git a/yagura-v0.35.0/internal/riskreason/riskreason.go b/yagura-v0.35.0/internal/riskreason/riskreason.go
 new file mode 100644
-index 0000000..45839ed
+index 0000000..967a3b1
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/riskreason/riskreason.go
-@@ -0,0 +1,337 @@
+@@ -0,0 +1,391 @@
 +// Package riskreason は脆弱性の「複合判断」を rule-based / deterministic に行う
 +// Cyber Risk Reasoning Layer。
 +//
@@ -7082,16 +7138,66 @@ index 0000000..45839ed
 +	Recommendation string   `json:"recommendation"`
 +}
 +
-+// 重み(rule-based、決定論)。
-+const (
-+	wSevCritical = 45
-+	wSevHigh     = 32
-+	wSevMedium   = 18
-+	wSevLow      = 7
-+)
++// Weights は複合判断の各 factor の重み(rule-based・決定論)。すべて整数の加点/減点で、
++// DefaultWeights() が現行のチューニング値。運用側が ScoreWith に渡すことで、組織の
++// リスク許容度に合わせて調整できる(custom rule loading の基盤)。
++// json タグ付きなので、部分的な override JSON を DefaultWeights() の上に Unmarshal
++// するだけで「指定した factor だけ差し替え」が効く(未指定 field は既定値のまま)。
++type Weights struct {
++	// (1) 深刻度ベース
++	SevCritical int `json:"sev_critical"` // CVSS >= 9.0
++	SevHigh     int `json:"sev_high"`     // 7.0-8.9
++	SevMedium   int `json:"sev_medium"`   // 4.0-6.9
++	SevLow      int `json:"sev_low"`      // < 4.0
++	// (2) 資産の業務重要度
++	AssetPriorityPerLevel int `json:"asset_priority_per_level"` // AssetPriority(0-5)に乗算
++	StageArchived         int `json:"stage_archived"`
++	StagePaused           int `json:"stage_paused"`
++	StageMaintenance      int `json:"stage_maintenance"`
++	TagExposure           int `json:"tag_exposure"`  // production/external tag
++	TagSensitive          int `json:"tag_sensitive"` // pii/secret tag
++	TagLowValue           int `json:"tag_low_value"` // dev/test tag(他 tag が無いときのみ適用)
++	// (3) 到達可能性
++	Exposed      int `json:"exposed"`       // internet-exposed == true
++	NotExposed   int `json:"not_exposed"`   // == false
++	NoAuth       int `json:"no_auth"`       // AuthRequired == false(認証不要 = 危険)
++	AuthRequired int `json:"auth_required"` // == true
++	NoWAF        int `json:"no_waf"`        // WAFProtected == false
++	WAFProtected int `json:"waf_protected"` // == true
++	// (4) 攻撃可能性
++	KnownExploited int `json:"known_exploited"` // KEV
++	PublicExploit  int `json:"public_exploit"`
++	// (5) 横展開
++	BlastRadiusPerDep int `json:"blast_radius_per_dep"` // 依存元 1 件あたり
++	BlastRadiusCap    int `json:"blast_radius_cap"`     // 上限
++	// 優先度バンド閾値(score >= 値)
++	BandNow       int `json:"band_now"`
++	BandSoon      int `json:"band_soon"`
++	BandScheduled int `json:"band_scheduled"`
++	BandMonitor   int `json:"band_monitor"`
++}
 +
-+// Score は複合エビデンスから修正優先度を導く。完全に決定論的。
-+func Score(in Input) Result {
++// DefaultWeights は現行のチューニング値(これまでの定数/マジックナンバーを集約)。
++func DefaultWeights() Weights {
++	return Weights{
++		SevCritical: 45, SevHigh: 32, SevMedium: 18, SevLow: 7,
++		AssetPriorityPerLevel: 4,
++		StageArchived:         -20, StagePaused: -12, StageMaintenance: -3,
++		TagExposure: 8, TagSensitive: 8, TagLowValue: -6,
++		Exposed: 15, NotExposed: -10,
++		NoAuth: 12, AuthRequired: -6,
++		NoWAF: 4, WAFProtected: -8,
++		KnownExploited: 28, PublicExploit: 12,
++		BlastRadiusPerDep: 3, BlastRadiusCap: 18,
++		BandNow: 75, BandSoon: 55, BandScheduled: 35, BandMonitor: 15,
++	}
++}
++
++// Score は DefaultWeights() で複合判断する(後方互換の既定 API)。
++func Score(in Input) Result { return ScoreWith(in, DefaultWeights()) }
++
++// ScoreWith は与えられた Weights で複合エビデンスから修正優先度を導く。完全に決定論的。
++func ScoreWith(in Input, w Weights) Result {
 +	r := Result{CVE: in.CVE}
 +	score := 0
 +	add := func(name string, delta int, detail string) {
@@ -7104,57 +7210,57 @@ index 0000000..45839ed
 +	// ── (1) 深刻度ベース ──
 +	switch sev := severityBucket(in.CVSS, in.Severity); sev {
 +	case "critical":
-+		add("severity", wSevCritical, "CVSS critical (>=9.0)")
++		add("severity", w.SevCritical, "CVSS critical (>=9.0)")
 +	case "high":
-+		add("severity", wSevHigh, "CVSS high (7.0-8.9)")
++		add("severity", w.SevHigh, "CVSS high (7.0-8.9)")
 +	case "medium":
-+		add("severity", wSevMedium, "CVSS medium (4.0-6.9)")
++		add("severity", w.SevMedium, "CVSS medium (4.0-6.9)")
 +	case "low":
-+		add("severity", wSevLow, "CVSS low (<4.0)")
++		add("severity", w.SevLow, "CVSS low (<4.0)")
 +	default:
 +		r.Unknowns = append(r.Unknowns, "severity (no CVSS or severity string provided)")
 +	}
 +
 +	// ── (2) 資産の業務重要度 ──
 +	if in.AssetPriority > 0 {
-+		d := in.AssetPriority * 4 // 0-5 → 0-20
++		d := in.AssetPriority * w.AssetPriorityPerLevel
 +		add("asset_priority", d, fmt.Sprintf("business criticality (priority %d/5)", in.AssetPriority))
 +	}
 +	switch strings.ToLower(strings.TrimSpace(in.Stage)) {
 +	case "archived":
-+		add("stage", -20, "asset archived (out of service)")
++		add("stage", w.StageArchived, "asset archived (out of service)")
 +	case "paused":
-+		add("stage", -12, "asset paused")
++		add("stage", w.StagePaused, "asset paused")
 +	case "maintenance":
-+		add("stage", -3, "asset in maintenance")
++		add("stage", w.StageMaintenance, "asset in maintenance")
 +	}
-+	add(tagSignal(in.Tags))
++	add(tagSignal(in.Tags, w))
 +
 +	// ── (3) 到達可能性 ──
 +	tri(in.InternetExposed, &r, &score,
-+		"reachability", 15, "internet-exposed (reachable by external attackers)",
-+		-10, "not internet-exposed (internal only)",
++		"reachability", w.Exposed, "internet-exposed (reachable by external attackers)",
++		w.NotExposed, "not internet-exposed (internal only)",
 +		"internet exposure")
 +	tri(in.AuthRequired, &r, &score,
-+		"auth", -6, "authentication required to reach",
-+		12, "reachable without authentication",
++		"auth", w.AuthRequired, "authentication required to reach",
++		w.NoAuth, "reachable without authentication",
 +		"authentication requirement")
 +	tri(in.WAFProtected, &r, &score,
-+		"waf", -8, "WAF/edge filtering in front",
-+		4, "no WAF in front",
++		"waf", w.WAFProtected, "WAF/edge filtering in front",
++		w.NoWAF, "no WAF in front",
 +		"WAF coverage")
 +
 +	// ── (4) 攻撃可能性 ──
-+	triHi(in.KnownExploited, &r, &score, "known_exploited", 28,
++	triHi(in.KnownExploited, &r, &score, "known_exploited", w.KnownExploited,
 +		"actively exploited in the wild (e.g. CISA KEV)", "known-exploited status (CISA KEV)")
-+	triHi(in.PublicExploit, &r, &score, "public_exploit", 12,
++	triHi(in.PublicExploit, &r, &score, "public_exploit", w.PublicExploit,
 +		"public exploit code available", "public exploit availability")
 +
 +	// ── (5) 横展開 blast radius ──
 +	if in.Dependents > 0 {
-+		d := in.Dependents * 3
-+		if d > 18 {
-+			d = 18
++		d := in.Dependents * w.BlastRadiusPerDep
++		if d > w.BlastRadiusCap {
++			d = w.BlastRadiusCap
 +		}
 +		add("blast_radius", d, fmt.Sprintf("%d asset(s) depend on this (lateral blast radius)", in.Dependents))
 +	}
@@ -7172,16 +7278,20 @@ index 0000000..45839ed
 +		score = 100
 +	}
 +	r.Score = score
-+	r.Priority = band(score)
++	r.Priority = band(score, w)
 +	r.Recommendation = recommend(r.Priority, in, r.Unknowns)
 +	return r
 +}
 +
-+// ScoreAll は複数 finding を score し、score 降順(tie は CVE 昇順)で返す。
-+func ScoreAll(inputs []Input) []Result {
++// ScoreAll は DefaultWeights() で複数 finding を score し、score 降順で返す。
++func ScoreAll(inputs []Input) []Result { return ScoreAllWith(inputs, DefaultWeights()) }
++
++// ScoreAllWith は与えられた Weights で複数 finding を score し、score 降順
++// (tie は CVE 昇順)で返す。
++func ScoreAllWith(inputs []Input, w Weights) []Result {
 +	out := make([]Result, 0, len(inputs))
 +	for _, in := range inputs {
-+		out = append(out, Score(in))
++		out = append(out, ScoreWith(in, w))
 +	}
 +	sort.SliceStable(out, func(i, j int) bool {
 +		if out[i].Score != out[j].Score {
@@ -7222,7 +7332,7 @@ index 0000000..45839ed
 +
 +// tagSignal は tags から 1 つの集約 factor を返す(production/data 機微 → 加点、
 +// dev/test → 減点。多重加点を避けるため上限つき)。
-+func tagSignal(tags []string) (string, int, string) {
++func tagSignal(tags []string, w Weights) (string, int, string) {
 +	exposure, sensitive, lowval := false, false, false
 +	for _, t := range tags {
 +		switch strings.ToLower(strings.TrimSpace(t)) {
@@ -7237,15 +7347,15 @@ index 0000000..45839ed
 +	delta := 0
 +	parts := []string{}
 +	if exposure {
-+		delta += 8
++		delta += w.TagExposure
 +		parts = append(parts, "production/external")
 +	}
 +	if sensitive {
-+		delta += 8
++		delta += w.TagSensitive
 +		parts = append(parts, "sensitive-data")
 +	}
 +	if lowval && delta == 0 {
-+		delta -= 6
++		delta += w.TagLowValue
 +		parts = append(parts, "non-production")
 +	}
 +	if delta == 0 {
@@ -7283,15 +7393,15 @@ index 0000000..45839ed
 +	}
 +}
 +
-+func band(score int) Priority {
++func band(score int, w Weights) Priority {
 +	switch {
-+	case score >= 75:
++	case score >= w.BandNow:
 +		return PriorityNow
-+	case score >= 55:
++	case score >= w.BandSoon:
 +		return PrioritySoon
-+	case score >= 35:
++	case score >= w.BandScheduled:
 +		return PriorityScheduled
-+	case score >= 15:
++	case score >= w.BandMonitor:
 +		return PriorityMonitor
 +	default:
 +		return PriorityDefer
@@ -7335,10 +7445,10 @@ index 0000000..45839ed
 +}
 diff --git a/yagura-v0.35.0/internal/riskreason/riskreason_test.go b/yagura-v0.35.0/internal/riskreason/riskreason_test.go
 new file mode 100644
-index 0000000..ac989c7
+index 0000000..0dd1293
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/riskreason/riskreason_test.go
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,191 @@
 +package riskreason
 +
 +import (
@@ -7485,6 +7595,49 @@ index 0000000..ac989c7
 +		if u == "patch business impact" {
 +			t.Error("a set PatchBlocksBusiness must not be an unknown")
 +		}
++	}
++}
++
++func TestScoreWith_DefaultMatchesScore(t *testing.T) {
++	in := Input{CVE: "a", CVSS: 8.1, AssetPriority: 3, Tags: []string{"production"},
++		InternetExposed: b(true), KnownExploited: b(true), Dependents: 2}
++	if Score(in).Score != ScoreWith(in, DefaultWeights()).Score {
++		t.Error("Score must equal ScoreWith(DefaultWeights)")
++	}
++}
++
++func TestScoreWith_CustomWeightsTune(t *testing.T) {
++	in := Input{CVE: "a", CVSS: 9.8, KnownExploited: b(true)} // critical + KEV
++	def := ScoreWith(in, DefaultWeights())
++
++	// Down-weight everything → lower score, lower band.
++	low := DefaultWeights()
++	low.SevCritical = 5
++	low.KnownExploited = 2
++	got := ScoreWith(in, low)
++	if got.Score >= def.Score {
++		t.Errorf("down-weighted score should be lower: def=%d custom=%d", def.Score, got.Score)
++	}
++
++	// Raise the NOW threshold above the (default-weighted) score → demotes the band.
++	strictBand := DefaultWeights()
++	strictBand.BandNow = 100
++	if ScoreWith(in, strictBand).Priority == PriorityNow && def.Priority == PriorityNow {
++		// def is NOW; with BandNow=100 (and score<100) it must drop below NOW.
++		if ScoreWith(in, strictBand).Score < 100 {
++			t.Errorf("raising BandNow to 100 should demote a sub-100 score out of NOW")
++		}
++	}
++}
++
++func TestScoreWith_ZeroFactorWeights(t *testing.T) {
++	in := Input{CVE: "a", CVSS: 9.8, AssetPriority: 5, InternetExposed: b(true),
++		KnownExploited: b(true), Dependents: 5}
++	// zero factor weights but keep the default band thresholds → score 0, DEFER.
++	w := Weights{BandNow: 75, BandSoon: 55, BandScheduled: 35, BandMonitor: 15}
++	r := ScoreWith(in, w)
++	if r.Score != 0 || r.Priority != PriorityDefer {
++		t.Errorf("zero factor weights should yield score 0 / DEFER, got %d / %s", r.Score, r.Priority)
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/secretscan/secretscan.go b/yagura-v0.35.0/internal/secretscan/secretscan.go
