@@ -60,10 +60,10 @@ index 0000000..16ce440
 +  }
 +}
 diff --git a/yagura-v0.35.0/.claude/settings.json b/yagura-v0.35.0/.claude/settings.json
-index ec74583..26ae472 100644
+index ec74583..84ca474 100644
 --- a/yagura-v0.35.0/.claude/settings.json
 +++ b/yagura-v0.35.0/.claude/settings.json
-@@ -4,7 +4,15 @@
+@@ -4,7 +4,13 @@
        "Bash(rm -rf*)",
        "Bash(git push --force*)",
        "Bash(go clean -modcache)",
@@ -74,9 +74,7 @@ index ec74583..26ae472 100644
 +      "Bash(gcloud*)",
 +      "Bash(az*)",
 +      "Bash(kubectl*)",
-+      "Bash(docker push*)",
-+      "Bash(curl*|*sh*)",
-+      "Bash(wget*|*sh*)"
++      "Bash(docker push*)"
      ],
      "ask": ["Write", "Edit", "Bash"]
    },
@@ -195,10 +193,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..006715a 100644
+index 9b29eec..0312a4a 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,182 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,196 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -360,9 +358,23 @@ index 9b29eec..006715a 100644
 +    yank される悪性リリースの直撃を避ける(記事 §6)。github-actions / docker 両 ecosystem に適用。
 +  - **AI エージェントの deny list 拡張**(`.claude/settings.json`)。記事 §7-1 の
 +    「副作用のある危険操作」のうち yagura 開発で不要なものを deny に追加:
-+    `sudo*` / クラウド CLI(`aws*` / `gcloud*` / `az*` / `kubectl*`)/ `docker push*` /
-+    pipe-to-shell(`curl*|*sh*` / `wget*|*sh*`)。通常の curl/docker build 等は許可の
-+    まま。settings-audit は引き続き 100 点。
++    `sudo*` / クラウド CLI(`aws*` / `gcloud*` / `az*` / `kubectl*`)/ `docker push*`。
++    通常の curl/docker build 等は許可のまま。settings-audit は引き続き 100 点。
++- **コードレビュー指摘の修正(recall-biased review の findings 反映)**:
++  - `.claude/settings.json`: 投機的だった pipe-to-shell glob(`curl*|*sh*` /
++    `wget*|*sh*`)を削除。Claude Code の permission 構文での挙動が不確実な上、
++    `curl ... | grep sshd` のような正当な pipeline を過剰 deny し得たため。Bash は
++    `ask` で既にゲートされており、明確な prefix deny のみ残す。
++  - `internal/harness/workflow_audit.go`: `reSortCall` の `score` 判定を
++    `strings.Contains` から word-boundary 正規表現(`\bscore`)へ。`under_score` /
++    `underscore` 等の部分一致 false positive を排除。`reVerification` も各 term を
++    word boundary で囲み、`preview`(review を部分含有)等の誤検出を防止。
++  - `internal/riskreason/riskreason.go`: `PatchBlocksBusiness` が nil のとき、他の
++    `*bool` と同様に `unknowns` へ surface(recommend は nil を「影響なし」とみなす
++    ため、評価できていない事実を可視化)。
++  - `internal/mcp/tools_risk.go`: `slug` 指定が registry で解決しない場合に
++    `warnings` を返す(従来は caller 提供の資産文脈を黙って使っていた)。
++  - 回帰テスト 3 本追加。`go test ./... 42 ok / 0 fail`。
 +
 +### What's not yet
 +
@@ -4498,7 +4510,7 @@ index 0000000..ec1ca30
 +}
 diff --git a/yagura-v0.35.0/internal/harness/workflow_audit.go b/yagura-v0.35.0/internal/harness/workflow_audit.go
 new file mode 100644
-index 0000000..e0d9c3f
+index 0000000..97ced20
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/harness/workflow_audit.go
 @@ -0,0 +1,183 @@
@@ -4523,7 +4535,6 @@ index 0000000..e0d9c3f
 +
 +import (
 +	"regexp"
-+	"strings"
 +)
 +
 +// WorkflowAuditResult は Dynamic Workflow ファイル評価結果。
@@ -4565,17 +4576,19 @@ index 0000000..e0d9c3f
 +	reTokenBudget = regexp.MustCompile(`(?i)(max_?tokens|token_?budget|\b\d+k?\s*tokens?\b|use\s+\d+k?\s+tokens)`)
 +	// per-agent model 指定(model: "opus" 等)。
 +	rePerAgentModel = regexp.MustCompile(`(?i)\bmodel\s*:`)
-+	// verification を行っている兆候。
-+	reVerification = regexp.MustCompile(`(?i)\b(verif|adversar|reviewer|\breview(s|ed)?\b|judge|grade|critique|refut|fact.?check)`)
++	// verification を行っている兆候。term は word boundary で囲み、"preview"/"degrade"
++	// のような部分一致 false positive を避ける(review 系は語尾 s/ed/er/ers を許容)。
++	reVerification = regexp.MustCompile(`(?i)(\bverif|\badversar|\brefut|\bfact.?check|\bjudge|\bgrade|\bcritique|\breview(s|ed|er|ers)?\b)`)
 +	// /goal による hard completion。
 +	reGoal = regexp.MustCompile(`(?i)/goal\b|\bgoal\b`)
 +	// untrusted / external input source。conservative に絞る。
 +	reUntrusted = regexp.MustCompile(`(?i)(support\s*ticket|bug\s*report|user\s*feedback|customer\s*feedback|scrape|scraped|untrusted|social\s*media|third.?party|public\s*web|user.?submitted)`)
 +	// quarantine pattern(read-only reader / low-privilege)。
 +	reQuarantine = regexp.MustCompile(`(?i)(quarantine|read.?only\s*reader|low.?privilege|no.?privilege)`)
-+	// .sort( による absolute-score sort。
-+	reSortCall = regexp.MustCompile(`\.sort\s*\(`)
-+	rePairwise = regexp.MustCompile(`(?i)(pairwise|tournament|bracket)`)
++	// .sort( による absolute-score sort。"score" は word boundary 付き(underscore 等を除外)。
++	reSortCall  = regexp.MustCompile(`\.sort\s*\(`)
++	reScoreWord = regexp.MustCompile(`(?i)\bscore`)
++	rePairwise  = regexp.MustCompile(`(?i)(pairwise|tournament|bracket)`)
 +)
 +
 +// AuditWorkflow は Dynamic Workflow の JS source を heuristic で評価する。
@@ -4589,7 +4602,6 @@ index 0000000..e0d9c3f
 +//	WorkflowAuditResult。Issues/Suggestions は action-oriented。
 +func AuditWorkflow(content string) WorkflowAuditResult {
 +	r := WorkflowAuditResult{Score: 100}
-+	lower := strings.ToLower(content)
 +
 +	r.AgentCalls = len(reAgentCall.FindAllStringIndex(content, -1))
 +	r.UsesParallel = reParallel.MatchString(content)
@@ -4672,7 +4684,7 @@ index 0000000..e0d9c3f
 +	}
 +
 +	// mistake #7: absolute score での sort。pairwise/tournament が無ければ flag。
-+	if reSortCall.MatchString(content) && strings.Contains(lower, "score") && !rePairwise.MatchString(content) {
++	if reSortCall.MatchString(content) && reScoreWord.MatchString(content) && !rePairwise.MatchString(content) {
 +		r.SortsByAbsoluteScore = true
 +		r.Score -= 10
 +		r.Issues = append(r.Issues, "sorting by absolute score — comparative judgment (tournament/pairwise) is more reliable")
@@ -4687,10 +4699,10 @@ index 0000000..e0d9c3f
 +}
 diff --git a/yagura-v0.35.0/internal/harness/workflow_audit_test.go b/yagura-v0.35.0/internal/harness/workflow_audit_test.go
 new file mode 100644
-index 0000000..39f5b43
+index 0000000..ad2196b
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/harness/workflow_audit_test.go
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,213 @@
 +package harness
 +
 +import (
@@ -4885,6 +4897,23 @@ index 0000000..39f5b43
 +	r := AuditWorkflow(src)
 +	if r.SortsByAbsoluteScore {
 +		t.Error("should not flag sort when tournament/pairwise present")
++	}
++}
++
++// 回帰: "preview"(review を部分含有)や "underscore"(score を部分含有)で
++// self-preferential bias / absolute-score-sort を誤検出しないこと(word boundary 化)。
++func TestAuditWorkflow_NoSubstringFalsePositive(t *testing.T) {
++	src := `
++// generate a preview; sort items by their under_score timestamp
++const out = await agent("build a preview of the page", { model: "sonnet", maxTokens: 4000 })
++const ranked = items.sort((a, b) => a.under_score - b.under_score)
++`
++	r := AuditWorkflow(src)
++	if hasIssueContaining(r.Issues, "self-preferential bias") {
++		t.Errorf("'preview' must not trigger verification/self-preference: %v", r.Issues)
++	}
++	if r.SortsByAbsoluteScore || hasIssueContaining(r.Issues, "comparative judgment") {
++		t.Errorf("'under_score' must not trigger absolute-score-sort: %v", r.Issues)
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
@@ -5469,10 +5498,10 @@ index 0000000..c469356
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_risk.go b/yagura-v0.35.0/internal/mcp/tools_risk.go
 new file mode 100644
-index 0000000..3009547
+index 0000000..25d5f7e
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_risk.go
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,132 @@
 +// tools_risk.go: yagura_risk_triage — Cyber Risk Reasoning Layer。
 +//
 +// 「AIセキュリティは検知ロジックから複合判断へ」— CVSS 単体ではなく、脆弱性深刻度 +
@@ -5491,6 +5520,7 @@ index 0000000..3009547
 +import (
 +	"context"
 +	"encoding/json"
++	"fmt"
 +
 +	"github.com/shizukutanaka/yagura/internal/projectgraph"
 +	"github.com/shizukutanaka/yagura/internal/riskreason"
@@ -5549,14 +5579,24 @@ index 0000000..3009547
 +			// slug があれば registry + graph から資産文脈を補完。
 +			assetPriority, stage, tags, dependents := in.AssetPriority, in.Stage, in.Tags, in.Dependents
 +			resolvedSlug := ""
-+			if in.Slug != "" && d.Registry != nil {
-+				if p, err := d.Registry.Get(in.Slug); err == nil && p != nil {
-+					resolvedSlug = p.Slug
-+					assetPriority = p.Priority
-+					stage = string(p.Stage)
-+					tags = p.Tags
-+					g := projectgraph.Build(toGraphProjects(d.Registry.List()))
-+					dependents = g.Impact(p.Slug).ImpactCount
++			var warnings []string
++			if in.Slug != "" {
++				resolved := false
++				if d.Registry != nil {
++					if p, err := d.Registry.Get(in.Slug); err == nil && p != nil {
++						resolvedSlug = p.Slug
++						assetPriority = p.Priority
++						stage = string(p.Stage)
++						tags = p.Tags
++						g := projectgraph.Build(toGraphProjects(d.Registry.List()))
++						dependents = g.Impact(p.Slug).ImpactCount
++						resolved = true
++					}
++				}
++				if !resolved {
++					// slug が解決しないと caller 提供の文脈を黙って使ってしまうため明示する。
++					warnings = append(warnings, fmt.Sprintf(
++						"slug %q not found in registry; using caller-supplied asset context (priority/stage/tags/dependents)", in.Slug))
 +				}
 +			}
 +
@@ -5577,7 +5617,7 @@ index 0000000..3009547
 +			for _, r := range results {
 +				summary[string(r.Priority)]++
 +			}
-+			return map[string]any{
++			out := map[string]any{
 +				"asset": map[string]any{
 +					"slug":           resolvedSlug,
 +					"asset_priority": assetPriority,
@@ -5586,21 +5626,26 @@ index 0000000..3009547
 +				},
 +				"triaged": results,
 +				"summary": summary,
-+			}, nil
++			}
++			if len(warnings) > 0 {
++				out["warnings"] = warnings
++			}
++			return out, nil
 +		},
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_risk_test.go b/yagura-v0.35.0/internal/mcp/tools_risk_test.go
 new file mode 100644
-index 0000000..6ffd52d
+index 0000000..bbbef4f
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_risk_test.go
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,132 @@
 +package mcp
 +
 +import (
 +	"context"
 +	"encoding/json"
++	"strings"
 +	"testing"
 +
 +	"github.com/shizukutanaka/yagura/internal/project"
@@ -5704,6 +5749,29 @@ index 0000000..6ffd52d
 +		t.Error("expected error for empty findings")
 +	}
 +}
++
++func TestRiskTriage_SlugNotFoundWarns(t *testing.T) {
++	tool := buildRiskTriageTool(newDeps(t)) // empty registry
++	res := mustCall(t, tool, map[string]any{
++		"slug":           "does-not-exist",
++		"asset_priority": 4,
++		"findings":       []map[string]any{{"cve": "CVE-2026-9", "cvss": 7.0}},
++	})
++	b, _ := json.Marshal(res)
++	var out struct {
++		Warnings []string `json:"warnings"`
++		Asset    struct {
++			Slug string `json:"slug"`
++		} `json:"asset"`
++	}
++	_ = json.Unmarshal(b, &out)
++	if out.Asset.Slug != "" {
++		t.Errorf("unresolved slug should leave asset.slug empty, got %q", out.Asset.Slug)
++	}
++	if len(out.Warnings) == 0 || !strings.Contains(out.Warnings[0], "not found in registry") {
++		t.Errorf("expected a not-found warning, got %+v", out.Warnings)
++	}
++}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_test.go b/yagura-v0.35.0/internal/mcp/tools_test.go
 index 31ea232..e4a7a4c 100644
 --- a/yagura-v0.35.0/internal/mcp/tools_test.go
@@ -5786,10 +5854,10 @@ index 9ca620a..f400aba 100644
  	sort.Slice(ps, func(i, j int) bool { return ps[i].Slug < ps[j].Slug })
 diff --git a/yagura-v0.35.0/internal/riskreason/riskreason.go b/yagura-v0.35.0/internal/riskreason/riskreason.go
 new file mode 100644
-index 0000000..05d922f
+index 0000000..45839ed
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/riskreason/riskreason.go
-@@ -0,0 +1,331 @@
+@@ -0,0 +1,337 @@
 +// Package riskreason は脆弱性の「複合判断」を rule-based / deterministic に行う
 +// Cyber Risk Reasoning Layer。
 +//
@@ -5951,6 +6019,12 @@ index 0000000..05d922f
 +			d = 18
 +		}
 +		add("blast_radius", d, fmt.Sprintf("%d asset(s) depend on this (lateral blast radius)", in.Dependents))
++	}
++
++	// パッチ業務影響は score ではなく recommendation に効くが、不明(nil)なら他の *bool と
++	// 同様に文脈ギャップとして surface する(recommend は nil を「影響なし」とみなすため)。
++	if in.PatchBlocksBusiness == nil {
++		r.Unknowns = append(r.Unknowns, "patch business impact")
 +	}
 +
 +	if score < 0 {
@@ -6123,10 +6197,10 @@ index 0000000..05d922f
 +}
 diff --git a/yagura-v0.35.0/internal/riskreason/riskreason_test.go b/yagura-v0.35.0/internal/riskreason/riskreason_test.go
 new file mode 100644
-index 0000000..4d58875
+index 0000000..ac989c7
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/riskreason/riskreason_test.go
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,148 @@
 +package riskreason
 +
 +import (
@@ -6250,6 +6324,29 @@ index 0000000..4d58875
 +	dev := Score(Input{CVE: "b", CVSS: 5, Tags: []string{"dev"}})
 +	if prod.Score <= dev.Score {
 +		t.Errorf("production+pii should outrank a dev asset: prod=%d dev=%d", prod.Score, dev.Score)
++	}
++}
++
++func TestScore_PatchImpactUnknownSurfaced(t *testing.T) {
++	// nil patch-impact must surface as an unknown (consistent with other *bool gaps).
++	nilCase := Score(Input{CVE: "a", CVSS: 9.0, InternetExposed: b(true), AuthRequired: b(true),
++		WAFProtected: b(true), KnownExploited: b(true), PublicExploit: b(true)})
++	found := false
++	for _, u := range nilCase.Unknowns {
++		if u == "patch business impact" {
++			found = true
++		}
++	}
++	if !found {
++		t.Errorf("nil PatchBlocksBusiness should be an unknown, got %+v", nilCase.Unknowns)
++	}
++	// when set, it must NOT be listed as unknown.
++	setCase := Score(Input{CVE: "a", CVSS: 9.0, InternetExposed: b(true), AuthRequired: b(true),
++		WAFProtected: b(true), KnownExploited: b(true), PublicExploit: b(true), PatchBlocksBusiness: b(false)})
++	for _, u := range setCase.Unknowns {
++		if u == "patch business impact" {
++			t.Error("a set PatchBlocksBusiness must not be an unknown")
++		}
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/secretscan/secretscan.go b/yagura-v0.35.0/internal/secretscan/secretscan.go
