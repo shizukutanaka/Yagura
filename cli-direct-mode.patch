@@ -193,10 +193,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..0312a4a 100644
+index 9b29eec..e45ef5c 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,196 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,211 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -375,6 +375,21 @@ index 9b29eec..0312a4a 100644
 +  - `internal/mcp/tools_risk.go`: `slug` 指定が registry で解決しない場合に
 +    `warnings` を返す(従来は caller 提供の資産文脈を黙って使っていた)。
 +  - 回帰テスト 3 本追加。`go test ./... 42 ok / 0 fail`。
++- **CLI `yagura publicity-scan`: 公開前 leak チェック(publicity-review ゲート)**
++  (`internal/publicityscan/publicityscan.go`)。Claude Code スキル自己改善ループの
++  publicity-review(SKILL.md/docs/PR を public repo へ出す前の leak チェック)に着想。
++  `secretscan` が credential を見るのに対し、本 scanner は**身元・内部構造の leak**を
++  検出して補完する: (1) 絶対 home パス(`/Users/<name>` / `/home/<name>` /
++  `C:\Users\<name>` — OS ユーザ名が漏れる、HIGH)、(2) 内部 hostname(`*.local` /
++  `*.internal` / `*.corp` 等、MEDIUM)、(3) private/RFC1918 IP(MEDIUM、127.x
++  loopback と `x/8` 等 CIDR レンジ定義は除外)、(4) email(LOW、example/no-reply
++  除外)。誤検出抑制として generic/CI ユーザ名(runner/ubuntu/user/you/...)や
++  `settings.local.json` のような filename は除外。`yagura publicity-scan [path]`
++  (file/dir、既定 `.claude`、`--json`)。新 package `internal/publicityscan`、
++  CLI 側に置くので MCP tool 数(48)不変、stdlib `regexp` のみ(ADR-0001)。
++  ドッグフード: `.claude`(4 files)は 0 件でクリーン。一方 README/windsurf.md の
++  example に残っていた実 home パス(`/home/m/...`)を検出 → placeholder
++  (`/home/you/...`)へ修正(scanner 自身の suggestion を適用)。回帰テスト 10 本。
 +
 +### What's not yet
 +
@@ -394,7 +409,7 @@ index 9b29eec..0312a4a 100644
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..c3f8fb8 100644
+index 986f84e..fb14324 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -402,7 +417,7 @@ index 986f84e..c3f8fb8 100644
  **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
  
 -Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
-+Status: **v0.35.0** — 48 MCP tools, 41 internal packages, CLI direct mode, 30 consecutive reproducible releases.
++Status: **v0.35.0** — 48 MCP tools, 42 internal packages, CLI direct mode, 30 consecutive reproducible releases.
  
  ---
  
@@ -437,6 +452,15 @@ index 986f84e..c3f8fb8 100644
  ## Quickstart
  
  ```bash
+@@ -114,7 +129,7 @@ curl -sS -X POST http://127.0.0.1:8090/mcp -H 'Content-Type: application/json' -
+     "arguments":{
+       "slug":"breeze",
+       "repository":"shizukutanaka/breeze",
+-      "local_path":"/home/m/breeze",
++      "local_path":"/home/you/breeze",
+       "language":"javascript"
+     }
+   }}'
 @@ -151,7 +166,7 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
  
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
@@ -456,10 +480,10 @@ index 986f84e..c3f8fb8 100644
  
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..a299a25
+index 0000000..bcf6daa
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,1075 @@
+@@ -0,0 +1,1164 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -503,6 +527,7 @@ index 0000000..a299a25
 +	"github.com/shizukutanaka/yagura/internal/harness"
 +	"github.com/shizukutanaka/yagura/internal/pindrift"
 +	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/publicityscan"
 +	"github.com/shizukutanaka/yagura/internal/registry"
 +	"github.com/shizukutanaka/yagura/internal/sbom"
 +	"github.com/shizukutanaka/yagura/internal/secretscan"
@@ -522,7 +547,7 @@ index 0000000..a299a25
 +	"register": true, "update": true, "unregister": true,
 +	"sbom": true, "secretscan": true, "gha-audit": true, "pin-drift": true,
 +	"skill-audit": true, "workflow-audit": true, "settings-audit": true,
-+	"agent-config-audit": true, "plugin-audit": true,
++	"agent-config-audit": true, "plugin-audit": true, "publicity-scan": true,
 +}
 +
 +// runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -561,6 +586,8 @@ index 0000000..a299a25
 +		err = cliAgentConfigAudit(args, stdout, stderr)
 +	case "plugin-audit":
 +		err = cliPluginAudit(args, stdout, stderr)
++	case "publicity-scan":
++		err = cliPublicityScan(args, stdout, stderr)
 +	default:
 +		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 +		return 2
@@ -1366,6 +1393,92 @@ index 0000000..a299a25
 +	harness.PluginAuditResult
 +}
 +
++// publicityFinding は path 付きの publicity leak 1 件。
++type publicityFinding struct {
++	Path string `json:"path"`
++	publicityscan.Finding
++}
++
++// publicityTextExts は publicity-scan が走査するテキスト拡張子。
++var publicityTextExts = map[string]bool{
++	".md": true, ".mdx": true, ".txt": true, ".json": true, ".yaml": true,
++	".yml": true, ".toml": true, ".sh": true, ".env": true, ".example": true,
++}
++
++// cliPublicityScan は公開前 leak チェック(absolute home パス / 内部 hostname /
++// private IP / email)を行う。SKILL.md 等を public repo へ出す前の publicity-review
++// ゲートを CLI 化(secretscan の credential 検出を補完)。path はファイル or dir。
++func cliPublicityScan(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("publicity-scan", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	dir := fs.String("dir", ".claude", "file or directory to scan (text files only)")
++	rest, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	target := *dir
++	if len(rest) > 0 {
++		target = rest[0]
++	}
++	paths, err := findScanFiles(target)
++	if err != nil {
++		return err
++	}
++	var findings []publicityFinding
++	for _, p := range paths {
++		data, err := os.ReadFile(p)
++		if err != nil {
++			return fmt.Errorf("read %s: %w", p, err)
++		}
++		for _, f := range publicityscan.Scan(string(data)) {
++			findings = append(findings, publicityFinding{Path: p, Finding: f})
++		}
++	}
++	if *jsonOut {
++		bare := make([]publicityscan.Finding, len(findings))
++		for i, f := range findings {
++			bare[i] = f.Finding
++		}
++		return emitJSON(stdout, map[string]any{
++			"scanned":  len(paths),
++			"findings": findings,
++			"summary":  publicityscan.Summarize(bare),
++		})
++	}
++	humanPublicityScan(stdout, findings, len(paths))
++	return nil
++}
++
++// findScanFiles は target がファイルならそれ 1 件、dir なら配下のテキストファイルを
++// path 昇順で返す。存在しなければ空(エラーにしない — 他 audit と同じ graceful 挙動)。
++func findScanFiles(target string) ([]string, error) {
++	info, err := os.Stat(target)
++	if os.IsNotExist(err) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, err
++	}
++	if !info.IsDir() {
++		return []string{target}, nil
++	}
++	var paths []string
++	err = filepath.WalkDir(target, func(p string, d fs.DirEntry, err error) error {
++		if err != nil {
++			return err
++		}
++		if !d.IsDir() && publicityTextExts[strings.ToLower(filepath.Ext(p))] {
++			paths = append(paths, p)
++		}
++		return nil
++	})
++	if err != nil {
++		return nil, fmt.Errorf("walk %s: %w", target, err)
++	}
++	sort.Strings(paths)
++	return paths, nil
++}
++
 +// ─── shared helpers ──────────────────────────────────────────
 +
 +// filterProjects は stage/tag/language/query で registry を絞り込む。
@@ -1537,10 +1650,10 @@ index 0000000..a299a25
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
 new file mode 100644
-index 0000000..2a477ec
+index 0000000..08fe122
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
-@@ -0,0 +1,423 @@
+@@ -0,0 +1,440 @@
 +// cli_format.go: output formatters for CLI direct mode (v0.35.0).
 +//
 +// 2 つの出力経路:
@@ -1564,6 +1677,7 @@ index 0000000..2a477ec
 +	"github.com/shizukutanaka/yagura/internal/harness"
 +	"github.com/shizukutanaka/yagura/internal/pindrift"
 +	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/publicityscan"
 +	"github.com/shizukutanaka/yagura/internal/sbom"
 +	"github.com/shizukutanaka/yagura/internal/secretscan"
 +)
@@ -1949,6 +2063,22 @@ index 0000000..2a477ec
 +	}
 +}
 +
++// ─── publicity-scan ──────────────────────────────────────────
++
++func humanPublicityScan(w io.Writer, findings []publicityFinding, scanned int) {
++	bare := make([]publicityscan.Finding, len(findings))
++	for i, f := range findings {
++		bare[i] = f.Finding
++	}
++	s := publicityscan.Summarize(bare)
++	fmt.Fprintf(w, "scanned: %d   findings: %d\n", scanned, s.Total)
++	printCountMap(w, "by severity", s.BySeverity)
++	for _, f := range findings {
++		fmt.Fprintf(w, "  [%s] %s:%d  %s  %s\n",
++			f.Severity, f.Path, f.Line, f.RuleID, f.Snippet)
++	}
++}
++
 +// ─── small helpers ───────────────────────────────────────────
 +
 +func dash(s string) string {
@@ -1966,10 +2096,10 @@ index 0000000..2a477ec
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
 new file mode 100644
-index 0000000..854c06b
+index 0000000..84f7971
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
-@@ -0,0 +1,542 @@
+@@ -0,0 +1,586 @@
 +package main
 +
 +import (
@@ -2512,6 +2642,50 @@ index 0000000..854c06b
 +		t.Errorf("missing file: code=%d out=%q", code, nout)
 +	}
 +}
++
++func TestCLI_PublicityScan(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	dir := t.TempDir()
++	// a doc with a real leak (home path) + a clean line.
++	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("see /Users/hiroro/work\nbind 127.0.0.1:8090\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	// a non-text file is ignored.
++	if err := os.WriteFile(filepath.Join(dir, "bin.dat"), []byte("/Users/secret/x"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	_, out, _ := runCLICapture(t, "publicity-scan", "--dir", dir, "--json")
++	var r struct {
++		Scanned  int `json:"scanned"`
++		Findings []struct {
++			Path     string `json:"path"`
++			RuleID   string `json:"rule_id"`
++			Severity string `json:"severity"`
++		} `json:"findings"`
++		Summary struct {
++			Total int `json:"total"`
++		} `json:"summary"`
++	}
++	if err := json.Unmarshal([]byte(out), &r); err != nil {
++		t.Fatalf("json: %v\n%s", err, out)
++	}
++	if r.Scanned != 1 { // only SKILL.md (bin.dat ignored)
++		t.Errorf("expected 1 text file scanned, got %d", r.Scanned)
++	}
++	if r.Summary.Total != 1 || r.Findings[0].RuleID != "absolute-home-path" {
++		t.Errorf("expected 1 home-path finding (loopback ignored), got %+v", r.Findings)
++	}
++
++	// single-file positional form.
++	if code, fout, _ := runCLICapture(t, "publicity-scan", filepath.Join(dir, "SKILL.md")); code != 0 || !strings.Contains(fout, "absolute-home-path") {
++		t.Errorf("positional file: code=%d out=%q", code, fout)
++	}
++
++	// missing path → scanned 0, exit 0.
++	if code, nout, _ := runCLICapture(t, "publicity-scan", "--dir", filepath.Join(dir, "nope")); code != 0 || !strings.Contains(nout, "scanned: 0") {
++		t.Errorf("missing path: code=%d out=%q", code, nout)
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
 index cfb6e51..9dad632 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
@@ -2526,7 +2700,7 @@ index cfb6e51..9dad632 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..e76bcd1 100644
+index bd1fe39..acb0bdf 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -57,7 +57,7 @@ import (
@@ -2549,7 +2723,7 @@ index bd1fe39..e76bcd1 100644
  	}
  	if err := run(); err != nil {
  		fmt.Fprintf(stderr, "yagura: %v\n", err)
-@@ -128,6 +132,18 @@ Usage:
+@@ -128,6 +132,19 @@ Usage:
    yagura secret get <name>     Decrypt and print <name> to stdout
    yagura secret delete <name>  Remove <name>
  
@@ -2562,13 +2736,14 @@ index bd1fe39..e76bcd1 100644
 +  yagura settings-audit                    Audit .claude/settings.json (permissions/hooks)
 +  yagura agent-config-audit [file]         Audit OpenClaw-style openclaw.json (security/reliability)
 +  yagura plugin-audit [file]               Audit Claude Code plugin.json / marketplace.json
++  yagura publicity-scan [path]             Pre-publish leak scan (home paths, internal hosts, IPs, emails)
 +  Add --json to any of the above for machine-readable output.
 +  pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
 +
  Set passphrase via YAGURA_SECRET_PASSPHRASE for set/get.
  Configuration is via environment variables. See documentation.
  `
-@@ -152,11 +168,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
+@@ -152,11 +169,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
  		return nil
  	}
  
@@ -2583,7 +2758,7 @@ index bd1fe39..e76bcd1 100644
  	if err != nil {
  		return fmt.Errorf("init store: %w", err)
  	}
-@@ -239,15 +256,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
+@@ -239,15 +257,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
  // この関数は GITHUB_TOKEN を読まない — verify は通常運用とは独立して
  // オフラインでも実行できる(disaster recovery を意識)。
  func verifyAudit(out io.Writer) error {
@@ -2740,6 +2915,19 @@ index 62e02cd..1e32a1b 100644
  - [WINDOWS.md](WINDOWS.md) — Task Scheduler / NSSM / Windows service setup.
  - [ARCHITECTURE.md](../ARCHITECTURE.md) — internals and design rationale.
  - [security-spec.md](security-spec.md) — threat model.
+diff --git a/yagura-v0.35.0/docs/integration/windsurf.md b/yagura-v0.35.0/docs/integration/windsurf.md
+index c9b0baf..bb6c735 100644
+--- a/yagura-v0.35.0/docs/integration/windsurf.md
++++ b/yagura-v0.35.0/docs/integration/windsurf.md
+@@ -74,7 +74,7 @@ In either IDE, ask the agent: "Call yagura_agent_status." It should return:
+ │  │   handoff_reason: "claude_code in WARN (18%)..."       │  │
+ │  │                                                        │  │
+ │  │ Agent calls: yagura_session_save({                     │  │
+-│  │   workspace: "/home/m/yagura", branch: "main",         │  │
++│  │   workspace: "/home/you/yagura", branch: "main",      │  │
+ │  │   plan_md_step: "Phase 2 — testing",                   │  │
+ │  │   open_todos: [...], active_files: [...]               │  │
+ │  │ })                                                      │  │
 diff --git a/yagura-v0.35.0/internal/agentparallel/agentparallel.go b/yagura-v0.35.0/internal/agentparallel/agentparallel.go
 new file mode 100644
 index 0000000..76f4caa
@@ -5852,6 +6040,308 @@ index 9ca620a..f400aba 100644
  // SortBySlug は slug 昇順ソート。
  func SortBySlug(ps []*Project) {
  	sort.Slice(ps, func(i, j int) bool { return ps[i].Slug < ps[j].Slug })
+diff --git a/yagura-v0.35.0/internal/publicityscan/publicityscan.go b/yagura-v0.35.0/internal/publicityscan/publicityscan.go
+new file mode 100644
+index 0000000..83d2580
+--- /dev/null
++++ b/yagura-v0.35.0/internal/publicityscan/publicityscan.go
+@@ -0,0 +1,170 @@
++// Package publicityscan は「公開リポへ出す前の leak チェック(publicity review)」を
++// rule-based / deterministic に行う。
++//
++// 着想は Claude Code スキル自己改善ループの publicity-review ゲート — SKILL.md / docs /
++// PR を public repo へ publish する前に、絶対 home パス(OS ユーザ名が漏れる)、内部
++// hostname、private IP、ユーザ識別子(email)といった「公開すると困る」痕跡を検出する。
++//
++// secretscan が credential(鍵・トークン)を見るのに対し、本 scanner はそれ以外の
++// 「身元・内部構造の leak」を補完する。全 check は heuristic(正規表現、RE2 のみ)で
++// 決定論的。誤検出を抑えるため generic な placeholder(runner/ubuntu/user 等)や
++// settings.local.json のような filename は除外する。
++package publicityscan
++
++import (
++	"regexp"
++	"sort"
++	"strings"
++)
++
++// Severity は finding の深刻度。
++type Severity string
++
++const (
++	SevHigh   Severity = "HIGH"
++	SevMedium Severity = "MEDIUM"
++	SevLow    Severity = "LOW"
++)
++
++// Finding は 1 件の leak 検出(ghaaudit.Finding と同じ shape）。
++type Finding struct {
++	RuleID      string   `json:"rule_id"`
++	Severity    Severity `json:"severity"`
++	Line        int      `json:"line"`
++	Snippet     string   `json:"snippet"`
++	Description string   `json:"description"`
++	Suggestion  string   `json:"suggestion"`
++}
++
++var (
++	reUnixHome     = regexp.MustCompile(`(?:/Users/|/home/)([A-Za-z0-9._-]+)`)
++	reWinHome      = regexp.MustCompile(`(?i)[A-Za-z]:\\Users\\([A-Za-z0-9._-]+)`)
++	reInternalHost = regexp.MustCompile(`(?i)\b[a-z0-9][a-z0-9.-]*\.(?:local|internal|corp|lan|intranet)\b`)
++	rePrivateIP    = regexp.MustCompile(`\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b`)
++	reEmail        = regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`)
++)
++
++// genericUsers は home パスに出ても個人特定にならない placeholder/CI 名(誤検出抑制）。
++var genericUsers = map[string]bool{
++	"root": true, "runner": true, "runneradmin": true, "ubuntu": true,
++	"user": true, "users": true, "app": true, "ci": true, "home": true,
++	"node": true, "vscode": true, "admin": true, "codespace": true, "build": true,
++	// explicit placeholders used in docs/examples
++	"you": true, "username": true, "yourname": true, "name": true, "me": true,
++}
++
++// exampleEmailDomains は flag しない email ドメイン(ドキュメント例 / no-reply）。
++var exampleEmailDomains = []string{"example.com", "example.org", "example.net", "example.edu", "localhost"}
++
++// Scan は content 全体を行単位で走査し、publicity leak を返す。決定論的。
++func Scan(content string) []Finding {
++	var out []Finding
++	for i, line := range strings.Split(content, "\n") {
++		ln := i + 1
++
++		// 絶対 home パス(OS ユーザ名の leak）。
++		for _, m := range reUnixHome.FindAllStringSubmatch(line, -1) {
++			if !genericUsers[strings.ToLower(m[1])] {
++				out = append(out, Finding{
++					RuleID: "absolute-home-path", Severity: SevHigh, Line: ln, Snippet: m[0],
++					Description: "absolute home path leaks an OS username and local filesystem layout",
++					Suggestion:  "replace with a relative path, $HOME, or a placeholder like /Users/<you>",
++				})
++			}
++		}
++		for _, m := range reWinHome.FindAllStringSubmatch(line, -1) {
++			if !genericUsers[strings.ToLower(m[1])] {
++				out = append(out, Finding{
++					RuleID: "absolute-home-path", Severity: SevHigh, Line: ln, Snippet: m[0],
++					Description: "absolute Windows home path leaks a username",
++					Suggestion:  `replace with %USERPROFILE% or a placeholder`,
++				})
++			}
++		}
++
++		// 内部 hostname(末尾が .local 等で、その後に別拡張子が続かないもの）。
++		for _, idx := range reInternalHost.FindAllStringIndex(line, -1) {
++			// filename(settings.local.json 等)誤検出を避ける: 直後が '.' なら skip。
++			if idx[1] < len(line) && line[idx[1]] == '.' {
++				continue
++			}
++			out = append(out, Finding{
++				RuleID: "internal-hostname", Severity: SevMedium, Line: ln, Snippet: line[idx[0]:idx[1]],
++				Description: "internal hostname may reveal internal network topology",
++				Suggestion:  "use a public hostname or a placeholder in published docs",
++			})
++		}
++
++		// private IP(127.x loopback は除外）。直後が '/' の CIDR(10.0.0.0/8 等)は
++		// レンジ定義であって host leak ではないので除外する。
++		for _, idx := range rePrivateIP.FindAllStringIndex(line, -1) {
++			if idx[1] < len(line) && line[idx[1]] == '/' {
++				continue
++			}
++			out = append(out, Finding{
++				RuleID: "private-ip", Severity: SevMedium, Line: ln, Snippet: line[idx[0]:idx[1]],
++				Description: "private/RFC1918 IP address reveals internal addressing",
++				Suggestion:  "remove or replace with a placeholder before publishing",
++			})
++		}
++
++		// email(ドキュメント例 / no-reply は除外）。
++		for _, m := range reEmail.FindAllString(line, -1) {
++			if isExampleEmail(m) {
++				continue
++			}
++			out = append(out, Finding{
++				RuleID: "user-email", Severity: SevLow, Line: ln, Snippet: m,
++				Description: "email address is a personal/user identifier",
++				Suggestion:  "confirm this address is meant to be public; otherwise redact",
++			})
++		}
++	}
++	return out
++}
++
++// isExampleEmail は example / no-reply 系ドメインか(flag しない)。
++func isExampleEmail(addr string) bool {
++	at := strings.LastIndex(addr, "@")
++	if at < 0 {
++		return true
++	}
++	local := strings.ToLower(addr[:at])
++	domain := strings.ToLower(addr[at+1:])
++	if strings.Contains(local, "noreply") || strings.Contains(local, "no-reply") {
++		return true
++	}
++	for _, d := range exampleEmailDomains {
++		if domain == d || strings.HasSuffix(domain, "."+d) {
++			return true
++		}
++	}
++	return false
++}
++
++// Summary は severity 別集計。
++type Summary struct {
++	Total      int            `json:"total"`
++	BySeverity map[string]int `json:"by_severity"`
++}
++
++// Summarize は findings を severity 別に集計する。
++func Summarize(findings []Finding) Summary {
++	s := Summary{BySeverity: map[string]int{}}
++	for _, f := range findings {
++		s.Total++
++		s.BySeverity[string(f.Severity)]++
++	}
++	return s
++}
++
++// SortFindings は line 昇順, 同 line は severity(HIGH→LOW)で安定整列する。
++func SortFindings(fs []Finding) {
++	rank := map[Severity]int{SevHigh: 0, SevMedium: 1, SevLow: 2}
++	sort.SliceStable(fs, func(i, j int) bool {
++		if fs[i].Line != fs[j].Line {
++			return fs[i].Line < fs[j].Line
++		}
++		return rank[fs[i].Severity] < rank[fs[j].Severity]
++	})
++}
+diff --git a/yagura-v0.35.0/internal/publicityscan/publicityscan_test.go b/yagura-v0.35.0/internal/publicityscan/publicityscan_test.go
+new file mode 100644
+index 0000000..2bd70b4
+--- /dev/null
++++ b/yagura-v0.35.0/internal/publicityscan/publicityscan_test.go
+@@ -0,0 +1,120 @@
++package publicityscan
++
++import "testing"
++
++func ruleSet(fs []Finding) map[string]bool {
++	m := map[string]bool{}
++	for _, f := range fs {
++		m[f.RuleID] = true
++	}
++	return m
++}
++
++func TestScan_AbsoluteHomePath(t *testing.T) {
++	fs := Scan("see /Users/hiroro/work/skill and /home/alice/.config")
++	if len(fs) != 2 {
++		t.Fatalf("expected 2 home-path findings, got %d: %+v", len(fs), fs)
++	}
++	for _, f := range fs {
++		if f.RuleID != "absolute-home-path" || f.Severity != SevHigh {
++			t.Errorf("unexpected finding %+v", f)
++		}
++	}
++}
++
++func TestScan_GenericUsernamesIgnored(t *testing.T) {
++	// CI/generic usernames must not be flagged.
++	fs := Scan("/home/runner/work and /home/user/repo and /Users/ubuntu/x and /home/root/y")
++	if len(fs) != 0 {
++		t.Errorf("generic usernames should not be flagged, got %+v", fs)
++	}
++}
++
++func TestScan_WindowsHomePath(t *testing.T) {
++	fs := Scan(`path C:\Users\Hiro\Documents\skill`)
++	if len(fs) != 1 || fs[0].RuleID != "absolute-home-path" {
++		t.Errorf("expected windows home-path finding, got %+v", fs)
++	}
++}
++
++func TestScan_InternalHostname(t *testing.T) {
++	fs := Scan("connect to db01.internal:5432 and api.corp/health")
++	if len(fs) != 2 {
++		t.Fatalf("expected 2 internal-hostname findings, got %+v", fs)
++	}
++	for _, f := range fs {
++		if f.RuleID != "internal-hostname" {
++			t.Errorf("unexpected %+v", f)
++		}
++	}
++}
++
++func TestScan_InternalHostnameNoFilenameFalsePositive(t *testing.T) {
++	// settings.local.json must NOT be flagged as an internal hostname.
++	fs := Scan("edit .claude/settings.local.json and config.internal.yaml")
++	if r := ruleSet(fs); r["internal-hostname"] {
++		t.Errorf("filenames like settings.local.json must not be flagged: %+v", fs)
++	}
++}
++
++func TestScan_PrivateIPButNotLoopback(t *testing.T) {
++	fs := Scan("server 192.168.11.200 and 10.0.0.5 and 172.16.0.1 but bind 127.0.0.1:8090 and 8.8.8.8")
++	got := 0
++	for _, f := range fs {
++		if f.RuleID == "private-ip" {
++			got++
++		}
++	}
++	if got != 3 {
++		t.Errorf("expected 3 private IPs (loopback + public excluded), got %d: %+v", got, fs)
++	}
++}
++
++func TestScan_EmailButNotExample(t *testing.T) {
++	fs := Scan("contact hiroro@sonicgarden.jp not user@example.com nor noreply@anthropic.com")
++	got := []Finding{}
++	for _, f := range fs {
++		if f.RuleID == "user-email" {
++			got = append(got, f)
++		}
++	}
++	if len(got) != 1 || got[0].Snippet != "hiroro@sonicgarden.jp" {
++		t.Errorf("expected only the real email flagged, got %+v", got)
++	}
++}
++
++func TestScan_CleanContent(t *testing.T) {
++	clean := "Run `yagura` then open http://127.0.0.1:8090/dashboard. Use $HOME/.yagura/state."
++	if fs := Scan(clean); len(fs) != 0 {
++		t.Errorf("clean content should yield no findings, got %+v", fs)
++	}
++}
++
++func TestSummarizeAndSort(t *testing.T) {
++	fs := Scan("line\n/Users/bob/x has 10.0.0.1\nplain@example.com")
++	s := Summarize(fs)
++	if s.Total != 2 || s.BySeverity["HIGH"] != 1 || s.BySeverity["MEDIUM"] != 1 {
++		t.Errorf("summary mismatch: %+v from %+v", s, fs)
++	}
++	SortFindings(fs)
++	if fs[0].Line > fs[len(fs)-1].Line {
++		t.Errorf("findings not sorted by line: %+v", fs)
++	}
++}
++
++func TestScan_CIDRRangeNotFlagged(t *testing.T) {
++	// CIDR range definitions (firewall docs) are not host leaks.
++	fs := Scan("block -RemoteAddress 10.0.0.0/8 and 192.168.0.0/16 but host 10.0.0.5 leaks")
++	got := 0
++	for _, f := range fs {
++		if f.RuleID == "private-ip" {
++			got++
++			if f.Snippet != "10.0.0.5" {
++				t.Errorf("only the specific host should be flagged, got %q", f.Snippet)
++			}
++		}
++	}
++	if got != 1 {
++		t.Errorf("expected 1 private-ip (CIDRs skipped), got %d: %+v", got, fs)
++	}
++}
 diff --git a/yagura-v0.35.0/internal/riskreason/riskreason.go b/yagura-v0.35.0/internal/riskreason/riskreason.go
 new file mode 100644
 index 0000000..45839ed
