@@ -234,10 +234,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..6cdb66d 100644
+index 9b29eec..7622987 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,396 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,403 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -616,6 +616,13 @@ index 9b29eec..6cdb66d 100644
 +  stdlib のみ(ADR-0001)。spec/設計: `docs/self-improvement.md`。テスト: 各 kind / severity
 +  境界 / fitness 後退・改善 / 決定論(`internal/selfimprove` 96.7%)+ tool テスト。live
 +  dogfood 済み(alert_fix の error 上昇 → fitness high「revert」を含む 6 提案)。`MCP_TOOLS.md` 再生成。
++  - **self-collection でループを実際に閉じた**: `tools` 省略時は daemon 自身の live token
++    stats(`AllToolStats`: tool 別 calls/errors/response bytes)を自己収集して評価する。
++    つまり `yagura_self_improve {}` の一発で「harness が自分自身を観測して提案する」RSI ループが
++    成立(snapshot を手で組まなくてよい)。出力に `self_collected` を付加。`prev_tools` を渡せば
++    live 現窓に対する fitness 後退検出も効く。caller 指定の `tools` は self-collection を上書き。
++    live dogfood: 6 連続の失敗 `yagura_get` 呼出後に `{}` で呼ぶと `reliability:yagura_get` high を
++    自己検出。テスト追加(self-collect / override)。
 +
 +### What's not yet
 +
@@ -3625,7 +3632,7 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..bbb3dd0 100644
+index 689c182..ef853ae 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
@@ -3795,7 +3802,7 @@ index 689c182..bbb3dd0 100644
 +
 +### `yagura_self_improve`
 +
-+[S] Turn harness self-metrics into ranked, gated improvement proposals (RSI, deterministic).
++[S] Turn harness self-metrics into ranked, gated improvement proposals (RSI, deterministic). Omit 'tools' to self-collect live stats.
 +
 +**Arguments:**
 +
@@ -3805,7 +3812,7 @@ index 689c182..bbb3dd0 100644
 +| `prev_tools` (array) |  | previous window's tool stats; enables fitness/regression detection (revert advice). |
 +| `session_calls` (integer) |  | total tool calls in the window (used for token-economy call-share thresholds). |
 +| `skills` (array) |  | skill audit results (from yagura_skill_audit): [{path, score, retire}]. |
-+| `tools` (array) |  | observed per-tool stats (from yagura_token_stats): [{name, calls, errors, avg_resp_bytes}]. |
++| `tools` (array) |  | observed per-tool stats; OMIT to auto-collect this daemon's live token stats. [{name, calls, errors, avg_resp_bytes}]. |
 +
 +---
 +
@@ -3917,10 +3924,10 @@ index 97c6e62..292f3dd 100644
 +VEX file fails the build before release (OSPS-VM-04.02, Level 3).
 diff --git a/yagura-v0.35.0/docs/self-improvement.md b/yagura-v0.35.0/docs/self-improvement.md
 new file mode 100644
-index 0000000..4c656dd
+index 0000000..54351b3
 --- /dev/null
 +++ b/yagura-v0.35.0/docs/self-improvement.md
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,124 @@
 +# Self-Improvement in Yagura (bounded, deterministic RSI)
 +
 +How Yagura incorporates **recursive self-improvement (RSI)** without becoming
@@ -4016,14 +4023,27 @@ index 0000000..4c656dd
 +  "skills":     [{ "path": ".claude/skills/x/SKILL.md", "score": 25, "retire": true }],
 +  "coverage_gaps": ["feedback:post-deploy"]
 +}
-+// → { "proposals": [ … ranked … ], "by_kind": {…}, "by_severity": {…}, "summary": "…" }
++// → { "proposals": [ … ranked … ], "by_kind": {…}, "by_severity": {…},
++//     "summary": "…", "self_collected": false }
 +```
 +
-+The natural caller wires it after the measurement tools: read `token_stats` +
-+`skill_audit` + `harness_coverage`, hand the snapshot to `yagura_self_improve`,
-+act on the high-severity proposals, then compare next window. Together with
-+`yagura_parallel_plan` (1→N dispatch) and `yagura_recovery_decide` (failure
-+handling), it completes Yagura's deterministic control plane for agent work.
++**Closing the loop — self-collection.** Omit `tools` and the tool reads *this
++running daemon's own* live token stats (`AllToolStats`: calls, errors, response
++bytes per tool) and analyses them — so a bare call observes the actual harness:
++
++```jsonc
++{}  // → proposals about the live daemon; "self_collected": true
++```
++
++This is the loop closed in practice: the harness observes itself, with no
++hand-assembled snapshot. A caller stashing the previous window's stats can pass
++them as `prev_tools` to get `fitness` regression checks against the live current
++window. `skills` / `coverage_gaps` (which the daemon can't read from its own
++process) are still supplied by the caller.
++
++Together with `yagura_parallel_plan` (1→N dispatch) and `yagura_recovery_decide`
++(failure handling), it completes Yagura's deterministic control plane for agent
++work.
 +
 +## References
 +
@@ -6914,10 +6934,68 @@ index 0000000..ad2196b
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..0ce0a0e 100644
+index 939a67e..1de6094 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
-@@ -188,6 +188,23 @@ func RegisterDefaultTools(s *Server, d Deps) {
+@@ -11,25 +11,20 @@ import (
+ 	"context"
+ 	"encoding/json"
+ 	"fmt"
+-	"os"
+-	"path/filepath"
+-	"sort"
+-	"strings"
+-	"time"
+-	"github.com/shizukutanaka/yagura/internal/aiverify"
+ 	"github.com/shizukutanaka/yagura/internal/agentmd"
++	"github.com/shizukutanaka/yagura/internal/aiverify"
+ 	"github.com/shizukutanaka/yagura/internal/alertfix"
+ 	"github.com/shizukutanaka/yagura/internal/atomicfile"
+ 	"github.com/shizukutanaka/yagura/internal/featurelist"
+-	"github.com/shizukutanaka/yagura/internal/initps1"
+-	"github.com/shizukutanaka/yagura/internal/initsh"
+-	"github.com/shizukutanaka/yagura/internal/progressfile"
+ 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+-	"github.com/shizukutanaka/yagura/internal/harness"
+ 	"github.com/shizukutanaka/yagura/internal/handoff"
++	"github.com/shizukutanaka/yagura/internal/harness"
++	"github.com/shizukutanaka/yagura/internal/initps1"
++	"github.com/shizukutanaka/yagura/internal/initsh"
+ 	"github.com/shizukutanaka/yagura/internal/osv"
+ 	"github.com/shizukutanaka/yagura/internal/pindrift"
+ 	"github.com/shizukutanaka/yagura/internal/plantracker"
++	"github.com/shizukutanaka/yagura/internal/progressfile"
+ 	"github.com/shizukutanaka/yagura/internal/project"
+ 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
+ 	"github.com/shizukutanaka/yagura/internal/quotamonitor"
+@@ -38,6 +33,11 @@ import (
+ 	"github.com/shizukutanaka/yagura/internal/scorecard"
+ 	"github.com/shizukutanaka/yagura/internal/secretscan"
+ 	"github.com/shizukutanaka/yagura/internal/testcoverage"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++	"time"
+ )
+ 
+ // Deps はツールが必要とする依存。
+@@ -54,10 +54,10 @@ type Deps struct {
+ 	MainVersion    string           // SBOM 生成時のメイン version(例: "0.9.0")
+ 
+ 	// v0.13.0: agent handoff layer
+-	QuotaMonitor  QuotaMonitor   // 両 agent の quota state 管理。nil なら quota tool は使用不可
+-	HandoffStore  HandoffStore   // session context 永続化。nil なら session tool は使用不可
+-	AgentLauncher AgentLauncher  // Windsurf / Claude Code 起動。nil なら handoff は dry-run のみ
+-	WorkspaceRoot string         // 現在の workspace ルートパス(handoff 既定値)
++	QuotaMonitor  QuotaMonitor  // 両 agent の quota state 管理。nil なら quota tool は使用不可
++	HandoffStore  HandoffStore  // session context 永続化。nil なら session tool は使用不可
++	AgentLauncher AgentLauncher // Windsurf / Claude Code 起動。nil なら handoff は dry-run のみ
++	WorkspaceRoot string        // 現在の workspace ルートパス(handoff 既定値)
+ }
+ 
+ // QuotaMonitor は両 agent の quota 状態を管理する interface。
+@@ -188,21 +188,39 @@ func RegisterDefaultTools(s *Server, d Deps) {
  	s.Register(buildHookStatsTool(s))
  	s.Register(buildProgressFileTool(d, s))
  	s.Register(buildInitShTool(d))
@@ -6936,40 +7014,377 @@ index 939a67e..0ce0a0e 100644
 +	s.Register(buildRecoveryDecideTool(d))
 +	// [v0.35.0] OpenVEX v0.2.0 文書の決定論的生成 + 構造 lint(SBOM の過剰報告を補完)
 +	s.Register(buildVEXTool(d))
-+	// [v0.35.0] harness レベル再帰的自己改善(RSI)の決定論的カーネル(STOP/Darwin Gödel)
-+	s.Register(buildSelfImproveTool(d))
++	// [v0.35.0] harness レベル再帰的自己改善(RSI)の決定論的カーネル(STOP/Darwin Gödel)。
++	// tools 省略時は s.AllToolStats で live メトリクスを自己収集してループを閉じる。
++	s.Register(buildSelfImproveTool(d, s.AllToolStats))
  }
  
  // ─── yagura_list ─────────────────────────────────────────────
-@@ -198,8 +215,8 @@ type listOut struct {
- 	Stage          string `json:"stage"`
- 	Priority       int    `json:"priority"`
- 	Language       string `json:"language,omitempty"`
+ 
+ type listOut struct {
+-	Slug           string `json:"slug"`
+-	DisplayName    string `json:"display_name"`
+-	Stage          string `json:"stage"`
+-	Priority       int    `json:"priority"`
+-	Language       string `json:"language,omitempty"`
 -	OpenPRs        int    `json:"open_prs"`
 -	OpenIssues     int    `json:"open_issues"`
-+	OpenPRs        int    `json:"open_prs,omitempty"`
-+	OpenIssues     int    `json:"open_issues,omitempty"`
- 	CIStatus       string `json:"ci_status,omitempty"`
- 	LatestVersion  string `json:"latest_version,omitempty"`
- 	DaysSinceCommit int   `json:"days_since_commit"`
-@@ -245,7 +262,7 @@ type todayItem struct {
+-	CIStatus       string `json:"ci_status,omitempty"`
+-	LatestVersion  string `json:"latest_version,omitempty"`
+-	DaysSinceCommit int   `json:"days_since_commit"`
++	Slug            string `json:"slug"`
++	DisplayName     string `json:"display_name"`
++	Stage           string `json:"stage"`
++	Priority        int    `json:"priority"`
++	Language        string `json:"language,omitempty"`
++	OpenPRs         int    `json:"open_prs,omitempty"`
++	OpenIssues      int    `json:"open_issues,omitempty"`
++	CIStatus        string `json:"ci_status,omitempty"`
++	LatestVersion   string `json:"latest_version,omitempty"`
++	DaysSinceCommit int    `json:"days_since_commit"`
+ }
+ 
+ // ─── yagura_get ──────────────────────────────────────────────
+@@ -212,14 +230,14 @@ type listOut struct {
+ // ─── yagura_today ────────────────────────────────────────────
+ 
+ type todayItem struct {
+-	Slug         string  `json:"slug"`
+-	DisplayName  string  `json:"display_name"`
+-	Score        float64 `json:"score"`
+-	Reasons      []string `json:"reasons"`
+-	Priority     int     `json:"priority"`
+-	OpenPRs      int     `json:"open_prs"`
+-	CIStatus     string  `json:"ci_status,omitempty"`
+-	DaysIdle     int     `json:"days_idle"`
++	Slug        string   `json:"slug"`
++	DisplayName string   `json:"display_name"`
++	Score       float64  `json:"score"`
++	Reasons     []string `json:"reasons"`
++	Priority    int      `json:"priority"`
++	OpenPRs     int      `json:"open_prs"`
++	CIStatus    string   `json:"ci_status,omitempty"`
++	DaysIdle    int      `json:"days_idle"`
+ }
+ 
+ // ─── yagura_register ─────────────────────────────────────────
+@@ -244,16 +262,16 @@ type todayItem struct {
+ 
  func buildSecretScanTool(d Deps) *Tool {
  	return &Tool{
- 		Name: "yagura_secretscan",
+-		Name: "yagura_secretscan",
 -		Description: "[G] Secret scan: 12 patterns + entropy. Redacts hits.",
++		Name:        "yagura_secretscan",
 +		Description: "[G] Secret scan: 14 patterns + entropy. Redacts hits.",
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
-@@ -766,7 +783,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+ 				"slug": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 				"min_severity": map[string]any{
+-					"type":        "string",
++					"type": "string",
+ 				},
+ 			},
+ 		},
+@@ -394,13 +412,13 @@ type SbomGenerator interface {
+ 
+ func buildSbomTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_sbom",
++		Name:        "yagura_sbom",
+ 		Description: "[G] yagura SBOM CycloneDX 1.5. Set summary_only for compact.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"summary_only": map[string]any{
+-					"type":        "boolean",
++					"type": "boolean",
+ 				},
+ 			},
+ 		},
+@@ -442,16 +460,16 @@ type GhaAuditor interface {
+ 
+ func buildGhaAuditTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_gha_audit",
++		Name:        "yagura_gha_audit",
+ 		Description: "[G] GHA workflow audit: 7 supply-chain risk patterns.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"files": map[string]any{
+-					"type":        "object",
++					"type": "object",
+ 				},
+ 				"summary_only": map[string]any{
+-					"type":        "boolean",
++					"type": "boolean",
+ 				},
+ 			},
+ 			"required": []string{"files"},
+@@ -496,19 +514,19 @@ type PinDriftChecker interface {
+ 
+ func buildPinDriftTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_pin_drift",
++		Name:        "yagura_pin_drift",
+ 		Description: "[G] GHA SHA pin verify via API. Detects drift/stale.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+ 				"files": map[string]any{
+-					"type":        "object",
++					"type": "object",
+ 				},
+ 				"summary_only": map[string]any{
+-					"type":        "boolean",
++					"type": "boolean",
+ 				},
+ 				"concurrency": map[string]any{
+-					"type":        "integer",
++					"type": "integer",
+ 				},
+ 			},
+ 			"required": []string{"files"},
+@@ -611,7 +629,7 @@ func buildPinDriftTool(d Deps) *Tool {
+ // 外から注入する設計にする。
+ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
+ 	return &Tool{
+-		Name: "yagura_token_stats",
++		Name:        "yagura_token_stats",
+ 		Description: "[S] Per-tool byte counts since daemon start.",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+@@ -645,7 +663,7 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
+ }
+ 
+ // ─── yagura_graph_neighbors / impact / stats (v0.18.0) ───────
+-// 
++//
+ // Inspired by cortex (aircloset, 辻 2026/05) "Product Graph" 構想:
+ // portfolio の depends_on を semantic graph として AI から探索可能にする。
+ 
+@@ -658,14 +676,14 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
+ 
+ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
+ 	return &Tool{
+-		Name: "yagura_quality_check",
++		Name:        "yagura_quality_check",
+ 		Description: "[G] Code lint: as any, ts-ignore, TODO. 3 severity tiers.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+-				"files":    map[string]any{"type": "object"},
+-				"text":     map[string]any{"type": "string"},
+-				"language": map[string]any{"type": "string"},
++				"files":        map[string]any{"type": "object"},
++				"text":         map[string]any{"type": "string"},
++				"language":     map[string]any{"type": "string"},
+ 				"summary_only": map[string]any{"type": "boolean"},
+ 			},
+ 		},
+@@ -709,13 +727,13 @@ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
+ // formatQualityResult is MCP-friendly output formatter.
+ func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
+ 	out := map[string]any{
+-		"files_scanned":   res.FilesScanned,
+-		"total_lines":     res.TotalLines,
+-		"finding_count":   len(res.Findings),
+-		"by_severity":     res.BySeverity,
+-		"by_rule":         res.ByRule,
+-		"has_prohibited":  res.HasProhibited(),
+-		"summary":         res.Summary(),
++		"files_scanned":  res.FilesScanned,
++		"total_lines":    res.TotalLines,
++		"finding_count":  len(res.Findings),
++		"by_severity":    res.BySeverity,
++		"by_rule":        res.ByRule,
++		"has_prohibited": res.HasProhibited(),
++		"summary":        res.Summary(),
+ 	}
+ 	if !summaryOnly {
+ 		out["findings"] = res.Findings
+@@ -730,7 +748,7 @@ func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
+ 
+ func buildHarnessRecommendTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_harness_recommend",
++		Name:        "yagura_harness_recommend",
+ 		Description: "[G] Claude Code .claude/ scaffold by slug or language.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -765,8 +783,8 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+ 
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
- 		Name: "yagura_skill_audit",
+-		Name: "yagura_skill_audit",
 -		Description: "[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score.",
++		Name:        "yagura_skill_audit",
 +		Description: "[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score + retire signal.",
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
+@@ -791,7 +809,7 @@ func buildSkillAuditTool(d Deps) *Tool {
+ 
+ func buildSubagentAuditTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_subagent_audit",
++		Name:        "yagura_subagent_audit",
+ 		Description: "[G] Subagent .md audit: prompt style, tools, description.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -822,7 +840,7 @@ func buildSubagentAuditTool(d Deps) *Tool {
+ 
+ func buildToolsCatalogTool(s *Server) *Tool {
+ 	return &Tool{
+-		Name: "yagura_tools_catalog",
++		Name:        "yagura_tools_catalog",
+ 		Description: "[G] Full tool details lookup. Use when compact mode hides info you need.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -885,7 +903,7 @@ func buildToolsCatalogTool(s *Server) *Tool {
+ 
+ func buildDedupeStatsTool(s *Server) *Tool {
+ 	return &Tool{
+-		Name: "yagura_dedupe_stats",
++		Name:        "yagura_dedupe_stats",
+ 		Description: "[S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+@@ -905,7 +923,7 @@ func buildDedupeStatsTool(s *Server) *Tool {
+ 
+ func buildPlanStatusTool(d Deps, cache plantracker.CacheLike) *Tool {
+ 	return &Tool{
+-		Name: "yagura_plan_status",
++		Name:        "yagura_plan_status",
+ 		Description: "[G] Plan.md progress for project. Parses checkboxes + required sections (目的/スコープ/フェーズ/DoD).",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -968,7 +986,7 @@ func loadPlanMd(localPath string) (string, string, error) {
+ 
+ func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
+ 	return &Tool{
+-		Name: "yagura_release_radar",
++		Name:        "yagura_release_radar",
+ 		Description: "[S] Cross-project release readiness ranking. Aggregates Plan/CI/issues/quality/AI-risk.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -1123,7 +1141,7 @@ func pickReason(plan plantracker.PlanState, ciStatus string, openCrit int,
+ 
+ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
+ 	return &Tool{
+-		Name: "yagura_ai_verify",
++		Name:        "yagura_ai_verify",
+ 		Description: "[G] AI code risk audit. 6 categories: auth/billing/data/external/crypto/secret. 2x multiplier inside AI-marker zones.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -1222,7 +1240,7 @@ func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
+ 
+ func buildTestAuditTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_test_audit",
++		Name:        "yagura_test_audit",
+ 		Description: "[G] Source-test coverage detection. Go/TS/JS/Python/Rust/Java filename + Rust inline #[cfg(test)] + Python doctest.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -1267,7 +1285,7 @@ func buildTestAuditTool(d Deps) *Tool {
+ 
+ func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Store) *Tool {
+ 	return &Tool{
+-		Name: "yagura_alert_fix",
++		Name:        "yagura_alert_fix",
+ 		Description: "[S] Aggregate health signals across portfolio. Returns actionable alerts with suggested_tool + args.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -1425,15 +1443,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
+ 
+ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+ 	return &Tool{
+-		Name: "yagura_alert_resolve",
++		Name:        "yagura_alert_resolve",
+ 		Description: "[G] Manage alert lifecycle: resolve/snooze/reopen. Persists to {state_dir}/alert_state.jsonl.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+-				"alert_id":     map[string]any{"type": "string"},
+-				"action":       map[string]any{"type": "string", "enum": []string{"resolve", "snooze", "reopen"}},
+-				"note":         map[string]any{"type": "string"},
+-				"snooze_days":  map[string]any{"type": "integer"}, // snooze 期間(日)
++				"alert_id":    map[string]any{"type": "string"},
++				"action":      map[string]any{"type": "string", "enum": []string{"resolve", "snooze", "reopen"}},
++				"note":        map[string]any{"type": "string"},
++				"snooze_days": map[string]any{"type": "integer"}, // snooze 期間(日)
+ 			},
+ 			"required": []string{"alert_id", "action"},
+ 		},
+@@ -1475,9 +1493,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+ 			}
+ 			st, _ := store.Get(in.AlertID)
+ 			return map[string]any{
+-				"alert_id":      in.AlertID,
+-				"action":        in.Action,
+-				"current_state": st,
++				"alert_id":        in.AlertID,
++				"action":          in.Action,
++				"current_state":   st,
+ 				"lifecycle_stats": store.Stats(),
+ 			}, nil
+ 		},
+@@ -1492,14 +1510,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+ 
+ func buildAgentsMdTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_agents_md",
++		Name:        "yagura_agents_md",
+ 		Description: "[G] Generate AGENTS.md for a registered project from Plan.md + registry facts. Cross-tool: Claude Code / Codex / Cursor.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+-				"slug":         map[string]any{"type": "string"},
++				"slug":          map[string]any{"type": "string"},
+ 				"include_rules": map[string]any{"type": "boolean", "description": "Include house rules section (default true)"},
+-				"write":        map[string]any{"type": "boolean", "description": "Also write to {local_path}/AGENTS.md (v0.33.0)"},
++				"write":         map[string]any{"type": "boolean", "description": "Also write to {local_path}/AGENTS.md (v0.33.0)"},
+ 			},
+ 			"required": []string{"slug"},
+ 		},
+@@ -1578,7 +1596,7 @@ func buildAgentsMdTool(d Deps) *Tool {
+ 
+ func buildFeatureListTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_feature_list",
++		Name:        "yagura_feature_list",
+ 		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+@@ -1643,7 +1661,7 @@ func buildFeatureListTool(d Deps) *Tool {
+ 
+ func buildHarnessCoverageTool(d Deps) *Tool {
+ 	return &Tool{
+-		Name: "yagura_harness_coverage",
++		Name:        "yagura_harness_coverage",
+ 		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
+ 		InputSchema: map[string]any{
+ 			"type":       "object",
+@@ -1687,11 +1705,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
+ 				}
+ 			}
+ 			return map[string]any{
+-				"taxonomy_source":      "https://martinfowler.com/articles/harness-engineering.html",
+-				"matrix":               matrix,
+-				"counts":               counts,
++				"taxonomy_source":       "https://martinfowler.com/articles/harness-engineering.html",
++				"matrix":                matrix,
++				"counts":                counts,
+ 				"feedback_only_warning": false, // v0.32 で解消
+-				"note": "yagura intentionally leaves the inferential-sensor quadrant empty (LLM-as-judge would violate ADR-0001 zero-deps). External Claude/GPT review can be plugged in via Claude Code subagents and reported back via /hooks/claude-code.",
++				"note":                  "yagura intentionally leaves the inferential-sensor quadrant empty (LLM-as-judge would violate ADR-0001 zero-deps). External Claude/GPT review can be plugged in via Claude Code subagents and reported back via /hooks/claude-code.",
+ 			}, nil
+ 		},
+ 	}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_audit.go b/yagura-v0.35.0/internal/mcp/tools_audit.go
 new file mode 100644
 index 0000000..b749743
@@ -8093,10 +8508,10 @@ index 0000000..c0946c4
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_selfimprove.go b/yagura-v0.35.0/internal/mcp/tools_selfimprove.go
 new file mode 100644
-index 0000000..bbc2f5f
+index 0000000..3dd7acf
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_selfimprove.go
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,115 @@
 +// tools_selfimprove.go: yagura_self_improve — harness レベルの再帰的自己改善(RSI)を
 +// 安全な形で回すための決定論的カーネル(internal/selfimprove)。
 +//
@@ -8120,16 +8535,16 @@ index 0000000..bbc2f5f
 +	"github.com/shizukutanaka/yagura/internal/selfimprove"
 +)
 +
-+func buildSelfImproveTool(d Deps) *Tool {
++func buildSelfImproveTool(d Deps, getStats func() []ToolStats) *Tool {
 +	return &Tool{
 +		Name:        "yagura_self_improve",
-+		Description: "[S] Turn harness self-metrics into ranked, gated improvement proposals (RSI, deterministic).",
++		Description: "[S] Turn harness self-metrics into ranked, gated improvement proposals (RSI, deterministic). Omit 'tools' to self-collect live stats.",
 +		InputSchema: map[string]any{
 +			"type": "object",
 +			"properties": map[string]any{
 +				"tools": map[string]any{
 +					"type":        "array",
-+					"description": "observed per-tool stats (from yagura_token_stats): [{name, calls, errors, avg_resp_bytes}].",
++					"description": "observed per-tool stats; OMIT to auto-collect this daemon's live token stats. [{name, calls, errors, avg_resp_bytes}].",
 +					"items": map[string]any{
 +						"type": "object",
 +						"properties": map[string]any{
@@ -8169,16 +8584,55 @@ index 0000000..bbc2f5f
 +					return nil, &ToolError{Code: "invalid_input", Cause: err}
 +				}
 +			}
-+			return selfimprove.Analyze(snap), nil
++			// 'tools' を省略したら、この daemon の live token stats を自己収集する
++			// (RSI ループを実際に閉じる: harness が自分自身を観測して提案する)。
++			selfCollected := false
++			if len(snap.Tools) == 0 && getStats != nil {
++				snap.Tools, snap.SessionCalls = collectLiveStats(getStats(), snap.SessionCalls)
++				selfCollected = true
++			}
++			rep := selfimprove.Analyze(snap)
++			out := map[string]any{
++				"proposals":      rep.Proposals,
++				"by_kind":        rep.ByKind,
++				"by_severity":    rep.BySeverity,
++				"summary":        rep.Summary,
++				"self_collected": selfCollected,
++			}
++			return out, nil
 +		},
 +	}
 +}
++
++// collectLiveStats は server の ToolStats を selfimprove.ToolStat に写像する。
++// session_calls が未指定(0)なら全 tool の call 合計で埋める。
++func collectLiveStats(stats []ToolStats, sessionCalls uint64) ([]selfimprove.ToolStat, uint64) {
++	out := make([]selfimprove.ToolStat, 0, len(stats))
++	var total uint64
++	for _, s := range stats {
++		total += s.Calls
++		avg := 0
++		if s.Calls > 0 {
++			avg = int(s.ResponseBytes / s.Calls)
++		}
++		out = append(out, selfimprove.ToolStat{
++			Name:         s.Name,
++			Calls:        s.Calls,
++			Errors:       s.ErrorCount,
++			AvgRespBytes: avg,
++		})
++	}
++	if sessionCalls == 0 {
++		sessionCalls = total
++	}
++	return out, sessionCalls
++}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_selfimprove_test.go b/yagura-v0.35.0/internal/mcp/tools_selfimprove_test.go
 new file mode 100644
-index 0000000..d45bf18
+index 0000000..b0a221a
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_selfimprove_test.go
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,101 @@
 +package mcp
 +
 +import (
@@ -8188,7 +8642,7 @@ index 0000000..d45bf18
 +)
 +
 +func TestSelfImproveTool(t *testing.T) {
-+	tool := buildSelfImproveTool(Deps{})
++	tool := buildSelfImproveTool(Deps{}, nil)
 +	out, err := tool.Handler(context.Background(), json.RawMessage(`{
 +		"session_calls": 100,
 +		"tools": [{"name":"yagura_x","calls":20,"errors":8,"avg_resp_bytes":200}],
@@ -8221,7 +8675,7 @@ index 0000000..d45bf18
 +}
 +
 +func TestSelfImproveTool_Empty(t *testing.T) {
-+	tool := buildSelfImproveTool(Deps{})
++	tool := buildSelfImproveTool(Deps{}, nil)
 +	out, err := tool.Handler(context.Background(), json.RawMessage(`{}`))
 +	if err != nil {
 +		t.Fatalf("handler error: %v", err)
@@ -8233,9 +8687,51 @@ index 0000000..d45bf18
 +}
 +
 +func TestSelfImproveTool_BadInput(t *testing.T) {
-+	tool := buildSelfImproveTool(Deps{})
++	tool := buildSelfImproveTool(Deps{}, nil)
 +	if _, err := tool.Handler(context.Background(), json.RawMessage(`{`)); err == nil {
 +		t.Error("expected error for malformed JSON")
++	}
++}
++
++// 'tools' 省略時に live stats を自己収集し、それを評価することを確認する
++// (RSI ループが実際に閉じていること)。
++func TestSelfImproveTool_SelfCollectsLiveStats(t *testing.T) {
++	stats := func() []ToolStats {
++		return []ToolStats{
++			{Name: "yagura_flaky", Calls: 20, ResponseBytes: 4000, ErrorCount: 6}, // 30% err → high reliability
++			{Name: "yagura_ok", Calls: 50, ResponseBytes: 5000, ErrorCount: 0},
++		}
++	}
++	tool := buildSelfImproveTool(Deps{}, stats)
++	out, err := tool.Handler(context.Background(), json.RawMessage(`{}`))
++	if err != nil {
++		t.Fatalf("handler error: %v", err)
++	}
++	m := out.(map[string]any)
++	if m["self_collected"] != true {
++		t.Errorf("expected self_collected=true, got %v", m["self_collected"])
++	}
++	b, _ := json.Marshal(m)
++	var r struct {
++		Proposals []struct {
++			ID string `json:"id"`
++		} `json:"proposals"`
++	}
++	_ = json.Unmarshal(b, &r)
++	found := false
++	for _, p := range r.Proposals {
++		if p.ID == "reliability:yagura_flaky" {
++			found = true
++		}
++	}
++	if !found {
++		t.Errorf("expected a reliability proposal for the flaky live tool, got %s", b)
++	}
++
++	// caller-supplied tools must override self-collection.
++	out2, _ := tool.Handler(context.Background(), json.RawMessage(`{"tools":[{"name":"x","calls":1,"errors":0}]}`))
++	if out2.(map[string]any)["self_collected"] != false {
++		t.Error("explicit tools should disable self-collection")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_test.go b/yagura-v0.35.0/internal/mcp/tools_test.go
