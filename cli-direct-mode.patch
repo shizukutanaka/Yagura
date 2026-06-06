@@ -229,10 +229,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..a5e9dd4 100644
+index 9b29eec..d7006bd 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,336 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,343 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -545,12 +545,19 @@ index 9b29eec..a5e9dd4 100644
 +  exploitability 推論)や運用者判断を OpenVEX に束ねられる。Yagura は LLM を呼ばず、
 +  well-formed 文書の生成と lint に徹する(VEX は producer 責任の「主張」で検証エンジン
 +  ではない)。MCP tool `yagura_vex`(`{author?, statements:[{cve, product?, status?,
-+  justification?, impact?, action?}]}` → `{document, issues}`)。新 package(43→44)、
++  justification?, impact?, action?}]}` → `{document, issues}`)。
++  **incremental maintenance**: `Merge(base, additions, now)` は新スキャン(OSV 等)が
++  見つけた CVE のうち base に未登録のものだけを `under_investigation` で追加し、既存の
++  verdict(not_affected/fixed/affected = 運用者の triage 結果)は決して上書きしない
++  (再スキャンで triage を失わない)。新規が無ければ base をそのまま返す(no-op は冪等で
++  @id/version 不変)。新規があれば version を +1 した改訂版を返す。`yagura_vex` に任意の
++  `base`(既存 OpenVEX 文書)を渡すと Build ではなく Merge が走る。新 package(43→44)、
 +  tool 数 55 → **56**、stdlib のみ(`encoding/json` / `hash/fnv` / `sort` / `time`、
 +  ADR-0001)。参考: OpenVEX spec v0.2.0 / CISA "Minimum Requirements for VEX" /
 +  arXiv 2511.20313。テスト: Build 決定論・整列・既定 status・@id、Validate 各分岐
-+  (not_affected 不足 / 不正 justification / 不正 status / affected 不足 / 空文書)+ tool
-+  テスト(`internal/vex` 97.7%)。live dogfood 済み。`MCP_TOOLS.md` 再生成。
++  (not_affected 不足 / 不正 justification / 不正 status / affected 不足 / 空文書)、
++  Merge(新規追加+既存保持 / no-op 冪等 / 決定論 / 空 base)+ tool テスト
++  (`internal/vex` 98.7%)。live dogfood 済み(Build + Merge 両方)。`MCP_TOOLS.md` 再生成。
 +
 +### What's not yet
 +
@@ -3229,7 +3236,7 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..c449720 100644
+index 689c182..05fecb2 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
@@ -3419,19 +3426,20 @@ index 689c182..c449720 100644
  ### `yagura_token_stats`
  
  [S] Per-tool byte counts since daemon start.
-@@ -397,6 +514,31 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -397,6 +514,32 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
 +### `yagura_vex`
 +
-+[G] Build + lint an OpenVEX v0.2.0 doc from per-CVE statements (not_affected/affected/fixed).
++[G] Build/merge + lint an OpenVEX v0.2.0 doc from per-CVE statements (not_affected/affected/fixed).
 +
 +**Arguments:**
 +
 +| Name | Required | Description |
 +|---|---|---|
 +| `author` (string) |  | VEX author identity (default 'yagura'). |
++| `base` (object) |  | optional existing OpenVEX doc; statements are merged in (new vulns only, existing verdicts preserved, version bumped). |
 +| `statements` (array) | ★ | per-vulnerability statements. |
 +
 +---
@@ -3451,7 +3459,7 @@ index 689c182..c449720 100644
  ## Observability
  
  ### `yagura_agent_status`
-@@ -576,7 +718,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -576,7 +719,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -7372,10 +7380,10 @@ index 31ea232..e4a7a4c 100644
  func TestGet_Existing(t *testing.T) {
 diff --git a/yagura-v0.35.0/internal/mcp/tools_vex.go b/yagura-v0.35.0/internal/mcp/tools_vex.go
 new file mode 100644
-index 0000000..a00e0f3
+index 0000000..4c11ef1
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_vex.go
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,103 @@
 +// tools_vex.go: yagura_vex — OpenVEX(Vulnerability Exploitability eXchange)文書を
 +// 決定論的に生成・検証する(internal/vex)。
 +//
@@ -7400,13 +7408,17 @@ index 0000000..a00e0f3
 +func buildVEXTool(d Deps) *Tool {
 +	return &Tool{
 +		Name:        "yagura_vex",
-+		Description: "[G] Build + lint an OpenVEX v0.2.0 doc from per-CVE statements (not_affected/affected/fixed).",
++		Description: "[G] Build/merge + lint an OpenVEX v0.2.0 doc from per-CVE statements (not_affected/affected/fixed).",
 +		InputSchema: map[string]any{
 +			"type": "object",
 +			"properties": map[string]any{
 +				"author": map[string]any{
 +					"type":        "string",
 +					"description": "VEX author identity (default 'yagura').",
++				},
++				"base": map[string]any{
++					"type":        "object",
++					"description": "optional existing OpenVEX doc; statements are merged in (new vulns only, existing verdicts preserved, version bumped).",
 +				},
 +				"statements": map[string]any{
 +					"type":        "array",
@@ -7430,7 +7442,8 @@ index 0000000..a00e0f3
 +		},
 +		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
 +			var in struct {
-+				Author     string `json:"author"`
++				Author     string        `json:"author"`
++				Base       *vex.Document `json:"base"`
 +				Statements []struct {
 +					CVE           string `json:"cve"`
 +					Description   string `json:"description"`
@@ -7461,7 +7474,12 @@ index 0000000..a00e0f3
 +				}
 +				stmts = append(stmts, st)
 +			}
-+			doc := vex.Build(in.Author, d.Now(), stmts)
++			var doc vex.Document
++			if in.Base != nil {
++				doc = vex.Merge(*in.Base, stmts, d.Now())
++			} else {
++				doc = vex.Build(in.Author, d.Now(), stmts)
++			}
 +			return map[string]any{
 +				"document": doc,
 +				"issues":   vex.Validate(doc),
@@ -7471,10 +7489,10 @@ index 0000000..a00e0f3
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_vex_test.go b/yagura-v0.35.0/internal/mcp/tools_vex_test.go
 new file mode 100644
-index 0000000..3057fc6
+index 0000000..36cc845
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_vex_test.go
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,98 @@
 +package mcp
 +
 +import (
@@ -7521,6 +7539,42 @@ index 0000000..3057fc6
 +	issues, _ := m["issues"].([]string)
 +	if len(issues) == 0 {
 +		t.Error("expected a lint issue for not_affected without justification")
++	}
++}
++
++func TestVEXTool_MergeIntoBase(t *testing.T) {
++	// base has CVE-0001 fixed; merge adds a new CVE-0002 without clobbering it.
++	m := callVEX(t, `{"base":{
++		"@context":"https://openvex.dev/ns/v0.2.0","@id":"urn:yagura:vex:deadbeef",
++		"author":"acme","timestamp":"2026-06-06T12:00:00Z","version":1,
++		"statements":[{"vulnerability":{"name":"CVE-2025-0001"},"status":"fixed"}]
++	},"statements":[{"cve":"CVE-2025-0002","status":"affected","action":"upgrade"}]}`)
++
++	// document is a typed vex.Document; round-trip through JSON like an MCP client.
++	b, err := json.Marshal(m["document"])
++	if err != nil {
++		t.Fatalf("marshal: %v", err)
++	}
++	var doc struct {
++		Version    int `json:"version"`
++		Statements []struct {
++			Vulnerability struct {
++				Name string `json:"name"`
++			} `json:"vulnerability"`
++			Status string `json:"status"`
++		} `json:"statements"`
++	}
++	if err := json.Unmarshal(b, &doc); err != nil {
++		t.Fatalf("unmarshal: %v", err)
++	}
++	if doc.Version != 2 {
++		t.Errorf("merged version = %d, want 2", doc.Version)
++	}
++	if len(doc.Statements) != 2 {
++		t.Fatalf("expected 2 statements, got %d", len(doc.Statements))
++	}
++	if doc.Statements[0].Vulnerability.Name != "CVE-2025-0001" || doc.Statements[0].Status != "fixed" {
++		t.Errorf("base verdict not preserved: %+v", doc.Statements[0])
 +	}
 +}
 +
@@ -9097,10 +9151,10 @@ index 024402e..56e8f05 100644
  			text:     `key = AIzaabcdefghijklmnopqrstuvwxyzABCDEFGHI`,
 diff --git a/yagura-v0.35.0/internal/vex/vex.go b/yagura-v0.35.0/internal/vex/vex.go
 new file mode 100644
-index 0000000..a6648c6
+index 0000000..7988586
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/vex/vex.go
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,221 @@
 +// Package vex は OpenVEX(Vulnerability Exploitability eXchange)ドキュメントを
 +// 決定論的に生成・検証する。
 +//
@@ -9196,12 +9250,7 @@ index 0000000..a6648c6
 +		}
 +		out = append(out, s)
 +	}
-+	sort.SliceStable(out, func(i, j int) bool {
-+		if out[i].Vulnerability.Name != out[j].Vulnerability.Name {
-+			return out[i].Vulnerability.Name < out[j].Vulnerability.Name
-+		}
-+		return firstProduct(out[i]) < firstProduct(out[j])
-+	})
++	sortStatements(out)
 +	d := Document{
 +		Context:    contextURL,
 +		Author:     author,
@@ -9211,6 +9260,72 @@ index 0000000..a6648c6
 +	}
 +	d.ID = "urn:yagura:vex:" + contentHash(d.Author, d.Timestamp, out)
 +	return d
++}
++
++// Merge は既存 VEX 文書に新規脆弱性の statement を加えた改訂版を返す。
++//
++// incremental discovery 向け: 新しいスキャン(OSV など)が CVE を見つけるたび、
++// base に未登録の vuln だけを追加する。既存 statement の verdict(not_affected /
++// fixed / affected など、運用者が triage した結果)は決して変更しない — 再スキャンで
++// triage を失わないため。新規 status 未指定は under_investigation。
++//
++// 新規が 1 件も無ければ base をそのまま返す(no-op は冪等で @id/version も不変)。
++// 新規があれば version を +1 し、timestamp/@id を now で再計算した改訂版を返す。
++func Merge(base Document, additions []Statement, now time.Time) Document {
++	have := make(map[string]bool, len(base.Statements))
++	for _, s := range base.Statements {
++		have[strings.TrimSpace(s.Vulnerability.Name)] = true
++	}
++	merged := append([]Statement(nil), base.Statements...)
++	added := 0
++	for _, s := range additions {
++		name := strings.TrimSpace(s.Vulnerability.Name)
++		if name == "" || have[name] {
++			continue
++		}
++		have[name] = true
++		s.Vulnerability.Name = name
++		if s.Status == "" {
++			s.Status = StatusUnderInvestigation
++		}
++		merged = append(merged, s)
++		added++
++	}
++	if added == 0 {
++		return base
++	}
++	sortStatements(merged)
++	author := base.Author
++	if strings.TrimSpace(author) == "" {
++		author = "yagura"
++	}
++	ctx := base.Context
++	if ctx == "" {
++		ctx = contextURL
++	}
++	ver := base.Version
++	if ver < 1 {
++		ver = 1
++	}
++	d := Document{
++		Context:    ctx,
++		Author:     author,
++		Timestamp:  now.UTC().Format(time.RFC3339),
++		Version:    ver + 1,
++		Statements: merged,
++	}
++	d.ID = "urn:yagura:vex:" + contentHash(d.Author, d.Timestamp, merged)
++	return d
++}
++
++// sortStatements は (vuln name, 先頭 product id) で安定整列する(決定論的出力)。
++func sortStatements(s []Statement) {
++	sort.SliceStable(s, func(i, j int) bool {
++		if s[i].Vulnerability.Name != s[j].Vulnerability.Name {
++			return s[i].Vulnerability.Name < s[j].Vulnerability.Name
++		}
++		return firstProduct(s[i]) < firstProduct(s[j])
++	})
 +}
 +
 +// Validate は OpenVEX Document の構造的問題を返す(空なら OK)。
@@ -9263,10 +9378,10 @@ index 0000000..a6648c6
 +}
 diff --git a/yagura-v0.35.0/internal/vex/vex_test.go b/yagura-v0.35.0/internal/vex/vex_test.go
 new file mode 100644
-index 0000000..7799600
+index 0000000..3e5ecba
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/vex/vex_test.go
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,242 @@
 +package vex
 +
 +import (
@@ -9424,6 +9539,80 @@ index 0000000..7799600
 +	issues := Validate(Document{})
 +	if !hasIssue(issues, "missing @context") || !hasIssue(issues, "no statements") {
 +		t.Errorf("expected context+statements issues, got %v", issues)
++	}
++}
++
++func TestMerge_AddsNewPreservesVerdicts(t *testing.T) {
++	base := Build("acme", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusNotAffected, Justification: JustComponentNotPresent},
++		{Vulnerability: Vuln{Name: "CVE-2025-0002"}, Status: StatusFixed},
++	})
++	later := fixedNow.Add(time.Hour)
++	merged := Merge(base, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0002"}}, // already present → must NOT downgrade
++		{Vulnerability: Vuln{Name: "CVE-2025-0003"}}, // new → under_investigation
++	}, later)
++
++	if len(merged.Statements) != 3 {
++		t.Fatalf("expected 3 statements, got %d", len(merged.Statements))
++	}
++	if merged.Version != base.Version+1 {
++		t.Errorf("version = %d, want %d", merged.Version, base.Version+1)
++	}
++	byName := map[string]Statement{}
++	for _, s := range merged.Statements {
++		byName[s.Vulnerability.Name] = s
++	}
++	if byName["CVE-2025-0002"].Status != StatusFixed {
++		t.Errorf("existing verdict clobbered: CVE-2025-0002 = %q, want fixed", byName["CVE-2025-0002"].Status)
++	}
++	if byName["CVE-2025-0001"].Status != StatusNotAffected {
++		t.Errorf("existing verdict clobbered: CVE-2025-0001 = %q", byName["CVE-2025-0001"].Status)
++	}
++	if byName["CVE-2025-0003"].Status != StatusUnderInvestigation {
++		t.Errorf("new statement status = %q, want under_investigation", byName["CVE-2025-0003"].Status)
++	}
++}
++
++func TestMerge_NoNewIsNoOp(t *testing.T) {
++	base := Build("acme", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusFixed},
++	})
++	later := fixedNow.Add(time.Hour)
++	merged := Merge(base, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}}, // duplicate only
++		{Vulnerability: Vuln{Name: "   "}},           // blank ignored
++	}, later)
++	if merged.ID != base.ID || merged.Version != base.Version || merged.Timestamp != base.Timestamp {
++		t.Errorf("no-op merge must return base unchanged: id %q/%q ver %d/%d", merged.ID, base.ID, merged.Version, base.Version)
++	}
++}
++
++func TestMerge_Deterministic(t *testing.T) {
++	base := Build("acme", fixedNow, []Statement{{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusFixed}})
++	later := fixedNow.Add(time.Hour)
++	adds := []Statement{{Vulnerability: Vuln{Name: "CVE-2025-0009"}}}
++	a := Merge(base, adds, later)
++	b := Merge(base, adds, later)
++	if a.ID != b.ID {
++		t.Errorf("merge @id not deterministic: %q vs %q", a.ID, b.ID)
++	}
++	// re-sorted: 0001 before 0009
++	if a.Statements[0].Vulnerability.Name != "CVE-2025-0001" {
++		t.Errorf("merge not re-sorted: first = %q", a.Statements[0].Vulnerability.Name)
++	}
++}
++
++func TestMerge_EmptyBaseSetsContext(t *testing.T) {
++	merged := Merge(Document{}, []Statement{{Vulnerability: Vuln{Name: "CVE-2025-0001"}}}, fixedNow)
++	if merged.Context != contextURL {
++		t.Errorf("context = %q, want %q", merged.Context, contextURL)
++	}
++	if merged.Author != "yagura" {
++		t.Errorf("author default = %q", merged.Author)
++	}
++	if merged.Version != 2 {
++		t.Errorf("version = %d, want 2 (1->+1)", merged.Version)
 +	}
 +}
 +
