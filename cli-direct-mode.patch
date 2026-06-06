@@ -229,10 +229,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..2dbbe00 100644
+index 9b29eec..a5e9dd4 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,314 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,336 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -530,6 +530,28 @@ index 9b29eec..2dbbe00 100644
 +  テスト 10 本(各検査 + 正当 description / pinned npx の FP ガード)+ CLI ゲートテスト。
 +  live dogfood 済み(`~/.ssh` exfil + override 文 → score 50)。`MCP_TOOLS.md` 再生成。
 +
++- **`vex`: OpenVEX v0.2.0 文書の決定論的生成 + 構造 lint(改善点 #4・MCP tool #56)**
++  (新 package `internal/vex`)。Yagura は SBOM(「何が入っているか」)を出すが、SBOM 単体は
++  脆弱性を過剰報告し、運用者が「この CVE は当製品では悪用不能」を伝える術がない
++  (arXiv 2511.20313 SBOM reality-check)。**VEX** は「どの脆弱性がこの製品文脈で実際に
++  影響するか/しないか」を機械可読に伝える補完アーティファクト: `not_affected` /
++  `affected` / `fixed` / `under_investigation` + OpenVEX justification(5 列挙)。
++  `Build(author, now, stmts)` は canonical な OpenVEX Document を構築 — status 未指定は
++  `under_investigation`、statements を (vuln name, 先頭 product id) で安定整列、`@id` は
++  内容ハッシュ(fnv32a)由来で**決定論的**、timestamp は注入された `Now()`(test で固定可)。
++  `Validate(d)` は構造 lint: `@context`/statement 必須、vuln.name 必須、status 列挙、
++  `not_affected` は justification か impact_statement を要求(justification は列挙検証)、
++  `affected` は action_statement(remediation)を推奨。`risk_triage`(SSVC/EPSS の
++  exploitability 推論)や運用者判断を OpenVEX に束ねられる。Yagura は LLM を呼ばず、
++  well-formed 文書の生成と lint に徹する(VEX は producer 責任の「主張」で検証エンジン
++  ではない)。MCP tool `yagura_vex`(`{author?, statements:[{cve, product?, status?,
++  justification?, impact?, action?}]}` → `{document, issues}`)。新 package(43→44)、
++  tool 数 55 → **56**、stdlib のみ(`encoding/json` / `hash/fnv` / `sort` / `time`、
++  ADR-0001)。参考: OpenVEX spec v0.2.0 / CISA "Minimum Requirements for VEX" /
++  arXiv 2511.20313。テスト: Build 決定論・整列・既定 status・@id、Validate 各分岐
++  (not_affected 不足 / 不正 justification / 不正 status / affected 不足 / 空文書)+ tool
++  テスト(`internal/vex` 97.7%)。live dogfood 済み。`MCP_TOOLS.md` 再生成。
++
 +### What's not yet
 +
 +- `vulns` / `scorecard` の CLG 化(現状 sensor で scanner 専用)。
@@ -548,21 +570,21 @@ index 9b29eec..2dbbe00 100644
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
 diff --git a/yagura-v0.35.0/CLAUDE.md b/yagura-v0.35.0/CLAUDE.md
-index bc406e1..4198c7d 100644
+index bc406e1..e68afbd 100644
 --- a/yagura-v0.35.0/CLAUDE.md
 +++ b/yagura-v0.35.0/CLAUDE.md
-@@ -21,18 +21,19 @@ cortex flywheel 4 段階すべてを単体で機械化:
+@@ -21,19 +21,21 @@ cortex flywheel 4 段階すべてを単体で機械化:
  - マルチエージェント orchestrator(MCP server 一品)
  - code generation tool(yagura は audit/orchestrate のみ)
  
 -## Map — 31 internal packages
-+## Map — 43 internal packages
++## Map — 44 internal packages
  
  ### Core orchestration
  - `internal/registry` — 23+ projects の inventory CRUD
  - `internal/project` — Project struct + validation
 -- `internal/mcp` — MCP server + 38 tool definitions
-+- `internal/mcp` — MCP server + 55 tool definitions
++- `internal/mcp` — MCP server + 56 tool definitions
  - `internal/audit` — JSONL audit log + replay
  - `internal/config` — env / flag 設定
  
@@ -571,9 +593,11 @@ index bc406e1..4198c7d 100644
  - `internal/secretscan` — gitleaks-like secret 検出
 +- `internal/publicityscan` — 公開前 leak 検出(home パス/内部 host/private IP/email)★ v0.35
  - `internal/sbom` — CycloneDX SBOM 生成
++- `internal/vex` — OpenVEX v0.2.0 文書の決定論的生成 + 構造 lint(SBOM 過剰報告の補完)★ v0.35
  - `internal/ghaaudit` — GitHub Actions workflow audit
  - `internal/pindrift` — 依存 pin 漏れ検出
-@@ -49,7 +50,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
+ - `internal/aiverify` — AI 生成 code の risk pattern 検出 ★ v0.25
+@@ -49,7 +51,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
  - `internal/handoff` — handoff session management
  - `internal/agentlauncher` — agent process spawn
  - `internal/workspace` — session save/load
@@ -588,7 +612,7 @@ index bc406e1..4198c7d 100644
  ### Graph / dependencies
  - `internal/projectgraph` — depends_on graph(neighbors / impact / stats)
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..26957a9 100644
+index 986f84e..4892a7d 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -596,7 +620,7 @@ index 986f84e..26957a9 100644
  **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
  
 -Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
-+Status: **v0.35.0** — 55 MCP tools, 43 internal packages, CLI direct mode, 30 consecutive reproducible releases.
++Status: **v0.35.0** — 56 MCP tools, 44 internal packages, CLI direct mode, 30 consecutive reproducible releases.
  
  ---
  
@@ -605,7 +629,7 @@ index 986f84e..26957a9 100644
  │  ┌────────────────────────────────────────────────┐  │
  │  │  yagura daemon (single binary, ~9 MB)          │  │
 -│  │  - 46 MCP tools                                │  │
-+│  │  - 55 MCP tools                                │  │
++│  │  - 56 MCP tools                                │  │
  │  │  - HTTP hook receiver                          │  │
  │  │  - Prometheus /metrics                         │  │
  │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -645,11 +669,19 @@ index 986f84e..26957a9 100644
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
  
 -## MCP tools (46 total)
-+## MCP tools (55 total)
++## MCP tools (56 total)
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
-@@ -166,6 +181,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -159,6 +174,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+ |---|---|---|
+ | Inventory | `list`, `get`, `search`, `today`, `stats`, `register`, `unregister`, `update` | Manage the portfolio |
+ | Security `[S]` | `vulns`, `scorecard`, `secretscan`, `sbom`, `gha_audit`, `pin_drift`, `ai_verify`, `test_audit`, `quality_check` | Computational sensors |
++| Supply chain `[G]` | `sbom`, `vex`, `mcp_audit` | CycloneDX SBOM + OpenVEX exploitability statements + MCP config audit |
+ | Harness `[G]` | `agents_md`, `feature_list`, `progress_file`, `init_sh`, `harness_recommend` | Generate handoff artifacts |
+ | Self-audit `[G]` | `harness_coverage` | Fowler matrix self-check |
+ | Alerts | `alert_fix`, `alert_resolve` | Lifecycle: active / resolved / snoozed |
+@@ -166,6 +182,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  | Handoff | 8 tools | Plan / Run / Handoff for cross-session work |
  | Observability | `hook_timeline`, `hook_stats`, `agent_status`, `quota_report` | Claude Code activity |
  | Graph | 3 tools | Cross-project dependencies |
@@ -3082,10 +3114,10 @@ index 0000000..ca05221
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
-index cfb6e51..28673a7 100644
+index cfb6e51..d10d9fa 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
 +++ b/yagura-v0.35.0/cmd/yagura/integration_test.go
-@@ -164,6 +164,13 @@ func TestIntegration_MCPToolsList(t *testing.T) {
+@@ -164,6 +164,15 @@ func TestIntegration_MCPToolsList(t *testing.T) {
  		// v0.27 — cortex flywheel ④ Alert-Fix
  		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
  		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",
@@ -3096,6 +3128,8 @@ index cfb6e51..28673a7 100644
 +		"yagura_plugin_audit", "yagura_publicity_scan", "yagura_mcp_audit",
 +		// v0.35 — self-healing orchestration の recovery 判断
 +		"yagura_recovery_decide",
++		// v0.35 — OpenVEX v0.2.0 文書生成 + lint
++		"yagura_vex",
  	}
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
@@ -3195,14 +3229,14 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..b258703 100644
+index 689c182..c449720 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
  # MCP tools reference
  
 -Generated from a live yagura — **46 tools**.
-+Generated from a live yagura — **55 tools**.
++Generated from a live yagura — **56 tools**.
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -3211,7 +3245,7 @@ index 689c182..b258703 100644
  - [Harness (guides)](#harness-guides) (8)
  - [Inventory](#inventory) (8)
 -- [Misc](#misc) (8)
-+- [Misc](#misc) (17)
++- [Misc](#misc) (18)
  - [Observability](#observability) (4)
  - [Plan tracking](#plan-tracking) (2)
  - [Security (sensors)](#security-sensors) (10)
@@ -3385,10 +3419,23 @@ index 689c182..b258703 100644
  ### `yagura_token_stats`
  
  [S] Per-tool byte counts since daemon start.
-@@ -397,6 +514,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -397,6 +514,31 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
++### `yagura_vex`
++
++[G] Build + lint an OpenVEX v0.2.0 doc from per-CVE statements (not_affected/affected/fixed).
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `author` (string) |  | VEX author identity (default 'yagura'). |
++| `statements` (array) | ★ | per-vulnerability statements. |
++
++---
++
 +### `yagura_workflow_audit`
 +
 +[G] Dynamic Workflow JS audit: token budget, /goal, quarantine, fan-out.
@@ -3404,7 +3451,7 @@ index 689c182..b258703 100644
  ## Observability
  
  ### `yagura_agent_status`
-@@ -576,7 +705,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -576,7 +718,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -3414,7 +3461,7 @@ index 689c182..b258703 100644
  **Arguments:**
  
 diff --git a/yagura-v0.35.0/docs/QUICKSTART.md b/yagura-v0.35.0/docs/QUICKSTART.md
-index 62e02cd..3456eb2 100644
+index 62e02cd..bf25776 100644
 --- a/yagura-v0.35.0/docs/QUICKSTART.md
 +++ b/yagura-v0.35.0/docs/QUICKSTART.md
 @@ -177,7 +177,7 @@ The process drains for 5 seconds (`/readyz` returns 503) then shuts down gracefu
@@ -3422,7 +3469,7 @@ index 62e02cd..3456eb2 100644
  ## What next?
  
 -- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 46 tools.
-+- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 55 tools.
++- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 56 tools.
  - [WINDOWS.md](WINDOWS.md) — Task Scheduler / NSSM / Windows service setup.
  - [ARCHITECTURE.md](../ARCHITECTURE.md) — internals and design rationale.
  - [security-spec.md](security-spec.md) — threat model.
@@ -6110,10 +6157,10 @@ index 0000000..ad2196b
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..8bfe3af 100644
+index 939a67e..118fbb1 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
-@@ -188,6 +188,19 @@ func RegisterDefaultTools(s *Server, d Deps) {
+@@ -188,6 +188,21 @@ func RegisterDefaultTools(s *Server, d Deps) {
  	s.Register(buildHookStatsTool(s))
  	s.Register(buildProgressFileTool(d, s))
  	s.Register(buildInitShTool(d))
@@ -6130,10 +6177,12 @@ index 939a67e..8bfe3af 100644
 +	s.Register(buildMCPAuditTool(d))
 +	// [v0.35.0] self-healing orchestration の決定論的 recovery 判断
 +	s.Register(buildRecoveryDecideTool(d))
++	// [v0.35.0] OpenVEX v0.2.0 文書の決定論的生成 + 構造 lint(SBOM の過剰報告を補完)
++	s.Register(buildVEXTool(d))
  }
  
  // ─── yagura_list ─────────────────────────────────────────────
-@@ -198,8 +211,8 @@ type listOut struct {
+@@ -198,8 +213,8 @@ type listOut struct {
  	Stage          string `json:"stage"`
  	Priority       int    `json:"priority"`
  	Language       string `json:"language,omitempty"`
@@ -6144,7 +6193,7 @@ index 939a67e..8bfe3af 100644
  	CIStatus       string `json:"ci_status,omitempty"`
  	LatestVersion  string `json:"latest_version,omitempty"`
  	DaysSinceCommit int   `json:"days_since_commit"`
-@@ -245,7 +258,7 @@ type todayItem struct {
+@@ -245,7 +260,7 @@ type todayItem struct {
  func buildSecretScanTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_secretscan",
@@ -6153,7 +6202,7 @@ index 939a67e..8bfe3af 100644
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
-@@ -766,7 +779,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+@@ -766,7 +781,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_skill_audit",
@@ -7321,6 +7370,173 @@ index 31ea232..e4a7a4c 100644
  // ─── yagura_get ──────────────────────────────────────────────
  
  func TestGet_Existing(t *testing.T) {
+diff --git a/yagura-v0.35.0/internal/mcp/tools_vex.go b/yagura-v0.35.0/internal/mcp/tools_vex.go
+new file mode 100644
+index 0000000..a00e0f3
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_vex.go
+@@ -0,0 +1,93 @@
++// tools_vex.go: yagura_vex — OpenVEX(Vulnerability Exploitability eXchange)文書を
++// 決定論的に生成・検証する(internal/vex)。
++//
++// SBOM は「何が入っているか」を出すが、SBOM 単体は脆弱性を過剰報告する。VEX は
++// 「どの脆弱性がこの製品文脈で実際に影響するか/しないか」(not_affected / affected /
++// fixed / under_investigation + justification)を機械可読に伝える補完アーティファクト。
++// risk_triage(SSVC/EPSS の exploitability 推論)や運用者の判断を OpenVEX v0.2.0 に束ねる。
++//
++// Yagura は LLM を呼ばず、well-formed な文書の canonical 生成と構造 lint に徹する
++// (VEX は producer 責任の「主張」であり検証エンジンではない)。@id は内容ハッシュ由来で
++// 決定論的。timestamp は Deps.Now() を使うので test で固定できる。
++
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++
++	"github.com/shizukutanaka/yagura/internal/vex"
++)
++
++func buildVEXTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_vex",
++		Description: "[G] Build + lint an OpenVEX v0.2.0 doc from per-CVE statements (not_affected/affected/fixed).",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"author": map[string]any{
++					"type":        "string",
++					"description": "VEX author identity (default 'yagura').",
++				},
++				"statements": map[string]any{
++					"type":        "array",
++					"description": "per-vulnerability statements.",
++					"items": map[string]any{
++						"type": "object",
++						"properties": map[string]any{
++							"cve":           map[string]any{"type": "string", "description": "vulnerability id/name (e.g. CVE-2025-0001)."},
++							"description":   map[string]any{"type": "string"},
++							"product":       map[string]any{"type": "string", "description": "affected product @id (e.g. pkg:golang/...)."},
++							"status":        map[string]any{"type": "string", "description": "not_affected/affected/fixed/under_investigation (default under_investigation)."},
++							"justification": map[string]any{"type": "string", "description": "OpenVEX justification when not_affected."},
++							"impact":        map[string]any{"type": "string", "description": "impact_statement (alternative to justification for not_affected)."},
++							"action":        map[string]any{"type": "string", "description": "action_statement (remediation when affected)."},
++						},
++						"required": []string{"cve"},
++					},
++				},
++			},
++			"required": []string{"statements"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Author     string `json:"author"`
++				Statements []struct {
++					CVE           string `json:"cve"`
++					Description   string `json:"description"`
++					Product       string `json:"product"`
++					Status        string `json:"status"`
++					Justification string `json:"justification"`
++					Impact        string `json:"impact"`
++					Action        string `json:"action"`
++				} `json:"statements"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if len(in.Statements) == 0 {
++				return nil, &ToolError{Code: "invalid_input", Message: "at least one statement is required"}
++			}
++			stmts := make([]vex.Statement, 0, len(in.Statements))
++			for _, s := range in.Statements {
++				st := vex.Statement{
++					Vulnerability:   vex.Vuln{Name: s.CVE, Description: s.Description},
++					Status:          vex.Status(s.Status),
++					Justification:   vex.Justification(s.Justification),
++					ImpactStatement: s.Impact,
++					ActionStatement: s.Action,
++				}
++				if s.Product != "" {
++					st.Products = []vex.Product{{ID: s.Product}}
++				}
++				stmts = append(stmts, st)
++			}
++			doc := vex.Build(in.Author, d.Now(), stmts)
++			return map[string]any{
++				"document": doc,
++				"issues":   vex.Validate(doc),
++			}, nil
++		},
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_vex_test.go b/yagura-v0.35.0/internal/mcp/tools_vex_test.go
+new file mode 100644
+index 0000000..3057fc6
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_vex_test.go
+@@ -0,0 +1,62 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++	"time"
++)
++
++func vexDeps() Deps {
++	return Deps{Now: func() time.Time { return time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC) }}
++}
++
++func callVEX(t *testing.T, args string) map[string]any {
++	t.Helper()
++	tool := buildVEXTool(vexDeps())
++	out, err := tool.Handler(context.Background(), json.RawMessage(args))
++	if err != nil {
++		t.Fatalf("handler error: %v", err)
++	}
++	m, ok := out.(map[string]any)
++	if !ok {
++		t.Fatalf("output not a map: %T", out)
++	}
++	return m
++}
++
++func TestVEXTool_BuildAndValidate(t *testing.T) {
++	m := callVEX(t, `{"author":"acme","statements":[
++		{"cve":"CVE-2025-0001","status":"not_affected","justification":"component_not_present"},
++		{"cve":"CVE-2025-0002","status":"affected","action":"upgrade to 2.0","product":"pkg:golang/x"}
++	]}`)
++	issues, _ := m["issues"].([]string)
++	if len(issues) != 0 {
++		t.Errorf("expected no issues, got %v", issues)
++	}
++	if m["document"] == nil {
++		t.Error("expected document in output")
++	}
++}
++
++func TestVEXTool_SurfacesIssues(t *testing.T) {
++	m := callVEX(t, `{"statements":[{"cve":"CVE-2025-0001","status":"not_affected"}]}`)
++	issues, _ := m["issues"].([]string)
++	if len(issues) == 0 {
++		t.Error("expected a lint issue for not_affected without justification")
++	}
++}
++
++func TestVEXTool_EmptyStatements(t *testing.T) {
++	tool := buildVEXTool(vexDeps())
++	if _, err := tool.Handler(context.Background(), json.RawMessage(`{"statements":[]}`)); err == nil {
++		t.Error("expected error for empty statements")
++	}
++}
++
++func TestVEXTool_BadInput(t *testing.T) {
++	tool := buildVEXTool(vexDeps())
++	if _, err := tool.Handler(context.Background(), json.RawMessage(`{`)); err == nil {
++		t.Error("expected error for malformed JSON")
++	}
++}
 diff --git a/yagura-v0.35.0/internal/project/project.go b/yagura-v0.35.0/internal/project/project.go
 index 9ca620a..f400aba 100644
 --- a/yagura-v0.35.0/internal/project/project.go
@@ -8879,3 +9095,343 @@ index 024402e..56e8f05 100644
  		{
  			name:     "Google API key",
  			text:     `key = AIzaabcdefghijklmnopqrstuvwxyzABCDEFGHI`,
+diff --git a/yagura-v0.35.0/internal/vex/vex.go b/yagura-v0.35.0/internal/vex/vex.go
+new file mode 100644
+index 0000000..a6648c6
+--- /dev/null
++++ b/yagura-v0.35.0/internal/vex/vex.go
+@@ -0,0 +1,160 @@
++// Package vex は OpenVEX(Vulnerability Exploitability eXchange)ドキュメントを
++// 決定論的に生成・検証する。
++//
++// 動機: Yagura は SBOM(「何が入っているか」)を生成するが、SBOM 単体は脆弱性を
++// 過剰報告する(arXiv 2511.20313 SBOM reality-check)。VEX は「どの脆弱性がこの製品
++// 文脈で実際に影響するか/しないか」を機械可読に伝える補完アーティファクト
++// (not_affected / affected / fixed / under_investigation + justification)。
++// risk_triage(SSVC/EPSS の exploitability 推論)や運用者の判断を OpenVEX に束ねる。
++//
++// 本 package は OpenVEX v0.2.0 形式の canonical builder + validator(stdlib のみ、
++// ADR-0001)。VEX は「主張」であって検証エンジンではない(producer が責任を持つ)ため、
++// Yagura は well-formed な文書の生成と構造検証に徹する。
++package vex
++
++import (
++	"encoding/json"
++	"fmt"
++	"hash/fnv"
++	"sort"
++	"strings"
++	"time"
++)
++
++const contextURL = "https://openvex.dev/ns/v0.2.0"
++
++// Status は OpenVEX のステータス。
++type Status string
++
++const (
++	StatusNotAffected        Status = "not_affected"
++	StatusAffected           Status = "affected"
++	StatusFixed              Status = "fixed"
++	StatusUnderInvestigation Status = "under_investigation"
++)
++
++// Justification は not_affected の根拠(OpenVEX 列挙)。
++type Justification string
++
++const (
++	JustComponentNotPresent              Justification = "component_not_present"
++	JustVulnerableCodeNotPresent         Justification = "vulnerable_code_not_present"
++	JustVulnerableCodeNotInExecutePath   Justification = "vulnerable_code_not_in_execute_path"
++	JustVulnerableCodeCannotBeControlled Justification = "vulnerable_code_cannot_be_controlled_by_adversary"
++	JustInlineMitigationsAlreadyExist    Justification = "inline_mitigations_already_exist"
++)
++
++// Vuln / Product / Statement / Document は OpenVEX の構造。
++type Vuln struct {
++	Name        string `json:"name"`
++	Description string `json:"description,omitempty"`
++}
++type Product struct {
++	ID string `json:"@id"`
++}
++type Statement struct {
++	Vulnerability   Vuln          `json:"vulnerability"`
++	Products        []Product     `json:"products,omitempty"`
++	Status          Status        `json:"status"`
++	Justification   Justification `json:"justification,omitempty"`
++	ImpactStatement string        `json:"impact_statement,omitempty"`
++	ActionStatement string        `json:"action_statement,omitempty"`
++}
++type Document struct {
++	Context    string      `json:"@context"`
++	ID         string      `json:"@id"`
++	Author     string      `json:"author"`
++	Timestamp  string      `json:"timestamp"`
++	Version    int         `json:"version"`
++	Statements []Statement `json:"statements"`
++}
++
++var validStatuses = map[Status]bool{
++	StatusNotAffected: true, StatusAffected: true, StatusFixed: true, StatusUnderInvestigation: true,
++}
++var validJustifications = map[Justification]bool{
++	JustComponentNotPresent: true, JustVulnerableCodeNotPresent: true,
++	JustVulnerableCodeNotInExecutePath: true, JustVulnerableCodeCannotBeControlled: true,
++	JustInlineMitigationsAlreadyExist: true,
++}
++
++// Build は statements から canonical な OpenVEX Document を構築する。
++// status 未指定は under_investigation。statements は (vuln name, 先頭 product id) で
++// 安定整列。@id は内容ハッシュ由来で決定論的。timestamp は now を使う。
++func Build(author string, now time.Time, stmts []Statement) Document {
++	if strings.TrimSpace(author) == "" {
++		author = "yagura"
++	}
++	out := make([]Statement, 0, len(stmts))
++	for _, s := range stmts {
++		s.Vulnerability.Name = strings.TrimSpace(s.Vulnerability.Name)
++		if s.Status == "" {
++			s.Status = StatusUnderInvestigation
++		}
++		out = append(out, s)
++	}
++	sort.SliceStable(out, func(i, j int) bool {
++		if out[i].Vulnerability.Name != out[j].Vulnerability.Name {
++			return out[i].Vulnerability.Name < out[j].Vulnerability.Name
++		}
++		return firstProduct(out[i]) < firstProduct(out[j])
++	})
++	d := Document{
++		Context:    contextURL,
++		Author:     author,
++		Timestamp:  now.UTC().Format(time.RFC3339),
++		Version:    1,
++		Statements: out,
++	}
++	d.ID = "urn:yagura:vex:" + contentHash(d.Author, d.Timestamp, out)
++	return d
++}
++
++// Validate は OpenVEX Document の構造的問題を返す(空なら OK)。
++func Validate(d Document) []string {
++	var issues []string
++	if d.Context == "" {
++		issues = append(issues, "missing @context")
++	}
++	if len(d.Statements) == 0 {
++		issues = append(issues, "no statements")
++	}
++	for i, s := range d.Statements {
++		who := s.Vulnerability.Name
++		if who == "" {
++			who = fmt.Sprintf("statement #%d", i)
++			issues = append(issues, fmt.Sprintf("%s: vulnerability.name is required", who))
++		}
++		if !validStatuses[s.Status] {
++			issues = append(issues, fmt.Sprintf("%s: invalid status %q (not_affected/affected/fixed/under_investigation)", who, s.Status))
++		}
++		if s.Status == StatusNotAffected {
++			if s.Justification == "" && s.ImpactStatement == "" {
++				issues = append(issues, fmt.Sprintf("%s: not_affected requires a justification or an impact_statement", who))
++			}
++			if s.Justification != "" && !validJustifications[s.Justification] {
++				issues = append(issues, fmt.Sprintf("%s: invalid justification %q", who, s.Justification))
++			}
++		}
++		if s.Status == StatusAffected && s.ActionStatement == "" {
++			issues = append(issues, fmt.Sprintf("%s: affected should include an action_statement (remediation guidance)", who))
++		}
++	}
++	return issues
++}
++
++func firstProduct(s Statement) string {
++	if len(s.Products) > 0 {
++		return s.Products[0].ID
++	}
++	return ""
++}
++
++func contentHash(author, ts string, stmts []Statement) string {
++	h := fnv.New32a()
++	b, _ := json.Marshal(stmts)
++	_, _ = h.Write([]byte(author))
++	_, _ = h.Write([]byte(ts))
++	_, _ = h.Write(b)
++	return fmt.Sprintf("%08x", h.Sum32())
++}
+diff --git a/yagura-v0.35.0/internal/vex/vex_test.go b/yagura-v0.35.0/internal/vex/vex_test.go
+new file mode 100644
+index 0000000..7799600
+--- /dev/null
++++ b/yagura-v0.35.0/internal/vex/vex_test.go
+@@ -0,0 +1,168 @@
++package vex
++
++import (
++	"encoding/json"
++	"strings"
++	"testing"
++	"time"
++)
++
++var fixedNow = time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
++
++func TestBuild_Defaults(t *testing.T) {
++	d := Build("", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}},
++	})
++	if d.Author != "yagura" {
++		t.Errorf("author default = %q, want yagura", d.Author)
++	}
++	if d.Context != contextURL {
++		t.Errorf("context = %q, want %q", d.Context, contextURL)
++	}
++	if d.Version != 1 {
++		t.Errorf("version = %d, want 1", d.Version)
++	}
++	if d.Timestamp != "2026-06-06T12:00:00Z" {
++		t.Errorf("timestamp = %q", d.Timestamp)
++	}
++	if got := d.Statements[0].Status; got != StatusUnderInvestigation {
++		t.Errorf("default status = %q, want under_investigation", got)
++	}
++	if !strings.HasPrefix(d.ID, "urn:yagura:vex:") {
++		t.Errorf("@id = %q, want urn:yagura:vex: prefix", d.ID)
++	}
++}
++
++func TestBuild_Deterministic(t *testing.T) {
++	stmts := []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0002"}, Status: StatusFixed},
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusAffected, ActionStatement: "upgrade"},
++	}
++	a := Build("acme", fixedNow, stmts)
++	b := Build("acme", fixedNow, stmts)
++	if a.ID != b.ID {
++		t.Errorf("@id not deterministic: %q vs %q", a.ID, b.ID)
++	}
++	ja, _ := json.Marshal(a)
++	jb, _ := json.Marshal(b)
++	if string(ja) != string(jb) {
++		t.Error("documents not byte-identical for identical input")
++	}
++}
++
++func TestBuild_Sorted(t *testing.T) {
++	d := Build("acme", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0009"}, Status: StatusFixed},
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusFixed},
++		{Vulnerability: Vuln{Name: "CVE-2025-0005"}, Status: StatusFixed},
++	})
++	want := []string{"CVE-2025-0001", "CVE-2025-0005", "CVE-2025-0009"}
++	for i, w := range want {
++		if d.Statements[i].Vulnerability.Name != w {
++			t.Errorf("statement[%d] = %q, want %q", i, d.Statements[i].Vulnerability.Name, w)
++		}
++	}
++}
++
++func TestBuild_SortByProductTieBreak(t *testing.T) {
++	d := Build("acme", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Products: []Product{{ID: "pkg:zeta"}}, Status: StatusFixed},
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Products: []Product{{ID: "pkg:alpha"}}, Status: StatusFixed},
++	})
++	if d.Statements[0].Products[0].ID != "pkg:alpha" {
++		t.Errorf("tie-break by product failed: got %q first", d.Statements[0].Products[0].ID)
++	}
++}
++
++func TestBuild_TrimsVulnName(t *testing.T) {
++	d := Build("acme", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "  CVE-2025-0001  "}, Status: StatusFixed},
++	})
++	if d.Statements[0].Vulnerability.Name != "CVE-2025-0001" {
++		t.Errorf("name not trimmed: %q", d.Statements[0].Vulnerability.Name)
++	}
++}
++
++func TestValidate_OK(t *testing.T) {
++	d := Build("acme", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusNotAffected, Justification: JustComponentNotPresent},
++		{Vulnerability: Vuln{Name: "CVE-2025-0002"}, Status: StatusAffected, ActionStatement: "upgrade to 2.0"},
++		{Vulnerability: Vuln{Name: "CVE-2025-0003"}, Status: StatusFixed},
++	})
++	if issues := Validate(d); len(issues) != 0 {
++		t.Errorf("expected no issues, got %v", issues)
++	}
++}
++
++func TestValidate_NotAffectedNeedsJustification(t *testing.T) {
++	d := Build("acme", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusNotAffected},
++	})
++	issues := Validate(d)
++	if !hasIssue(issues, "requires a justification") {
++		t.Errorf("expected justification issue, got %v", issues)
++	}
++}
++
++func TestValidate_NotAffectedImpactStatementOK(t *testing.T) {
++	d := Build("acme", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusNotAffected, ImpactStatement: "endpoint unreachable"},
++	})
++	if issues := Validate(d); len(issues) != 0 {
++		t.Errorf("impact_statement should satisfy not_affected, got %v", issues)
++	}
++}
++
++func TestValidate_InvalidJustification(t *testing.T) {
++	d := Build("acme", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusNotAffected, Justification: "made_up"},
++	})
++	if !hasIssue(Validate(d), "invalid justification") {
++		t.Error("expected invalid justification issue")
++	}
++}
++
++func TestValidate_InvalidStatus(t *testing.T) {
++	d := Document{
++		Context:    contextURL,
++		Statements: []Statement{{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: "broken"}},
++	}
++	if !hasIssue(Validate(d), "invalid status") {
++		t.Error("expected invalid status issue")
++	}
++}
++
++func TestValidate_AffectedNeedsAction(t *testing.T) {
++	d := Build("acme", fixedNow, []Statement{
++		{Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusAffected},
++	})
++	if !hasIssue(Validate(d), "action_statement") {
++		t.Error("expected action_statement issue for affected")
++	}
++}
++
++func TestValidate_MissingName(t *testing.T) {
++	d := Document{
++		Context:    contextURL,
++		Statements: []Statement{{Status: StatusFixed}},
++	}
++	if !hasIssue(Validate(d), "vulnerability.name is required") {
++		t.Error("expected missing name issue")
++	}
++}
++
++func TestValidate_EmptyDocument(t *testing.T) {
++	issues := Validate(Document{})
++	if !hasIssue(issues, "missing @context") || !hasIssue(issues, "no statements") {
++		t.Errorf("expected context+statements issues, got %v", issues)
++	}
++}
++
++func hasIssue(issues []string, substr string) bool {
++	for _, s := range issues {
++		if strings.Contains(s, substr) {
++			return true
++		}
++	}
++	return false
++}
