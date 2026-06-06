@@ -234,10 +234,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..98c96ef 100644
+index 9b29eec..2179539 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,411 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,420 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -631,6 +631,15 @@ index 9b29eec..98c96ef 100644
 +    付加。server は元々全 call を `mcp_call_ok` で監査するが、本 record は提案の*内容*を残す。
 +    sink 未設定でも安全(no-op)。live dogfood: `record:true` → 監査ログに self_improve record、
 +    `yagura verify` OK(9 records, chain 健全)。テスト追加(record on/off / nil sink)。
++  - **軌跡の読み戻し(`audit.Read` + CLI `yagura self-improve-history`)**: 前段で「diff して
++    収束を確認できる」と謳った auditable memory を実際に消費可能にした。再利用可能な
++    `audit.Read(dir, kind)`(監査ログを時系列で読み、Kind で絞り込む。検証は Verify が担当)を
++    追加し、CLI `yagura self-improve-history` が `self_improve` record の軌跡(時刻 / severity 別
++    件数 / 提案数 / self_collected)を表示。先頭→末尾の high 件数から **converging / flat /
++    regressing** の trend を出すので、人間/CI が「ループが実際に改善しているか」を確認できる
++    (`--json` / `--limit`)。token 不要・disk 読みなので CLI direct mode に配置(MCP tool は
++    57 のまま)。テスト: `audit.Read`(kind filter / 時系列順 / 欠 dir)、CLI(空 / 2 件 +
++    converging trend / `--json`)。live dogfood: MCP で 2 回 record → CLI で読み戻し。
 +
 +### What's not yet
 +
@@ -784,10 +793,10 @@ index 986f84e..8a51c06 100644
  ├── .github/workflows/       # ci / codeql / release / scorecard
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..a9ebff8
+index 0000000..c44fc65
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,1366 @@
+@@ -0,0 +1,1398 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -853,7 +862,7 @@ index 0000000..a9ebff8
 +	"sbom": true, "secretscan": true, "gha-audit": true, "pin-drift": true,
 +	"skill-audit": true, "workflow-audit": true, "settings-audit": true,
 +	"agent-config-audit": true, "plugin-audit": true, "publicity-scan": true,
-+	"mcp-audit": true, "vex-audit": true,
++	"mcp-audit": true, "vex-audit": true, "self-improve-history": true,
 +}
 +
 +// runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -898,6 +907,8 @@ index 0000000..a9ebff8
 +		err = cliPublicityScan(args, stdout, stderr)
 +	case "vex-audit":
 +		err = cliVexAudit(args, stdout, stderr)
++	case "self-improve-history":
++		err = cliSelfImproveHistory(args, stdout, stderr)
 +	default:
 +		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 +		return 2
@@ -1985,6 +1996,36 @@ index 0000000..a9ebff8
 +	return paths, nil
 +}
 +
++// cliSelfImproveHistory は append-only 監査ログから `self_improve` record を時系列で
++// 読み出し、自己改善の軌跡(severity 別件数・提案数・self_collected)を表示する。
++// record=true で yagura_self_improve が刻んだ「auditable memory」を読み戻して、
++// 連続する評価を diff し収束(非 misevolution)を確認するための窓口(CI/script 向け)。
++// disk 走査 + token 不要なので CLI direct mode に置く。
++func cliSelfImproveHistory(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("self-improve-history", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	limit := fs.Int("limit", 0, "show only the last N assessments (0 = all)")
++	if err := fs.Parse(args); err != nil {
++		return errUsage
++	}
++	sd, err := config.ResolveStateDir()
++	if err != nil {
++		return err
++	}
++	recs, err := audit.Read(config.AuditDirFor(sd), "self_improve")
++	if err != nil {
++		return err
++	}
++	if *limit > 0 && len(recs) > *limit {
++		recs = recs[len(recs)-*limit:]
++	}
++	if *jsonOut {
++		return emitJSON(stdout, map[string]any{"count": len(recs), "assessments": recs})
++	}
++	humanSelfImproveHistory(stdout, recs)
++	return nil
++}
++
 +// ─── shared helpers ──────────────────────────────────────────
 +
 +// filterProjects は stage/tag/language/query で registry を絞り込む。
@@ -2156,10 +2197,10 @@ index 0000000..a9ebff8
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
 new file mode 100644
-index 0000000..4031312
+index 0000000..c4bc0ca
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
-@@ -0,0 +1,482 @@
+@@ -0,0 +1,542 @@
 +// cli_format.go: output formatters for CLI direct mode (v0.35.0).
 +//
 +// 2 つの出力経路:
@@ -2179,6 +2220,7 @@ index 0000000..4031312
 +	"text/tabwriter"
 +	"time"
 +
++	"github.com/shizukutanaka/yagura/internal/audit"
 +	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 +	"github.com/shizukutanaka/yagura/internal/harness"
 +	"github.com/shizukutanaka/yagura/internal/pindrift"
@@ -2627,6 +2669,65 @@ index 0000000..4031312
 +	return "X"
 +}
 +
++// ─── self-improve-history ────────────────────────────────────
++
++func humanSelfImproveHistory(w io.Writer, recs []audit.Record) {
++	fmt.Fprintf(w, "assessments: %d\n", len(recs))
++	if len(recs) == 0 {
++		fmt.Fprintln(w, "(none recorded — call yagura_self_improve with record=true to start the trajectory)")
++		return
++	}
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	fmt.Fprintln(tw, "WHEN\tHIGH\tMED\tLOW\tPROPOSALS\tSELF")
++	var firstHigh, lastHigh int
++	for i, r := range recs {
++		high, med, low, props := assessmentCounts(r)
++		if i == 0 {
++			firstHigh = high
++		}
++		lastHigh = high
++		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%v\n",
++			r.Time.UTC().Format(time.RFC3339), high, med, low, props, fieldBool(r, "self_collected"))
++	}
++	_ = tw.Flush()
++	if len(recs) >= 2 {
++		switch {
++		case lastHigh < firstHigh:
++			fmt.Fprintf(w, "trend: high-severity %d → %d (converging)\n", firstHigh, lastHigh)
++		case lastHigh > firstHigh:
++			fmt.Fprintf(w, "trend: high-severity %d → %d (regressing — investigate)\n", firstHigh, lastHigh)
++		default:
++			fmt.Fprintf(w, "trend: high-severity flat at %d\n", lastHigh)
++		}
++	}
++}
++
++// assessmentCounts は self_improve record の Fields から severity 別件数と提案数を取る。
++// Fields は JSON 由来なので数値は float64。欠損は 0 として扱う。
++func assessmentCounts(r audit.Record) (high, med, low, proposals int) {
++	if sev, ok := r.Fields["by_severity"].(map[string]any); ok {
++		high = mapNum(sev, "high")
++		med = mapNum(sev, "medium")
++		low = mapNum(sev, "low")
++	}
++	if ps, ok := r.Fields["proposals"].([]any); ok {
++		proposals = len(ps)
++	}
++	return
++}
++
++func mapNum(m map[string]any, k string) int {
++	if f, ok := m[k].(float64); ok {
++		return int(f)
++	}
++	return 0
++}
++
++func fieldBool(r audit.Record, k string) bool {
++	b, _ := r.Fields[k].(bool)
++	return b
++}
++
 +// ─── small helpers ───────────────────────────────────────────
 +
 +func dash(s string) string {
@@ -2644,10 +2745,10 @@ index 0000000..4031312
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
 new file mode 100644
-index 0000000..60f8d6e
+index 0000000..c1b9a23
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
-@@ -0,0 +1,746 @@
+@@ -0,0 +1,796 @@
 +package main
 +
 +import (
@@ -2659,6 +2760,7 @@ index 0000000..60f8d6e
 +	"testing"
 +
 +	"github.com/shizukutanaka/yagura/internal/audit"
++	"github.com/shizukutanaka/yagura/internal/config"
 +)
 +
 +// runCLICapture は YAGURA_STATE_DIR を tmp に向けて runCLI を実行し、出力を返す。
@@ -3394,6 +3496,55 @@ index 0000000..60f8d6e
 +		t.Errorf("missing dir: code=%d out=%q", code, mout)
 +	}
 +}
++
++func TestCLI_SelfImproveHistory(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("YAGURA_STATE_DIR", dir)
++	// empty: no records yet → exit 0, "assessments: 0"
++	if code, out, _ := runCLICapture(t, "self-improve-history"); code != 0 || !strings.Contains(out, "assessments: 0") {
++		t.Fatalf("empty history: code=%d out=%q", code, out)
++	}
++	// write two self_improve records directly into the audit log
++	sd, err := config.ResolveStateDir()
++	if err != nil {
++		t.Fatal(err)
++	}
++	log, err := audit.New(config.AuditDirFor(sd))
++	if err != nil {
++		t.Fatal(err)
++	}
++	mk := func(high int) audit.Record {
++		return audit.Record{Kind: "self_improve", Actor: "mcp", Target: "harness", Fields: map[string]any{
++			"by_severity": map[string]any{"high": high}, "proposals": []any{"reliability:x"}, "self_collected": true,
++		}}
++	}
++	if err := log.Append(mk(3)); err != nil {
++		t.Fatal(err)
++	}
++	if err := log.Append(mk(1)); err != nil {
++		t.Fatal(err)
++	}
++	_ = log.Close()
++
++	code, out, _ := runCLICapture(t, "self-improve-history")
++	if code != 0 {
++		t.Fatalf("history: code=%d", code)
++	}
++	if !strings.Contains(out, "assessments: 2") {
++		t.Errorf("expected 2 assessments, got:\n%s", out)
++	}
++	if !strings.Contains(out, "converging") {
++		t.Errorf("expected converging trend (high 3→1), got:\n%s", out)
++	}
++	// --json
++	_, jout, _ := runCLICapture(t, "self-improve-history", "--json")
++	var r struct {
++		Count int `json:"count"`
++	}
++	if err := json.Unmarshal([]byte(jout), &r); err != nil || r.Count != 2 {
++		t.Errorf("json count: err=%v r=%+v\n%s", err, r, jout)
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
 index cfb6e51..b66fdde 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
@@ -3417,7 +3568,7 @@ index cfb6e51..b66fdde 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..1fee4a9 100644
+index bd1fe39..97f9aea 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -3493,7 +3644,7 @@ index bd1fe39..1fee4a9 100644
  	}
  	if err := run(); err != nil {
  		fmt.Fprintf(stderr, "yagura: %v\n", err)
-@@ -128,6 +133,21 @@ Usage:
+@@ -128,6 +133,22 @@ Usage:
    yagura secret get <name>     Decrypt and print <name> to stdout
    yagura secret delete <name>  Remove <name>
  
@@ -3509,13 +3660,14 @@ index bd1fe39..1fee4a9 100644
 +  yagura mcp-audit [file]                  Audit .mcp.json / tools for poisoning & config risk
 +  yagura publicity-scan [path]             Pre-publish leak scan (home paths, internal hosts, IPs, emails)
 +  yagura vex-audit [dir]                   Validate OpenVEX docs/vex/*.json (--strict for CI)
++  yagura self-improve-history              Show the recorded RSI self-assessment trajectory
 +  Add --json to any of the above for machine-readable output.
 +  pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
 +
  Set passphrase via YAGURA_SECRET_PASSPHRASE for set/get.
  Configuration is via environment variables. See documentation.
  `
-@@ -135,10 +155,11 @@ Configuration is via environment variables. See documentation.
+@@ -135,10 +156,11 @@ Configuration is via environment variables. See documentation.
  // runSecret は `yagura secret <subcommand>` を処理する。
  //
  // Subcommands:
@@ -3531,7 +3683,7 @@ index bd1fe39..1fee4a9 100644
  //
  // パスフレーズは環境変数 YAGURA_SECRET_PASSPHRASE で渡す(CLI スクリプト向け)。
  // インタラクティブ tty 入力は echo OFF が無依存で困難なため未対応(将来作業)。
-@@ -152,11 +173,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
+@@ -152,11 +174,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
  		return nil
  	}
  
@@ -3546,7 +3698,7 @@ index bd1fe39..1fee4a9 100644
  	if err != nil {
  		return fmt.Errorf("init store: %w", err)
  	}
-@@ -239,15 +261,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
+@@ -239,15 +262,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
  // この関数は GITHUB_TOKEN を読まない — verify は通常運用とは独立して
  // オフラインでも実行できる(disaster recovery を意識)。
  func verifyAudit(out io.Writer) error {
@@ -3568,7 +3720,7 @@ index bd1fe39..1fee4a9 100644
  	results, err := audit.Verify(auditDir)
  	if err != nil {
  		return fmt.Errorf("verify: %w", err)
-@@ -610,15 +630,15 @@ func run() error {
+@@ -610,15 +631,15 @@ func run() error {
  	// 接続前に server capabilities を発見可能にする
  	mux.HandleFunc("/.well-known/mcp", func(w http.ResponseWriter, _ *http.Request) {
  		meta := map[string]any{
@@ -3590,7 +3742,7 @@ index bd1fe39..1fee4a9 100644
  			},
  			"capabilities": map[string]any{
  				"tools":               len(mcpServer.ToolNames()),
-@@ -637,18 +657,18 @@ func run() error {
+@@ -637,18 +658,18 @@ func run() error {
  	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
  	// v0.12.0: per-route rate limiting で DoS / PAT 枯渇を防止
  	sbomLimiter := httplimit.New(httplimit.Options{
@@ -3615,7 +3767,7 @@ index bd1fe39..1fee4a9 100644
  		KeyFn:           httplimit.TokenKey,
  	})
  	// 定期 GC で idle bucket を回収(メモリ leak 防止)
-@@ -761,8 +781,8 @@ type scannerMetricsAdapter struct {
+@@ -761,8 +782,8 @@ type scannerMetricsAdapter struct {
  	lastAt   *metrics.Gauge
  }
  
@@ -3933,10 +4085,10 @@ index 97c6e62..292f3dd 100644
 +VEX file fails the build before release (OSPS-VM-04.02, Level 3).
 diff --git a/yagura-v0.35.0/docs/self-improvement.md b/yagura-v0.35.0/docs/self-improvement.md
 new file mode 100644
-index 0000000..c0c1052
+index 0000000..5c42cc1
 --- /dev/null
 +++ b/yagura-v0.35.0/docs/self-improvement.md
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,145 @@
 +# Self-Improvement in Yagura (bounded, deterministic RSI)
 +
 +How Yagura incorporates **recursive self-improvement (RSI)** without becoming
@@ -4053,6 +4205,17 @@ index 0000000..c0c1052
 +/ the proposal ids). The response echoes `"recorded": true`. Each recorded
 +assessment becomes a tamper-evident entry you can later replay with
 +`yagura verify` and diff over time — the durable memory that safe RSI requires.
++
++Read the trajectory back with the CLI (no daemon needed — it reads the same
++audit dir):
++
++```bash
++yagura self-improve-history          # timeline: when / high·med·low / proposals / self
++yagura self-improve-history --json   # machine-readable; --limit N for the last N
++```
++
++It prints a `trend` line (high-severity first→last: converging / flat /
++regressing) so a human or CI step can confirm the loop is actually improving.
 +
 +This is the loop closed in practice: the harness observes itself, with no
 +hand-assembled snapshot. A caller stashing the previous window's stats can pass
@@ -4868,6 +5031,114 @@ index 0000000..d5f9fd6
 +		}
 +	}
 +	noTempLeak(t, dir)
++}
+diff --git a/yagura-v0.35.0/internal/audit/audit.go b/yagura-v0.35.0/internal/audit/audit.go
+index 300bb01..38b213b 100644
+--- a/yagura-v0.35.0/internal/audit/audit.go
++++ b/yagura-v0.35.0/internal/audit/audit.go
+@@ -232,6 +232,52 @@ func Verify(dir string) ([]VerifyResult, error) {
+ 	return results, nil
+ }
+ 
++// Read は dir 内の全 *.jsonl を日付順(ファイル名昇順=時系列)に読み、record を返す。
++// kind != "" のときはその Kind の record だけを返す。整合性検証はしない(Verify が担う)。
++// ディレクトリ不在は空スライス(エラーではない)。壊れた行に当たった場合は、そこまでに
++// 読めた record と error を返す(best-effort 読出)。
++func Read(dir, kind string) ([]Record, error) {
++	entries, err := os.ReadDir(dir)
++	if err != nil {
++		if errors.Is(err, os.ErrNotExist) {
++			return nil, nil
++		}
++		return nil, fmt.Errorf("read dir: %w", err)
++	}
++	var files []string
++	for _, e := range entries {
++		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
++			continue
++		}
++		files = append(files, filepath.Join(dir, e.Name()))
++	}
++	sort.Strings(files)
++
++	var out []Record
++	for _, p := range files {
++		f, err := os.Open(p) //nolint:gosec
++		if err != nil {
++			return out, fmt.Errorf("open %s: %w", p, err)
++		}
++		dec := json.NewDecoder(f)
++		for {
++			var r Record
++			if derr := dec.Decode(&r); derr != nil {
++				if errors.Is(derr, io.EOF) {
++					break
++				}
++				f.Close()
++				return out, fmt.Errorf("decode %s: %w", p, derr)
++			}
++			if kind == "" || r.Kind == kind {
++				out = append(out, r)
++			}
++		}
++		f.Close()
++	}
++	return out, nil
++}
++
+ func verifyFile(path string) VerifyResult {
+ 	res := VerifyResult{File: path}
+ 	f, err := os.Open(path) //nolint:gosec
+diff --git a/yagura-v0.35.0/internal/audit/audit_test.go b/yagura-v0.35.0/internal/audit/audit_test.go
+index 41c6e93..4640e1b 100644
+--- a/yagura-v0.35.0/internal/audit/audit_test.go
++++ b/yagura-v0.35.0/internal/audit/audit_test.go
+@@ -517,3 +517,46 @@ func TestWithHashField_InvalidShape(t *testing.T) {
+ 		}
+ 	}
+ }
++
++func TestRead_FilterByKind(t *testing.T) {
++	dir := t.TempDir()
++	l, err := New(dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, k := range []string{"self_improve", "mcp_call_ok", "self_improve"} {
++		if err := l.Append(Record{Kind: k, Actor: "mcp", Target: "harness"}); err != nil {
++			t.Fatal(err)
++		}
++	}
++	_ = l.Close()
++
++	all, err := Read(dir, "")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(all) != 3 {
++		t.Errorf("expected 3 records, got %d", len(all))
++	}
++	si, err := Read(dir, "self_improve")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(si) != 2 {
++		t.Errorf("expected 2 self_improve records, got %d", len(si))
++	}
++	// chronological order preserved (seq ascending)
++	if si[0].Seq >= si[1].Seq {
++		t.Errorf("records not in chronological order: %d, %d", si[0].Seq, si[1].Seq)
++	}
++}
++
++func TestRead_MissingDir(t *testing.T) {
++	recs, err := Read(filepath.Join(t.TempDir(), "nope"), "")
++	if err != nil {
++		t.Errorf("missing dir should not error, got %v", err)
++	}
++	if len(recs) != 0 {
++		t.Errorf("expected 0 records, got %d", len(recs))
++	}
 +}
 diff --git a/yagura-v0.35.0/internal/config/config.go b/yagura-v0.35.0/internal/config/config.go
 index af23d66..6b601a7 100644
