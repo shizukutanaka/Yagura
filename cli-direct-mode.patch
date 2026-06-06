@@ -126,7 +126,7 @@ index 47411e5..9739b1c 100644
      labels:
        - dependencies
 diff --git a/yagura-v0.35.0/.github/workflows/ci.yml b/yagura-v0.35.0/.github/workflows/ci.yml
-index 63e57d5..8f5bc16 100644
+index 63e57d5..d938de1 100644
 --- a/yagura-v0.35.0/.github/workflows/ci.yml
 +++ b/yagura-v0.35.0/.github/workflows/ci.yml
 @@ -27,10 +27,10 @@ jobs:
@@ -177,7 +177,7 @@ index 63e57d5..8f5bc16 100644
          with:
            go-version-file: go.mod
            cache: true
-@@ -107,3 +107,35 @@ jobs:
+@@ -107,3 +107,40 @@ jobs:
  
        - name: Fuzz aiverify.Scan
          run: go test -fuzz=FuzzScan -fuzztime=10s ./internal/aiverify/
@@ -213,6 +213,11 @@ index 63e57d5..8f5bc16 100644
 +          ./yagura settings-audit --dir .claude --min-score 90
 +          ./yagura plugin-audit .claude-plugin/plugin.json --min-score 90
 +          ./yagura plugin-audit .claude-plugin/marketplace.json --min-score 90
++
++      # Published VEX statements (docs/vex/*.json) must stay structurally
++      # conformant per docs/vex-spec.md. --strict fails on any bad file.
++      - name: VEX validation (docs/vex)
++        run: ./yagura vex-audit --dir docs/vex --strict
 diff --git a/yagura-v0.35.0/.github/workflows/release.yml b/yagura-v0.35.0/.github/workflows/release.yml
 index 6fc4715..34fe274 100644
 --- a/yagura-v0.35.0/.github/workflows/release.yml
@@ -229,10 +234,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..d7006bd 100644
+index 9b29eec..723a9c4 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,343 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,369 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -559,6 +564,32 @@ index 9b29eec..d7006bd 100644
 +  Merge(新規追加+既存保持 / no-op 冪等 / 決定論 / 空 base)+ tool テスト
 +  (`internal/vex` 98.7%)。live dogfood 済み(Build + Merge 両方)。`MCP_TOOLS.md` 再生成。
 +
++- **VEX 仕様書 + spec↔実装ギャップの解消(`docs/vex-spec.md` / `yagura vex-audit`)**。
++  「仕様書を作り不足を見つけ実装」: `security-spec.md` と `docs/vex/README.md` は VEX 文書の
++  `docs/vex/*.json` 公開を **mandate** しているのに、(1) それを検証する手段が無く(手書きの
++  example + template のみで rot し放題)、(2) 検証手順は外部ツール `vexctl@latest`(要 network、
++  ADR-0001 違反)を指していた。さらに新 `internal/vex` モデルは spec 記載の `example.json` を
++  **表現できなかった**(vuln `@id` / product `subcomponents` / doc `tooling` を round-trip で
++  脱落)。
++  - **仕様書** `docs/vex-spec.md`(normative): OpenVEX v0.2.0 subset / データモデル /
++    Build・Merge・Validate・ParseAndValidate の契約 / 決定論保証 / `docs/vex/` 慣習 / lint 規則 /
++    CLI・MCP サーフェス / CI gate / OSPS-VM-04.02 対応 / scope 外。
++  - **型拡張**(後方互換、全 omitempty): `Vuln.@id`、`Product.subcomponents`(`Subcomponent{@id}`、
++    例 `pkg:golang/net/http`)、`Document.tooling`。`yagura_vex` も `vuln_id` / `subcomponents` /
++    `tooling` を受け、Go stdlib CVE を subcomponent 粒度で表現できるように(Yagura の本来用途)。
++  - **`vex.ParseAndValidate(data)`**: OpenVEX JSON を読み構造 lint(JSON 破損のみ error)。
++    `Validate` に product `@id` 欠落チェックを追加。
++  - **CLI `yagura vex-audit [dir]`**(既定 `docs/vex`): `*.json` を再帰検証し、`--strict` で
++    1 件でも不正なら非ゼロ終了(CI gate)、`--json` 対応。disk 走査なので他 audit 同様 CLI 専用
++    (MCP tool は増やさず 56 のまま)。`docs/vex/README.md` の検証手順を `vexctl` から native な
++    `vex-audit` に差し替え。
++  - **CI**: `publish-gate` に `vex-audit --dir docs/vex --strict` を追加。公開する VEX 文書が
++    不正 status / justification 欠落 / 壊れた JSON で release を通らないよう守る。
++  - tool 数 56 不変、stdlib のみ(ADR-0001)。テスト: ParseAndValidate(正常 / JSON 破損 /
++    構造問題)、product `@id` 欠落、CLI vex-audit(clean / 不正混在 / `--strict` / 欠 dir graceful /
++    `--json`)。`internal/vex` 98.8%。live dogfood: `yagura vex-audit docs/vex` → example.json
++    通過。`MCP_TOOLS.md` 再生成。
++
 +### What's not yet
 +
 +- `vulns` / `scorecard` の CLG 化(現状 sensor で scanner 専用)。
@@ -577,10 +608,10 @@ index 9b29eec..d7006bd 100644
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
 diff --git a/yagura-v0.35.0/CLAUDE.md b/yagura-v0.35.0/CLAUDE.md
-index bc406e1..e68afbd 100644
+index bc406e1..36d2751 100644
 --- a/yagura-v0.35.0/CLAUDE.md
 +++ b/yagura-v0.35.0/CLAUDE.md
-@@ -21,19 +21,21 @@ cortex flywheel 4 段階すべてを単体で機械化:
+@@ -21,19 +21,23 @@ cortex flywheel 4 段階すべてを単体で機械化:
  - マルチエージェント orchestrator(MCP server 一品)
  - code generation tool(yagura は audit/orchestrate のみ)
  
@@ -600,11 +631,13 @@ index bc406e1..e68afbd 100644
  - `internal/secretscan` — gitleaks-like secret 検出
 +- `internal/publicityscan` — 公開前 leak 検出(home パス/内部 host/private IP/email)★ v0.35
  - `internal/sbom` — CycloneDX SBOM 生成
-+- `internal/vex` — OpenVEX v0.2.0 文書の決定論的生成 + 構造 lint(SBOM 過剰報告の補完)★ v0.35
++- `internal/vex` — OpenVEX v0.2.0 文書の決定論的生成(Build/Merge)+ 構造 lint
++  (Validate/ParseAndValidate)。spec: `docs/vex-spec.md`。CLI `vex-audit` が
++  `docs/vex/*.json` を CI 検証(SBOM 過剰報告の補完)★ v0.35
  - `internal/ghaaudit` — GitHub Actions workflow audit
  - `internal/pindrift` — 依存 pin 漏れ検出
  - `internal/aiverify` — AI 生成 code の risk pattern 検出 ★ v0.25
-@@ -49,7 +51,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
+@@ -49,7 +53,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
  - `internal/handoff` — handoff session management
  - `internal/agentlauncher` — agent process spawn
  - `internal/workspace` — session save/load
@@ -619,7 +652,7 @@ index bc406e1..e68afbd 100644
  ### Graph / dependencies
  - `internal/projectgraph` — depends_on graph(neighbors / impact / stats)
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..4892a7d 100644
+index 986f84e..a7ae908 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -696,12 +729,20 @@ index 986f84e..4892a7d 100644
  
  Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
  
+@@ -239,6 +256,7 @@ sha256sum -c SHA256SUMS
+ │   ├── MCP_TOOLS.md
+ │   ├── WINDOWS.md
+ │   ├── security-spec.md
++│   ├── vex-spec.md          # VEX subsystem specification (normative)
+ │   └── vex/                 # VEX statements for transitive deps
+ ├── deploy/                  # Dockerfile, systemd unit, container manifests
+ ├── .github/workflows/       # ci / codeql / release / scorecard
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
-index 0000000..47b38c5
+index 0000000..a9ebff8
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli.go
-@@ -0,0 +1,1272 @@
+@@ -0,0 +1,1366 @@
 +// cli.go: yagura v0.35 "CLI direct mode".
 +//
 +// 動機 (v0.35.0):
@@ -749,6 +790,7 @@ index 0000000..47b38c5
 +	"github.com/shizukutanaka/yagura/internal/registry"
 +	"github.com/shizukutanaka/yagura/internal/sbom"
 +	"github.com/shizukutanaka/yagura/internal/secretscan"
++	"github.com/shizukutanaka/yagura/internal/vex"
 +)
 +
 +// mainModulePath は sbom 生成対象(yagura 自身)の module path。
@@ -766,7 +808,7 @@ index 0000000..47b38c5
 +	"sbom": true, "secretscan": true, "gha-audit": true, "pin-drift": true,
 +	"skill-audit": true, "workflow-audit": true, "settings-audit": true,
 +	"agent-config-audit": true, "plugin-audit": true, "publicity-scan": true,
-+	"mcp-audit": true,
++	"mcp-audit": true, "vex-audit": true,
 +}
 +
 +// runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -809,6 +851,8 @@ index 0000000..47b38c5
 +		err = cliMCPAudit(args, stdout, stderr)
 +	case "publicity-scan":
 +		err = cliPublicityScan(args, stdout, stderr)
++	case "vex-audit":
++		err = cliVexAudit(args, stdout, stderr)
 +	default:
 +		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 +		return 2
@@ -1805,6 +1849,97 @@ index 0000000..47b38c5
 +	return paths, nil
 +}
 +
++// vexAuditEntry は 1 つの OpenVEX JSON ファイルの検証結果(path 付き)。
++type vexAuditEntry struct {
++	Path       string   `json:"path"`
++	OK         bool     `json:"ok"`
++	Statements int      `json:"statements"`
++	Issues     []string `json:"issues,omitempty"`
++	Error      string   `json:"error,omitempty"` // JSON parse 失敗時のみ
++}
++
++// cliVexAudit は dir 配下の OpenVEX *.json(security-spec.md が mandate する
++// docs/vex/vex-CVE-*.json)を構造検証する。spec が公開を義務付ける VEX 文書が
++// rot(不正 status / justification 欠落 / 壊れた JSON)しないよう CI で守るための
++// gate。disk 走査なので skill-audit 等と同じく CLI 側に置く(MCP tool は増やさない)。
++// OSPS-VM-04.02(非該当脆弱性を VEX 形式で文書化)の検証点。
++func cliVexAudit(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("vex-audit", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	dir := fs.String("dir", "docs/vex", "directory to scan for OpenVEX *.json files")
++	strict := fs.Bool("strict", false, "exit non-zero if any file fails validation (CI gate)")
++	rest, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	target := *dir
++	if len(rest) > 0 {
++		target = rest[0]
++	}
++	paths, err := findVexFiles(target)
++	if err != nil {
++		return err
++	}
++	entries := make([]vexAuditEntry, 0, len(paths))
++	flagged := 0
++	for _, p := range paths {
++		data, rerr := os.ReadFile(p)
++		if rerr != nil {
++			return fmt.Errorf("read %s: %w", p, rerr)
++		}
++		doc, issues, perr := vex.ParseAndValidate(data)
++		e := vexAuditEntry{Path: p, Statements: len(doc.Statements), Issues: issues}
++		if perr != nil {
++			e.Error = perr.Error()
++			e.OK = false
++		} else {
++			e.OK = len(issues) == 0
++		}
++		if !e.OK {
++			flagged++
++		}
++		entries = append(entries, e)
++	}
++	if *jsonOut {
++		if err := emitJSON(stdout, map[string]any{
++			"scanned": len(paths),
++			"flagged": flagged,
++			"files":   entries,
++		}); err != nil {
++			return err
++		}
++	} else {
++		humanVexAudit(stdout, entries, len(paths), flagged)
++	}
++	if *strict && flagged > 0 {
++		return fmt.Errorf("%d VEX file(s) failed validation — failing because --strict is set", flagged)
++	}
++	return nil
++}
++
++// findVexFiles は dir 配下(再帰)の *.json を path 昇順で返す。
++// dir が無ければ空(エラーにしない — 他 audit と同じ graceful 挙動)。
++func findVexFiles(dir string) ([]string, error) {
++	if _, err := os.Stat(dir); os.IsNotExist(err) {
++		return nil, nil
++	}
++	var paths []string
++	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
++		if err != nil {
++			return err
++		}
++		if !d.IsDir() && strings.EqualFold(filepath.Ext(p), ".json") {
++			paths = append(paths, p)
++		}
++		return nil
++	})
++	if err != nil {
++		return nil, fmt.Errorf("walk %s: %w", dir, err)
++	}
++	sort.Strings(paths)
++	return paths, nil
++}
++
 +// ─── shared helpers ──────────────────────────────────────────
 +
 +// filterProjects は stage/tag/language/query で registry を絞り込む。
@@ -1976,10 +2111,10 @@ index 0000000..47b38c5
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_format.go b/yagura-v0.35.0/cmd/yagura/cli_format.go
 new file mode 100644
-index 0000000..27d6536
+index 0000000..4031312
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_format.go
-@@ -0,0 +1,452 @@
+@@ -0,0 +1,482 @@
 +// cli_format.go: output formatters for CLI direct mode (v0.35.0).
 +//
 +// 2 つの出力経路:
@@ -2417,6 +2552,36 @@ index 0000000..27d6536
 +	}
 +}
 +
++// ─── vex-audit ───────────────────────────────────────────────
++
++func humanVexAudit(w io.Writer, entries []vexAuditEntry, scanned, flagged int) {
++	fmt.Fprintf(w, "scanned: %d   flagged: %d\n", scanned, flagged)
++	if scanned == 0 {
++		return
++	}
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	fmt.Fprintln(tw, "OK\tSTMTS\tPATH")
++	for _, e := range entries {
++		fmt.Fprintf(tw, "%s\t%d\t%s\n", yesNoMark(e.OK), e.Statements, e.Path)
++	}
++	_ = tw.Flush()
++	for _, e := range entries {
++		if e.Error != "" {
++			fmt.Fprintf(w, "  %s: parse error: %s\n", e.Path, e.Error)
++		}
++		for _, iss := range e.Issues {
++			fmt.Fprintf(w, "  %s: %s\n", e.Path, iss)
++		}
++	}
++}
++
++func yesNoMark(ok bool) string {
++	if ok {
++		return "ok"
++	}
++	return "X"
++}
++
 +// ─── small helpers ───────────────────────────────────────────
 +
 +func dash(s string) string {
@@ -2434,10 +2599,10 @@ index 0000000..27d6536
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli_test.go b/yagura-v0.35.0/cmd/yagura/cli_test.go
 new file mode 100644
-index 0000000..ca05221
+index 0000000..60f8d6e
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/cli_test.go
-@@ -0,0 +1,682 @@
+@@ -0,0 +1,746 @@
 +package main
 +
 +import (
@@ -3120,6 +3285,70 @@ index 0000000..ca05221
 +		t.Errorf("missing file: code=%d out=%q", code, mout)
 +	}
 +}
++
++func TestCLI_VexAudit(t *testing.T) {
++	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
++	dir := t.TempDir()
++	// a valid OpenVEX doc
++	good := `{"@context":"https://openvex.dev/ns/v0.2.0","@id":"urn:1","author":"acme",
++		"timestamp":"2026-06-06T12:00:00Z","version":1,
++		"statements":[{"vulnerability":{"name":"CVE-2025-0001"},"products":[{"@id":"pkg:github/acme/x"}],
++		"status":"not_affected","justification":"component_not_present"}]}`
++	// an invalid one: not_affected without justification/impact
++	bad := `{"@context":"https://openvex.dev/ns/v0.2.0","@id":"urn:2","author":"acme",
++		"timestamp":"2026-06-06T12:00:00Z","version":1,
++		"statements":[{"vulnerability":{"name":"CVE-2025-0002"},"status":"not_affected"}]}`
++	// malformed JSON
++	broken := `{ not json`
++	for name, body := range map[string]string{
++		"vex-CVE-2025-0001.json": good,
++		"vex-CVE-2025-0002.json": bad,
++		"vex-broken.json":        broken,
++	} {
++		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++
++	code, out, _ := runCLICapture(t, "vex-audit", "--dir", dir, "--json")
++	if code != 0 {
++		t.Fatalf("vex-audit (non-strict) should exit 0, got %d", code)
++	}
++	var r struct {
++		Scanned int `json:"scanned"`
++		Flagged int `json:"flagged"`
++		Files   []struct {
++			Path  string `json:"path"`
++			OK    bool   `json:"ok"`
++			Error string `json:"error"`
++		} `json:"files"`
++	}
++	if err := json.Unmarshal([]byte(out), &r); err != nil {
++		t.Fatalf("json: %v\n%s", err, out)
++	}
++	if r.Scanned != 3 || r.Flagged != 2 {
++		t.Errorf("expected scanned=3 flagged=2, got %+v", r)
++	}
++
++	// --strict must fail because 2 files are invalid.
++	if code, _, _ := runCLICapture(t, "vex-audit", "--dir", dir, "--strict"); code == 0 {
++		t.Error("--strict should fail when files are invalid")
++	}
++
++	// a clean dir → exit 0 even under --strict.
++	clean := t.TempDir()
++	if err := os.WriteFile(filepath.Join(clean, "vex-CVE-2025-0001.json"), []byte(good), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	if code, _, _ := runCLICapture(t, "vex-audit", "--dir", clean, "--strict"); code != 0 {
++		t.Error("--strict should pass on a clean dir")
++	}
++
++	// missing dir → scanned 0, exit 0.
++	if code, mout, _ := runCLICapture(t, "vex-audit", "--dir", filepath.Join(dir, "nope")); code != 0 || !strings.Contains(mout, "scanned: 0") {
++		t.Errorf("missing dir: code=%d out=%q", code, mout)
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
 index cfb6e51..d10d9fa 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
@@ -3141,10 +3370,63 @@ index cfb6e51..d10d9fa 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..66360cc 100644
+index bd1fe39..1fee4a9 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
-@@ -57,7 +57,7 @@ import (
+@@ -10,6 +10,7 @@
+ //  7. MCP server + 5 tools 登録
+ //  8. Dashboard handler
+ //  9. HTTP server(/healthz /readyz /metrics /mcp /dashboard /debug/pprof)
++//
+ // 10. SIGTERM 受信で graceful shutdown
+ package main
+ 
+@@ -22,42 +23,42 @@ import (
+ 	"net/http"
+ 	"net/http/pprof"
+ 	"os"
+-	"path/filepath"
+ 	"os/signal"
++	"path/filepath"
+ 	"runtime"
+ 	"strings"
+ 	"sync/atomic"
+ 	"time"
+ 
++	"github.com/shizukutanaka/yagura/internal/agentlauncher"
+ 	"github.com/shizukutanaka/yagura/internal/alertfix"
+ 	"github.com/shizukutanaka/yagura/internal/audit"
+ 	"github.com/shizukutanaka/yagura/internal/config"
+ 	"github.com/shizukutanaka/yagura/internal/dashboard"
+-	"github.com/shizukutanaka/yagura/internal/hookreceiver"
++	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+ 	"github.com/shizukutanaka/yagura/internal/github"
++	"github.com/shizukutanaka/yagura/internal/handoff"
++	"github.com/shizukutanaka/yagura/internal/hookreceiver"
++	"github.com/shizukutanaka/yagura/internal/httplimit"
+ 	"github.com/shizukutanaka/yagura/internal/logging"
+ 	"github.com/shizukutanaka/yagura/internal/mcp"
+-	"github.com/shizukutanaka/yagura/internal/promexport"
+ 	"github.com/shizukutanaka/yagura/internal/metrics"
+ 	"github.com/shizukutanaka/yagura/internal/osv"
++	"github.com/shizukutanaka/yagura/internal/pindrift"
++	"github.com/shizukutanaka/yagura/internal/promexport"
++	"github.com/shizukutanaka/yagura/internal/quotamonitor"
+ 	"github.com/shizukutanaka/yagura/internal/registry"
++	"github.com/shizukutanaka/yagura/internal/sbom"
+ 	"github.com/shizukutanaka/yagura/internal/scanner"
+ 	"github.com/shizukutanaka/yagura/internal/scorecard"
+ 	"github.com/shizukutanaka/yagura/internal/secrets"
+ 	"github.com/shizukutanaka/yagura/internal/secretscan"
+-	"github.com/shizukutanaka/yagura/internal/agentlauncher"
+-	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+-	"github.com/shizukutanaka/yagura/internal/handoff"
+-	"github.com/shizukutanaka/yagura/internal/httplimit"
+-	"github.com/shizukutanaka/yagura/internal/pindrift"
+-	"github.com/shizukutanaka/yagura/internal/quotamonitor"
+-	"github.com/shizukutanaka/yagura/internal/sbom"
+ 	"github.com/shizukutanaka/yagura/internal/workspace"
+ )
  
  const (
  	serviceName = "yagura"
@@ -3153,7 +3435,7 @@ index bd1fe39..66360cc 100644
  
  	// graceful shutdown 関連
  	readyDrainGrace   = 5 * time.Second
-@@ -108,6 +108,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
+@@ -108,6 +109,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
  			}
  			return 0
  		}
@@ -3164,7 +3446,7 @@ index bd1fe39..66360cc 100644
  	}
  	if err := run(); err != nil {
  		fmt.Fprintf(stderr, "yagura: %v\n", err)
-@@ -128,6 +132,20 @@ Usage:
+@@ -128,6 +133,21 @@ Usage:
    yagura secret get <name>     Decrypt and print <name> to stdout
    yagura secret delete <name>  Remove <name>
  
@@ -3179,13 +3461,30 @@ index bd1fe39..66360cc 100644
 +  yagura plugin-audit [file]               Audit Claude Code plugin.json / marketplace.json
 +  yagura mcp-audit [file]                  Audit .mcp.json / tools for poisoning & config risk
 +  yagura publicity-scan [path]             Pre-publish leak scan (home paths, internal hosts, IPs, emails)
++  yagura vex-audit [dir]                   Validate OpenVEX docs/vex/*.json (--strict for CI)
 +  Add --json to any of the above for machine-readable output.
 +  pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
 +
  Set passphrase via YAGURA_SECRET_PASSPHRASE for set/get.
  Configuration is via environment variables. See documentation.
  `
-@@ -152,11 +170,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
+@@ -135,10 +155,11 @@ Configuration is via environment variables. See documentation.
+ // runSecret は `yagura secret <subcommand>` を処理する。
+ //
+ // Subcommands:
+-//   set <name>    — stdin から plaintext を読込み、暗号化保存
+-//   get <name>    — 復号して stdout に出力
+-//   list          — 名前一覧を改行区切りで出力
+-//   delete <name> — 削除
++//
++//	set <name>    — stdin から plaintext を読込み、暗号化保存
++//	get <name>    — 復号して stdout に出力
++//	list          — 名前一覧を改行区切りで出力
++//	delete <name> — 削除
+ //
+ // パスフレーズは環境変数 YAGURA_SECRET_PASSPHRASE で渡す(CLI スクリプト向け)。
+ // インタラクティブ tty 入力は echo OFF が無依存で困難なため未対応(将来作業)。
+@@ -152,11 +173,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
  		return nil
  	}
  
@@ -3200,7 +3499,7 @@ index bd1fe39..66360cc 100644
  	if err != nil {
  		return fmt.Errorf("init store: %w", err)
  	}
-@@ -239,15 +258,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
+@@ -239,15 +261,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
  // この関数は GITHUB_TOKEN を読まない — verify は通常運用とは独立して
  // オフラインでも実行できる(disaster recovery を意識)。
  func verifyAudit(out io.Writer) error {
@@ -3222,6 +3521,64 @@ index bd1fe39..66360cc 100644
  	results, err := audit.Verify(auditDir)
  	if err != nil {
  		return fmt.Errorf("verify: %w", err)
+@@ -610,15 +630,15 @@ func run() error {
+ 	// 接続前に server capabilities を発見可能にする
+ 	mux.HandleFunc("/.well-known/mcp", func(w http.ResponseWriter, _ *http.Request) {
+ 		meta := map[string]any{
+-			"name":     "yagura",
+-			"version":  version,
+-			"protocol": "mcp/2025-11",
++			"name":      "yagura",
++			"version":   version,
++			"protocol":  "mcp/2025-11",
+ 			"transport": []string{"http"},
+ 			"endpoints": map[string]string{
+-				"mcp":              "/mcp",
++				"mcp":               "/mcp",
+ 				"hooks_claude_code": "/hooks/claude-code",
+-				"metrics":          "/metrics",
+-				"dashboard":        "/dashboard",
++				"metrics":           "/metrics",
++				"dashboard":         "/dashboard",
+ 			},
+ 			"capabilities": map[string]any{
+ 				"tools":               len(mcpServer.ToolNames()),
+@@ -637,18 +657,18 @@ func run() error {
+ 	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
+ 	// v0.12.0: per-route rate limiting で DoS / PAT 枯渇を防止
+ 	sbomLimiter := httplimit.New(httplimit.Options{
+-		Capacity:        10,   // burst 10
+-		RefillPerMinute: 60,   // 1/sec sustained
++		Capacity:        10, // burst 10
++		RefillPerMinute: 60, // 1/sec sustained
+ 		KeyFn:           httplimit.TokenKey,
+ 	})
+ 	ghaAuditLimiter := httplimit.New(httplimit.Options{
+-		Capacity:        5,    // CPU-bound, smaller burst
+-		RefillPerMinute: 30,   // 1 per 2 sec
++		Capacity:        5,  // CPU-bound, smaller burst
++		RefillPerMinute: 30, // 1 per 2 sec
+ 		KeyFn:           httplimit.TokenKey,
+ 	})
+ 	pinDriftLimiter := httplimit.New(httplimit.Options{
+-		Capacity:        3,    // GitHub PAT 保護のため最も厳しく
+-		RefillPerMinute: 6,    // 1 per 10 sec sustained
++		Capacity:        3, // GitHub PAT 保護のため最も厳しく
++		RefillPerMinute: 6, // 1 per 10 sec sustained
+ 		KeyFn:           httplimit.TokenKey,
+ 	})
+ 	// 定期 GC で idle bucket を回収(メモリ leak 防止)
+@@ -761,8 +781,8 @@ type scannerMetricsAdapter struct {
+ 	lastAt   *metrics.Gauge
+ }
+ 
+-func (a *scannerMetricsAdapter) IncScanned()                       { a.scanned.Inc() }
+-func (a *scannerMetricsAdapter) IncFailed()                        { a.failed.Inc() }
++func (a *scannerMetricsAdapter) IncScanned() { a.scanned.Inc() }
++func (a *scannerMetricsAdapter) IncFailed()  { a.failed.Inc() }
+ func (a *scannerMetricsAdapter) SetLastScanDuration(d time.Duration) {
+ 	a.duration.Set(d.Milliseconds())
+ }
 diff --git a/yagura-v0.35.0/cmd/yagura/main_test.go b/yagura-v0.35.0/cmd/yagura/main_test.go
 index f923a14..5cdb82b 100644
 --- a/yagura-v0.35.0/cmd/yagura/main_test.go
@@ -3236,7 +3593,7 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..05fecb2 100644
+index 689c182..a21c996 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
@@ -3426,7 +3783,7 @@ index 689c182..05fecb2 100644
  ### `yagura_token_stats`
  
  [S] Per-tool byte counts since daemon start.
-@@ -397,6 +514,32 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -397,6 +514,33 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -3441,6 +3798,7 @@ index 689c182..05fecb2 100644
 +| `author` (string) |  | VEX author identity (default 'yagura'). |
 +| `base` (object) |  | optional existing OpenVEX doc; statements are merged in (new vulns only, existing verdicts preserved, version bumped). |
 +| `statements` (array) | ★ | per-vulnerability statements. |
++| `tooling` (string) |  | optional tool identifier that produced this doc. |
 +
 +---
 +
@@ -3459,7 +3817,7 @@ index 689c182..05fecb2 100644
  ## Observability
  
  ### `yagura_agent_status`
-@@ -576,7 +719,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -576,7 +720,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -3494,6 +3852,232 @@ index c9b0baf..bb6c735 100644
  │  │   plan_md_step: "Phase 2 — testing",                   │  │
  │  │   open_todos: [...], active_files: [...]               │  │
  │  │ })                                                      │  │
+diff --git a/yagura-v0.35.0/docs/security-spec.md b/yagura-v0.35.0/docs/security-spec.md
+index 97c6e62..292f3dd 100644
+--- a/yagura-v0.35.0/docs/security-spec.md
++++ b/yagura-v0.35.0/docs/security-spec.md
+@@ -142,3 +142,10 @@ Yagura's runtime dependency graph is exactly the Go standard library. When
+ CVEs are reported against Go itself, we publish VEX statements at
+ `docs/vex/` indicating whether each is exploitable in the context of
+ Yagura's usage. See [`docs/vex/README.md`](vex/README.md).
++
++These statements are generated and validated **natively** — no external
++tooling, no network (ADR-0001). The OpenVEX subset, the build/merge/validate
++contract, the on-disk convention, and the CI gate are specified normatively in
++[`docs/vex-spec.md`](vex-spec.md). The `publish-gate` CI job runs
++`yagura vex-audit --dir docs/vex --strict`, so a malformed or non-conformant
++VEX file fails the build before release (OSPS-VM-04.02, Level 3).
+diff --git a/yagura-v0.35.0/docs/vex-spec.md b/yagura-v0.35.0/docs/vex-spec.md
+new file mode 100644
+index 0000000..d7488b4
+--- /dev/null
++++ b/yagura-v0.35.0/docs/vex-spec.md
+@@ -0,0 +1,174 @@
++# Yagura VEX Specification
++
++Status: **Normative** for `internal/vex`, the `yagura_vex` MCP tool, the
++`yagura vex-audit` CLI, and the `docs/vex/` artifact directory.
++Version: 1.0 (aligns with Yagura v0.35.0).
++
++This document specifies how Yagura **produces, maintains, and validates**
++[OpenVEX](https://openvex.dev) (Vulnerability Exploitability eXchange)
++documents. It complements [`security-spec.md`](security-spec.md) (which
++*mandates* publishing VEX statements) and [`vex/README.md`](vex/README.md)
++(the on-disk convention). Where this document and those disagree, this
++document wins for the implementation; `vex/README.md` wins for the file-naming
++convention.
++
++Key words **MUST**, **SHOULD**, **MAY** are used per RFC 2119.
++
++## 1. Motivation
++
++An SBOM answers *"what is in this product"*. It does **not** answer *"which of
++the CVEs against those components actually matter here"* — so SBOM-only
++consumers over-report risk (arXiv 2511.20313). VEX closes that gap: for each
++vulnerability it asserts one of four statuses in the product's context, with a
++machine-readable justification. Because Yagura depends only on the Go standard
++library (ADR-0001), the vulnerabilities it must speak to are CVEs against Go
++itself, expressed at the subcomponent granularity (e.g. `pkg:golang/net/http`).
++
++Yagura does **not** decide exploitability with an LLM or a reachability engine.
++VEX is a *producer claim*; the producer is responsible for its truth. Yagura's
++job is narrow and deterministic: build well-formed documents, maintain them
++across scans without losing human triage, and lint them structurally.
++
++## 2. Conformance target
++
++Documents conform to **OpenVEX `https://openvex.dev/ns/v0.2.0`**. Yagura
++implements the subset below. Unknown fields in an input document are ignored
++on validation (lenient parse) — they are neither required nor rejected.
++
++## 3. Data model
++
++A **Document** is:
++
++| Field | JSON | Required | Notes |
++|---|---|---|---|
++| Context | `@context` | yes | MUST be `https://openvex.dev/ns/v0.2.0` for generated docs |
++| ID | `@id` | yes (generated) | see §6 for the deterministic form |
++| Author | `author` | yes | defaults to `yagura` |
++| Timestamp | `timestamp` | yes | RFC 3339, UTC |
++| Version | `version` | yes | integer ≥ 1 |
++| Tooling | `tooling` | no | free-text tool identifier |
++| Statements | `statements` | yes (≥ 1) | see below |
++
++A **Statement** is:
++
++| Field | JSON | Required | Notes |
++|---|---|---|---|
++| Vulnerability | `vulnerability` | yes | `{ "@id"?, "name", "description"? }` — `name` required |
++| Products | `products` | no | each `{ "@id", "subcomponents"? }`; `@id` required when present |
++| Status | `status` | yes | one of the four §4 enums |
++| Justification | `justification` | conditional | required-or-impact for `not_affected` (§4) |
++| ImpactStatement | `impact_statement` | conditional | alternative to justification for `not_affected` |
++| ActionStatement | `action_statement` | SHOULD | remediation guidance for `affected` |
++
++A **Subcomponent** is `{ "@id": "<purl>" }` — the specific dependency inside the
++product that carries the vulnerable code (Yagura's primary use: Go stdlib pkgs).
++
++## 4. Status & justification enums
++
++`status` MUST be one of:
++
++- **`not_affected`** — the vulnerable code path is not reachable in this product.
++- **`affected`** — the product is exploitable; consumers should remediate.
++- **`fixed`** — a patched release is available.
++- **`under_investigation`** — triage is in progress (the default for a bare CVE).
++
++`justification` (only meaningful for `not_affected`) MUST, when present, be one
++of the five OpenVEX values:
++`component_not_present`, `vulnerable_code_not_present`,
++`vulnerable_code_not_in_execute_path`,
++`vulnerable_code_cannot_be_controlled_by_adversary`,
++`inline_mitigations_already_exist`.
++
++## 5. Operations (`internal/vex`)
++
++### 5.1 `Build(author, now, statements) Document`
++Constructs a canonical document. It MUST:
++- default empty `author` to `yagura`;
++- default empty `status` to `under_investigation`;
++- trim `vulnerability.name`;
++- sort statements stably by `(vulnerability.name, first product @id)`;
++- set `version = 1`, `timestamp = now.UTC()` (RFC 3339);
++- set `@id` per §6.
++
++### 5.2 `Merge(base, additions, now) Document`
++Maintains a document across re-scans. It MUST:
++- add a statement for each addition whose `vulnerability.name` is **not** already
++  present in `base` (defaulting status to `under_investigation`);
++- **never** modify or remove an existing statement — operator verdicts
++  (`not_affected` / `fixed` / `affected`) are preserved;
++- if nothing new is added, return `base` **unchanged** (idempotent: same `@id`,
++  same `version`, same `timestamp`);
++- otherwise re-sort, set `version = base.version + 1`, recompute `timestamp` and
++  `@id`. A missing `@context`/`author` on `base` is backfilled with the defaults.
++
++### 5.3 `Validate(doc) []string`
++Returns structural problems (empty slice ⇒ conformant). It MUST flag:
++- missing `@context`;
++- zero statements;
++- a statement missing `vulnerability.name`;
++- an invalid `status`;
++- `not_affected` lacking both a justification and an impact_statement;
++- a present-but-invalid `justification`;
++- `affected` lacking an `action_statement`;
++- a product missing its `@id`.
++
++`Validate` is **advisory about exploitability** — it never asserts a CVE *is* or
++*isn't* applicable; it only checks that the claim is well-formed.
++
++### 5.4 `ParseAndValidate(data) (Document, []string, error)`
++Unmarshals OpenVEX JSON and runs `Validate`. Returns an `error` **only** when the
++bytes are not valid JSON (lint impossible); structural problems come back as the
++`[]string`. This is the primitive behind `yagura vex-audit`.
++
++## 6. Determinism
++
++`@id` MUST be `urn:yagura:vex:<h>` where `<h>` is the 8-hex FNV-1a/32 hash of
++`author ++ timestamp ++ json(statements)`. Given identical inputs (including
++`now`), `Build`/`Merge` MUST produce byte-identical documents. Statement order
++MUST be deterministic (the §5.1 sort). This lets reproducible-build and
++regression tests compare output directly.
++
++## 7. On-disk artifacts (`docs/vex/`)
++
++Per [`security-spec.md`](security-spec.md) §VEX (OSPS-VM-04.02, Level 3), Yagura
++publishes VEX statements about Go-stdlib CVEs in its own context. Files:
++
++- live under `docs/vex/`;
++- are OpenVEX v0.2.0 JSON;
++- are named `vex-CVE-YYYY-NNNNN.json`, one CVE per file (per `vex/README.md`);
++- `example.json` is a non-shipping reference and is also validated.
++
++Every `*.json` under `docs/vex/` MUST pass `Validate` (§5.3).
++
++## 8. Surfaces
++
++| Surface | Form | Use |
++|---|---|---|
++| MCP `yagura_vex` | `{ author?, tooling?, base?, statements:[{cve, vuln_id?, description?, product?, subcomponents?, status?, justification?, impact?, action?}] }` → `{ document, issues }` | agent/programmatic build & merge; `base` present ⇒ `Merge`, else `Build` |
++| CLI `yagura vex-audit [dir]` | `--dir docs/vex` (default), `--strict`, `--json` | lint on-disk VEX files; `--strict` exits non-zero on any failure |
++
++Per repo convention, disk-walking audits (`skill-audit`, `mcp-audit`, …) are
++**CLI-only**; `vex-audit` follows suit and does not add an MCP tool.
++
++## 9. CI enforcement
++
++The `publish-gate` job runs `yagura vex-audit --dir docs/vex --strict` so a
++malformed or non-conformant VEX file (bad status, missing justification, broken
++JSON) fails the build before release — keeping the published `docs/vex/` honest.
++
++## 10. Out of scope
++
++- Exploitability *determination* (reachability analysis, LLM judgement).
++- VEX formats other than OpenVEX (CSAF/CycloneDX-VEX).
++- Doc-level fields Yagura does not model (e.g. `role`) — tolerated on input,
++  not emitted.
++- Cryptographic signing of VEX docs (covered by release-level SLSA/Sigstore).
++
++## References
++
++- OpenVEX specification v0.2.0 — https://openvex.dev
++- CISA, *Minimum Requirements for Vulnerability Exploitability eXchange (VEX)*
++- OpenSSF OSPS Baseline — OSPS-VM-04.02
++- ADR-0001 (zero dependencies), [`security-spec.md`](security-spec.md),
++  [`vex/README.md`](vex/README.md)
++- arXiv 2511.20313 — SBOM reality-check
+diff --git a/yagura-v0.35.0/docs/vex/README.md b/yagura-v0.35.0/docs/vex/README.md
+index 8e8321b..d089d5f 100644
+--- a/yagura-v0.35.0/docs/vex/README.md
++++ b/yagura-v0.35.0/docs/vex/README.md
+@@ -58,14 +58,22 @@ OpenVEX defines these `justification` values for `not_affected`:
+ 
+ ## How to verify
+ 
++Yagura validates these files natively — no external tooling, no network
++(ADR-0001). The structural contract is specified in
++[`../vex-spec.md`](../vex-spec.md).
++
+ ```bash
+-# Validate the JSON schema
+-go run github.com/openvex/vexctl@latest validate docs/vex/*.json
++# Lint every docs/vex/*.json (structure, status/justification enums, etc.)
++yagura vex-audit --dir docs/vex
+ 
+-# Merge into a single attestation
+-go run github.com/openvex/vexctl@latest merge docs/vex/*.json
++# CI gate: exit non-zero on any malformed or non-conformant file
++yagura vex-audit --dir docs/vex --strict
+ ```
+ 
++This is what the `publish-gate` CI job runs. To build or merge statements
++programmatically, use the `yagura_vex` MCP tool (pass `base` to merge a new
++scan into an existing document without clobbering triage verdicts).
++
+ ## Current statements
+ 
+ (none — Yagura v0.2.0 has not yet observed CVEs affecting Go that warrant
 diff --git a/yagura-v0.35.0/internal/agentparallel/agentparallel.go b/yagura-v0.35.0/internal/agentparallel/agentparallel.go
 new file mode 100644
 index 0000000..76f4caa
@@ -7380,10 +7964,10 @@ index 31ea232..e4a7a4c 100644
  func TestGet_Existing(t *testing.T) {
 diff --git a/yagura-v0.35.0/internal/mcp/tools_vex.go b/yagura-v0.35.0/internal/mcp/tools_vex.go
 new file mode 100644
-index 0000000..4c11ef1
+index 0000000..71298dd
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_vex.go
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,121 @@
 +// tools_vex.go: yagura_vex — OpenVEX(Vulnerability Exploitability eXchange)文書を
 +// 決定論的に生成・検証する(internal/vex)。
 +//
@@ -7416,6 +8000,10 @@ index 0000000..4c11ef1
 +					"type":        "string",
 +					"description": "VEX author identity (default 'yagura').",
 +				},
++				"tooling": map[string]any{
++					"type":        "string",
++					"description": "optional tool identifier that produced this doc.",
++				},
 +				"base": map[string]any{
 +					"type":        "object",
 +					"description": "optional existing OpenVEX doc; statements are merged in (new vulns only, existing verdicts preserved, version bumped).",
@@ -7427,8 +8015,10 @@ index 0000000..4c11ef1
 +						"type": "object",
 +						"properties": map[string]any{
 +							"cve":           map[string]any{"type": "string", "description": "vulnerability id/name (e.g. CVE-2025-0001)."},
++							"vuln_id":       map[string]any{"type": "string", "description": "canonical vulnerability URL (NVD/OSV @id, optional)."},
 +							"description":   map[string]any{"type": "string"},
 +							"product":       map[string]any{"type": "string", "description": "affected product @id (e.g. pkg:golang/...)."},
++							"subcomponents": map[string]any{"type": "array", "description": "affected subcomponent @ids within the product (e.g. pkg:golang/net/http).", "items": map[string]any{"type": "string"}},
 +							"status":        map[string]any{"type": "string", "description": "not_affected/affected/fixed/under_investigation (default under_investigation)."},
 +							"justification": map[string]any{"type": "string", "description": "OpenVEX justification when not_affected."},
 +							"impact":        map[string]any{"type": "string", "description": "impact_statement (alternative to justification for not_affected)."},
@@ -7443,15 +8033,18 @@ index 0000000..4c11ef1
 +		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
 +			var in struct {
 +				Author     string        `json:"author"`
++				Tooling    string        `json:"tooling"`
 +				Base       *vex.Document `json:"base"`
 +				Statements []struct {
-+					CVE           string `json:"cve"`
-+					Description   string `json:"description"`
-+					Product       string `json:"product"`
-+					Status        string `json:"status"`
-+					Justification string `json:"justification"`
-+					Impact        string `json:"impact"`
-+					Action        string `json:"action"`
++					CVE           string   `json:"cve"`
++					VulnID        string   `json:"vuln_id"`
++					Description   string   `json:"description"`
++					Product       string   `json:"product"`
++					Subcomponents []string `json:"subcomponents"`
++					Status        string   `json:"status"`
++					Justification string   `json:"justification"`
++					Impact        string   `json:"impact"`
++					Action        string   `json:"action"`
 +				} `json:"statements"`
 +			}
 +			if err := json.Unmarshal(args, &in); err != nil {
@@ -7463,14 +8056,20 @@ index 0000000..4c11ef1
 +			stmts := make([]vex.Statement, 0, len(in.Statements))
 +			for _, s := range in.Statements {
 +				st := vex.Statement{
-+					Vulnerability:   vex.Vuln{Name: s.CVE, Description: s.Description},
++					Vulnerability:   vex.Vuln{ID: s.VulnID, Name: s.CVE, Description: s.Description},
 +					Status:          vex.Status(s.Status),
 +					Justification:   vex.Justification(s.Justification),
 +					ImpactStatement: s.Impact,
 +					ActionStatement: s.Action,
 +				}
 +				if s.Product != "" {
-+					st.Products = []vex.Product{{ID: s.Product}}
++					p := vex.Product{ID: s.Product}
++					for _, sc := range s.Subcomponents {
++						if sc != "" {
++							p.Subcomponents = append(p.Subcomponents, vex.Subcomponent{ID: sc})
++						}
++					}
++					st.Products = []vex.Product{p}
 +				}
 +				stmts = append(stmts, st)
 +			}
@@ -7479,6 +8078,9 @@ index 0000000..4c11ef1
 +				doc = vex.Merge(*in.Base, stmts, d.Now())
 +			} else {
 +				doc = vex.Build(in.Author, d.Now(), stmts)
++			}
++			if in.Tooling != "" && doc.Tooling == "" {
++				doc.Tooling = in.Tooling
 +			}
 +			return map[string]any{
 +				"document": doc,
@@ -9151,10 +9753,10 @@ index 024402e..56e8f05 100644
  			text:     `key = AIzaabcdefghijklmnopqrstuvwxyzABCDEFGHI`,
 diff --git a/yagura-v0.35.0/internal/vex/vex.go b/yagura-v0.35.0/internal/vex/vex.go
 new file mode 100644
-index 0000000..7988586
+index 0000000..16f7677
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/vex/vex.go
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,246 @@
 +// Package vex は OpenVEX(Vulnerability Exploitability eXchange)ドキュメントを
 +// 決定論的に生成・検証する。
 +//
@@ -9203,11 +9805,19 @@ index 0000000..7988586
 +
 +// Vuln / Product / Statement / Document は OpenVEX の構造。
 +type Vuln struct {
++	ID          string `json:"@id,omitempty"` // NVD/OSV など脆弱性の正準 URL(任意)
 +	Name        string `json:"name"`
 +	Description string `json:"description,omitempty"`
 +}
-+type Product struct {
++
++// Subcomponent は影響を受ける product 内の下位コンポーネント(例: pkg:golang/net/http)。
++// Yagura は Go stdlib のみ依存するため、stdlib CVE はこの粒度で表現する。
++type Subcomponent struct {
 +	ID string `json:"@id"`
++}
++type Product struct {
++	ID            string         `json:"@id"`
++	Subcomponents []Subcomponent `json:"subcomponents,omitempty"`
 +}
 +type Statement struct {
 +	Vulnerability   Vuln          `json:"vulnerability"`
@@ -9223,6 +9833,7 @@ index 0000000..7988586
 +	Author     string      `json:"author"`
 +	Timestamp  string      `json:"timestamp"`
 +	Version    int         `json:"version"`
++	Tooling    string      `json:"tooling,omitempty"` // 生成ツール識別(任意)
 +	Statements []Statement `json:"statements"`
 +}
 +
@@ -9357,8 +9968,24 @@ index 0000000..7988586
 +		if s.Status == StatusAffected && s.ActionStatement == "" {
 +			issues = append(issues, fmt.Sprintf("%s: affected should include an action_statement (remediation guidance)", who))
 +		}
++		for j, p := range s.Products {
++			if strings.TrimSpace(p.ID) == "" {
++				issues = append(issues, fmt.Sprintf("%s: product #%d is missing an @id", who, j))
++			}
++		}
 +	}
 +	return issues
++}
++
++// ParseAndValidate は OpenVEX JSON を読み、構造的問題(空なら OK)を返す。
++// JSON 自体が壊れている場合のみ error を返す(lint 不能)。docs/vex/*.json の
++// CI 検証(yagura vex-audit)で使う。
++func ParseAndValidate(data []byte) (Document, []string, error) {
++	var d Document
++	if err := json.Unmarshal(data, &d); err != nil {
++		return Document{}, nil, err
++	}
++	return d, Validate(d), nil
 +}
 +
 +func firstProduct(s Statement) string {
@@ -9378,10 +10005,10 @@ index 0000000..7988586
 +}
 diff --git a/yagura-v0.35.0/internal/vex/vex_test.go b/yagura-v0.35.0/internal/vex/vex_test.go
 new file mode 100644
-index 0000000..3e5ecba
+index 0000000..ce20c5d
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/vex/vex_test.go
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,303 @@
 +package vex
 +
 +import (
@@ -9613,6 +10240,67 @@ index 0000000..3e5ecba
 +	}
 +	if merged.Version != 2 {
 +		t.Errorf("version = %d, want 2 (1->+1)", merged.Version)
++	}
++}
++
++func TestParseAndValidate_OK(t *testing.T) {
++	data := []byte(`{
++		"@context":"https://openvex.dev/ns/v0.2.0",
++		"@id":"urn:test:1","author":"acme","timestamp":"2026-06-06T12:00:00Z","version":1,
++		"tooling":"openvex-cli",
++		"statements":[{
++			"vulnerability":{"@id":"https://nvd.nist.gov/vuln/detail/CVE-2025-0001","name":"CVE-2025-0001"},
++			"products":[{"@id":"pkg:github/acme/x@1.0.0","subcomponents":[{"@id":"pkg:golang/net/http"}]}],
++			"status":"not_affected","justification":"vulnerable_code_not_in_execute_path"
++		}]
++	}`)
++	d, issues, err := ParseAndValidate(data)
++	if err != nil {
++		t.Fatalf("parse error: %v", err)
++	}
++	if len(issues) != 0 {
++		t.Errorf("expected no issues, got %v", issues)
++	}
++	// richer fields round-trip
++	if d.Tooling != "openvex-cli" {
++		t.Errorf("tooling = %q", d.Tooling)
++	}
++	if d.Statements[0].Vulnerability.ID == "" {
++		t.Error("vulnerability @id dropped")
++	}
++	if len(d.Statements[0].Products[0].Subcomponents) != 1 {
++		t.Error("subcomponents dropped")
++	}
++}
++
++func TestParseAndValidate_MalformedJSON(t *testing.T) {
++	if _, _, err := ParseAndValidate([]byte(`{ not json`)); err == nil {
++		t.Error("expected error for malformed JSON")
++	}
++}
++
++func TestParseAndValidate_SurfacesStructuralIssues(t *testing.T) {
++	data := []byte(`{"@context":"https://openvex.dev/ns/v0.2.0","version":1,
++		"statements":[{"vulnerability":{"name":"CVE-2025-0001"},"status":"bogus"}]}`)
++	_, issues, err := ParseAndValidate(data)
++	if err != nil {
++		t.Fatalf("unexpected parse error: %v", err)
++	}
++	if !hasIssue(issues, "invalid status") {
++		t.Errorf("expected invalid status issue, got %v", issues)
++	}
++}
++
++func TestValidate_ProductMissingID(t *testing.T) {
++	d := Document{
++		Context: contextURL,
++		Statements: []Statement{{
++			Vulnerability: Vuln{Name: "CVE-2025-0001"}, Status: StatusFixed,
++			Products: []Product{{ID: ""}},
++		}},
++	}
++	if !hasIssue(Validate(d), "missing an @id") {
++		t.Error("expected product @id issue")
 +	}
 +}
 +
