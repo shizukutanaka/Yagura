@@ -234,10 +234,10 @@ index 6fc4715..34fe274 100644
      with:
        base64-subjects: ${{ needs.build.outputs.hashes }}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..723a9c4 100644
+index 9b29eec..6cdb66d 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,369 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,396 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -590,6 +590,33 @@ index 9b29eec..723a9c4 100644
 +    `--json`)。`internal/vex` 98.8%。live dogfood: `yagura vex-audit docs/vex` → example.json
 +    通過。`MCP_TOOLS.md` 再生成。
 +
++- **`self_improve`: 再帰的自己改善(RSI)を安全な形で取り込む決定論的カーネル
++  (新 package `internal/selfimprove`・MCP tool #57)**。「再帰的自己改善を調べ取り込む」:
++  RSI の素朴形(モデルが自分の重みを書き換える)は ADR-0001 に反し、研究的にも危険側。
++  文献(調査)で安全形に再構成した:
++  - **STOP**(arXiv 2310.02304): モデル固定なら最適化対象は「足場(harness)」。
++    自己改善は重みでなく harness に宿る — Yagura はその harness。
++  - **Darwin Gödel Machine**(arXiv 2505.22954): 「改善を*証明*して採用」を
++    「*経験的検証*(produce→trial→select)」に緩め、良かったものを残す。
++  - **"Your Agent May Misevolve"**(arXiv 2509.26354)/ ICLR 2026 RSI workshop:
++    自己進化は misevolution リスクを持ち、「feedback を計装し報酬を記録し guardrail 内に
++    収め記憶を監査可能に」してはじめて安全。
++  Yagura のスタンス(kernel not brain): **自分を書き換えない**。エージェントの harness
++  レベル自己改善ループを計測可能・gate 可能・監査可能にする決定論的 substrate になる。
++  `Analyze(Snapshot)` が harness の自己メトリクス(`token_stats` の calls/errors/avg_resp_bytes、
++  `skill_audit` の score/retire、`harness_coverage` の象限欠落)を受け、優先度つき提案を返す:
++  **reliability**(高エラー率 tool は schema 見直し)/ **token_economy**(大応答×多 call は
++  summary_only/compact)/ **retire**(低スコア skill、MUSE-Autoskill)/ **coverage**(Fowler
++  行列の盲点)/ **fitness**(前回窓比でエラー率が悪化 → 直近変更を未検証扱いで revert/fix。
++  Darwin Gödel の経験的 select、misevolution 対策)。出力は決定論的
++  (severity→kind→target で安定整列)で audit log に残せる。LLM 不使用。MCP tool
++  `yagura_self_improve`(`{tools, prev_tools?, skills?, coverage_gaps?, session_calls?}` →
++  `{proposals, by_kind, by_severity, summary}`)。`parallel_plan`(1→N)・`recovery_decide`
++  (失敗時)と並ぶ control-plane の自己改善層。新 package(44→45)、tool 数 56 → **57**、
++  stdlib のみ(ADR-0001)。spec/設計: `docs/self-improvement.md`。テスト: 各 kind / severity
++  境界 / fitness 後退・改善 / 決定論(`internal/selfimprove` 96.7%)+ tool テスト。live
++  dogfood 済み(alert_fix の error 上昇 → fitness high「revert」を含む 6 提案)。`MCP_TOOLS.md` 再生成。
++
 +### What's not yet
 +
 +- `vulns` / `scorecard` の CLG 化(現状 sensor で scanner 専用)。
@@ -608,7 +635,7 @@ index 9b29eec..723a9c4 100644
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
 diff --git a/yagura-v0.35.0/CLAUDE.md b/yagura-v0.35.0/CLAUDE.md
-index bc406e1..36d2751 100644
+index bc406e1..5ee8a75 100644
 --- a/yagura-v0.35.0/CLAUDE.md
 +++ b/yagura-v0.35.0/CLAUDE.md
 @@ -21,19 +21,23 @@ cortex flywheel 4 段階すべてを単体で機械化:
@@ -616,13 +643,13 @@ index bc406e1..36d2751 100644
  - code generation tool(yagura は audit/orchestrate のみ)
  
 -## Map — 31 internal packages
-+## Map — 44 internal packages
++## Map — 45 internal packages
  
  ### Core orchestration
  - `internal/registry` — 23+ projects の inventory CRUD
  - `internal/project` — Project struct + validation
 -- `internal/mcp` — MCP server + 38 tool definitions
-+- `internal/mcp` — MCP server + 56 tool definitions
++- `internal/mcp` — MCP server + 57 tool definitions
  - `internal/audit` — JSONL audit log + replay
  - `internal/config` — env / flag 設定
  
@@ -637,7 +664,7 @@ index bc406e1..36d2751 100644
  - `internal/ghaaudit` — GitHub Actions workflow audit
  - `internal/pindrift` — 依存 pin 漏れ検出
  - `internal/aiverify` — AI 生成 code の risk pattern 検出 ★ v0.25
-@@ -49,7 +53,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
+@@ -49,7 +53,14 @@ cortex flywheel 4 段階すべてを単体で機械化:
  - `internal/handoff` — handoff session management
  - `internal/agentlauncher` — agent process spawn
  - `internal/workspace` — session save/load
@@ -648,11 +675,13 @@ index bc406e1..36d2751 100644
 +- `internal/agentparallel` — 複数 AI への deterministic な並列 dispatch planner(LPT)
 +- `internal/riskreason` — Cyber Risk Reasoning Layer(CVSS+資産+到達性+攻撃性の複合判断)
 +- `internal/recovery` — self-healing orchestration の決定論的 recovery 判断(retry/replan/escalate)
++- `internal/selfimprove` — harness レベル再帰的自己改善(RSI)の決定論的カーネル
++  (自己メトリクス→優先度つき改善提案 + 後退検出)。spec: `docs/self-improvement.md` ★ v0.35
  
  ### Graph / dependencies
  - `internal/projectgraph` — depends_on graph(neighbors / impact / stats)
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..a7ae908 100644
+index 986f84e..8a51c06 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -660,7 +689,7 @@ index 986f84e..a7ae908 100644
  **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
  
 -Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
-+Status: **v0.35.0** — 56 MCP tools, 44 internal packages, CLI direct mode, 30 consecutive reproducible releases.
++Status: **v0.35.0** — 57 MCP tools, 45 internal packages, CLI direct mode, 30 consecutive reproducible releases.
  
  ---
  
@@ -669,7 +698,7 @@ index 986f84e..a7ae908 100644
  │  ┌────────────────────────────────────────────────┐  │
  │  │  yagura daemon (single binary, ~9 MB)          │  │
 -│  │  - 46 MCP tools                                │  │
-+│  │  - 56 MCP tools                                │  │
++│  │  - 57 MCP tools                                │  │
  │  │  - HTTP hook receiver                          │  │
  │  │  - Prometheus /metrics                         │  │
  │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -709,7 +738,7 @@ index 986f84e..a7ae908 100644
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
  
 -## MCP tools (46 total)
-+## MCP tools (56 total)
++## MCP tools (57 total)
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -721,15 +750,16 @@ index 986f84e..a7ae908 100644
  | Harness `[G]` | `agents_md`, `feature_list`, `progress_file`, `init_sh`, `harness_recommend` | Generate handoff artifacts |
  | Self-audit `[G]` | `harness_coverage` | Fowler matrix self-check |
  | Alerts | `alert_fix`, `alert_resolve` | Lifecycle: active / resolved / snoozed |
-@@ -166,6 +182,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -166,6 +182,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  | Handoff | 8 tools | Plan / Run / Handoff for cross-session work |
  | Observability | `hook_timeline`, `hook_stats`, `agent_status`, `quota_report` | Claude Code activity |
  | Graph | 3 tools | Cross-project dependencies |
 +| Reasoning `[G]` | `risk_triage`, `parallel_plan` | Composite vuln fix-priority / multi-AI parallel fan-out |
++| Control plane | `recovery_decide`, `self_improve` | Deterministic self-healing + bounded harness self-improvement (RSI) |
  
  Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
  
-@@ -239,6 +256,7 @@ sha256sum -c SHA256SUMS
+@@ -239,6 +257,7 @@ sha256sum -c SHA256SUMS
  │   ├── MCP_TOOLS.md
  │   ├── WINDOWS.md
  │   ├── security-spec.md
@@ -3350,10 +3380,10 @@ index 0000000..60f8d6e
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
-index cfb6e51..d10d9fa 100644
+index cfb6e51..b66fdde 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
 +++ b/yagura-v0.35.0/cmd/yagura/integration_test.go
-@@ -164,6 +164,15 @@ func TestIntegration_MCPToolsList(t *testing.T) {
+@@ -164,6 +164,17 @@ func TestIntegration_MCPToolsList(t *testing.T) {
  		// v0.27 — cortex flywheel ④ Alert-Fix
  		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
  		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",
@@ -3366,6 +3396,8 @@ index cfb6e51..d10d9fa 100644
 +		"yagura_recovery_decide",
 +		// v0.35 — OpenVEX v0.2.0 文書生成 + lint
 +		"yagura_vex",
++		// v0.35 — harness レベル再帰的自己改善(RSI)カーネル
++		"yagura_self_improve",
  	}
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
@@ -3593,14 +3625,14 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..a21c996 100644
+index 689c182..bbb3dd0 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
  # MCP tools reference
  
 -Generated from a live yagura — **46 tools**.
-+Generated from a live yagura — **56 tools**.
++Generated from a live yagura — **57 tools**.
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -3609,7 +3641,7 @@ index 689c182..a21c996 100644
  - [Harness (guides)](#harness-guides) (8)
  - [Inventory](#inventory) (8)
 -- [Misc](#misc) (8)
-+- [Misc](#misc) (18)
++- [Misc](#misc) (19)
  - [Observability](#observability) (4)
  - [Plan tracking](#plan-tracking) (2)
  - [Security (sensors)](#security-sensors) (10)
@@ -3723,7 +3755,7 @@ index 689c182..a21c996 100644
  ### `yagura_quota_forecast`
  
  [S] Empty-time linreg forecast. Needs ≥3 samples.
-@@ -341,6 +412,40 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -341,6 +412,56 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -3761,10 +3793,26 @@ index 689c182..a21c996 100644
 +
 +---
 +
++### `yagura_self_improve`
++
++[S] Turn harness self-metrics into ranked, gated improvement proposals (RSI, deterministic).
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `coverage_gaps` (array) |  | Fowler matrix quadrants with no control (from yagura_harness_coverage). |
++| `prev_tools` (array) |  | previous window's tool stats; enables fitness/regression detection (revert advice). |
++| `session_calls` (integer) |  | total tool calls in the window (used for token-economy call-share thresholds). |
++| `skills` (array) |  | skill audit results (from yagura_skill_audit): [{path, score, retire}]. |
++| `tools` (array) |  | observed per-tool stats (from yagura_token_stats): [{name, calls, errors, avg_resp_bytes}]. |
++
++---
++
  ### `yagura_session_load`
  
  [S] Load handoff context. Null if none.
-@@ -366,6 +471,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -366,6 +487,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -3783,7 +3831,7 @@ index 689c182..a21c996 100644
  ### `yagura_token_stats`
  
  [S] Per-tool byte counts since daemon start.
-@@ -397,6 +514,33 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -397,6 +530,33 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -3817,7 +3865,7 @@ index 689c182..a21c996 100644
  ## Observability
  
  ### `yagura_agent_status`
-@@ -576,7 +720,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -576,7 +736,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -3827,7 +3875,7 @@ index 689c182..a21c996 100644
  **Arguments:**
  
 diff --git a/yagura-v0.35.0/docs/QUICKSTART.md b/yagura-v0.35.0/docs/QUICKSTART.md
-index 62e02cd..bf25776 100644
+index 62e02cd..b9a4671 100644
 --- a/yagura-v0.35.0/docs/QUICKSTART.md
 +++ b/yagura-v0.35.0/docs/QUICKSTART.md
 @@ -177,7 +177,7 @@ The process drains for 5 seconds (`/readyz` returns 503) then shuts down gracefu
@@ -3835,7 +3883,7 @@ index 62e02cd..bf25776 100644
  ## What next?
  
 -- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 46 tools.
-+- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 56 tools.
++- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 57 tools.
  - [WINDOWS.md](WINDOWS.md) — Task Scheduler / NSSM / Windows service setup.
  - [ARCHITECTURE.md](../ARCHITECTURE.md) — internals and design rationale.
  - [security-spec.md](security-spec.md) — threat model.
@@ -3867,6 +3915,123 @@ index 97c6e62..292f3dd 100644
 +[`docs/vex-spec.md`](vex-spec.md). The `publish-gate` CI job runs
 +`yagura vex-audit --dir docs/vex --strict`, so a malformed or non-conformant
 +VEX file fails the build before release (OSPS-VM-04.02, Level 3).
+diff --git a/yagura-v0.35.0/docs/self-improvement.md b/yagura-v0.35.0/docs/self-improvement.md
+new file mode 100644
+index 0000000..4c656dd
+--- /dev/null
++++ b/yagura-v0.35.0/docs/self-improvement.md
+@@ -0,0 +1,111 @@
++# Self-Improvement in Yagura (bounded, deterministic RSI)
++
++How Yagura incorporates **recursive self-improvement (RSI)** without becoming
++the thing RSI research warns about. Implemented in `internal/selfimprove` and
++exposed as the `yagura_self_improve` MCP tool.
++
++## The idea, and why Yagura is the right place for it
++
++RSI in its naive form — *a model that rewrites its own weights to get smarter,
++which lets it rewrite them better* — is both outside Yagura's design
++(zero-LLM, deterministic, [ADR-0001](adr/0001-zero-dependencies.md)) and the
++unsafe end of the research. Three results reshape it into something Yagura can
++own safely:
++
++- **STOP** ([arXiv 2310.02304](https://arxiv.org/abs/2310.02304)) — *Self-Taught
++  Optimizer*. Key result: **for a fixed model, the design of the scaffolding
++  program is itself an optimization problem.** Self-improvement does not require
++  touching weights; it lives in the **harness**. Yagura *is* that harness.
++- **Darwin Gödel Machine** ([arXiv 2505.22954](https://arxiv.org/abs/2505.22954))
++  — relaxes the original Gödel machine's "*prove* a change helps before adopting
++  it" to **empirical validation**: produce → trial → **select**, keeping an
++  archive of what worked. The lesson Yagura takes: **never adopt a harness change
++  blindly; measure whether it actually helped, and be ready to revert.**
++- **"Your Agent May Misevolve"** ([arXiv 2509.26354](https://arxiv.org/abs/2509.26354))
++  and the ICLR 2026 RSI workshop — self-evolving agents carry emergent risk
++  (*misevolution*) and stay safe only when **"feedback loops are instrumented,
++  rewards logged in real time, adaptations kept within guardrails, and memories
++  auditable."**
++
++That last sentence is Yagura's whole thesis (*kernel, not brain*). So:
++
++> **Yagura does not modify itself.** It is the deterministic, auditable
++> **fitness-and-guardrail kernel** that makes an agent's *harness-level*
++> self-improvement loop measurable, gated, and reversible.
++
++## The loop
++
++```
++        ┌──────────────────────────────────────────────────────────┐
++        │                                                          │
++        ▼                                                          │
++  observe self-metrics            propose (ranked)        adopt / revert
++  token_stats (calls,      →   yagura_self_improve   →   human or agent acts;
++  errors, resp bytes)          • reliability             next window's metrics
++  skill_audit (score,          • token_economy           feed back in as the
++  retire)                      • coverage                 empirical "select"
++  harness_coverage             • retire                          │
++  (matrix gaps)                • fitness (regression)            │
++        ▲                                                        │
++        └────────────────────────────────────────────────────────┘
++```
++
++Yagura already *measures* (`yagura_token_stats`, `yagura_hook_stats`,
++`yagura_skill_audit`, `yagura_harness_coverage`). `yagura_self_improve` closes
++the loop: it turns a snapshot of those metrics into **ranked, actionable
++proposals**, and — when given the previous window — flags **regressions** so a
++recent change is treated as *unvalidated* until the numbers say otherwise.
++
++## Proposal kinds
++
++| Kind | Trigger | Maps to |
++|---|---|---|
++| `reliability` | a tool's error rate ≥ 5% (medium) / 20% (high) over ≥ 5 calls | STOP: fix the scaffold around a failing tool |
++| `token_economy` | large avg response (≥ 4 KB) on a frequently-called tool | input-token economy (`summary_only` / compact) |
++| `retire` | a skill scores < 40 or is flagged retire | MUSE-Autoskill self-cleaning |
++| `coverage` | a Fowler feedforward/feedback quadrant has no control | harness-engineering matrix |
++| `fitness` | a tool's error rate rose ≥ 10 points since the last window | **Darwin Gödel** empirical select / misevolution defense |
++
++Output is **deterministic**: proposals are sorted `severity → kind → target`,
++so regression tests and audit logs can compare runs directly. Severity counts
++and a one-line summary accompany the list.
++
++## Guardrails (why this is the *safe* form of RSI)
++
++- **No self-modification.** Yagura only *advises*; a human or agent executes.
++  Auto-deletion / auto-rewrite is explicitly out of scope.
++- **No LLM.** All rules are deterministic thresholds (named constants in
++  `internal/selfimprove`), so the advice is reproducible and reviewable.
++- **Empirical, not assumed.** The `fitness` kind refuses to call a change good
++  until the next window's metrics confirm it — and surfaces regressions loudly.
++- **Auditable.** Output is plain JSON and can be written to the append-only
++  audit log, satisfying the "memories auditable" requirement.
++
++## Surface
++
++`yagura_self_improve` (MCP, `[S]` sensor):
++
++```jsonc
++{
++  "session_calls": 120,
++  "tools":      [{ "name": "...", "calls": 40, "errors": 7, "avg_resp_bytes": 9000 }],
++  "prev_tools": [{ "name": "...", "calls": 30, "errors": 1 }],   // optional → fitness
++  "skills":     [{ "path": ".claude/skills/x/SKILL.md", "score": 25, "retire": true }],
++  "coverage_gaps": ["feedback:post-deploy"]
++}
++// → { "proposals": [ … ranked … ], "by_kind": {…}, "by_severity": {…}, "summary": "…" }
++```
++
++The natural caller wires it after the measurement tools: read `token_stats` +
++`skill_audit` + `harness_coverage`, hand the snapshot to `yagura_self_improve`,
++act on the high-severity proposals, then compare next window. Together with
++`yagura_parallel_plan` (1→N dispatch) and `yagura_recovery_decide` (failure
++handling), it completes Yagura's deterministic control plane for agent work.
++
++## References
++
++- STOP — arXiv 2310.02304
++- Darwin Gödel Machine — arXiv 2505.22954
++- Your Agent May Misevolve — arXiv 2509.26354; ICLR 2026 RSI workshop
++- Schmidhuber, *Gödel Machines* (the provably-optimal ideal DGM relaxes)
++- Fowler, *Harness Engineering* (the feedforward/feedback matrix)
 diff --git a/yagura-v0.35.0/docs/vex-spec.md b/yagura-v0.35.0/docs/vex-spec.md
 new file mode 100644
 index 0000000..d7488b4
@@ -6749,10 +6914,10 @@ index 0000000..ad2196b
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..118fbb1 100644
+index 939a67e..0ce0a0e 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
-@@ -188,6 +188,21 @@ func RegisterDefaultTools(s *Server, d Deps) {
+@@ -188,6 +188,23 @@ func RegisterDefaultTools(s *Server, d Deps) {
  	s.Register(buildHookStatsTool(s))
  	s.Register(buildProgressFileTool(d, s))
  	s.Register(buildInitShTool(d))
@@ -6771,10 +6936,12 @@ index 939a67e..118fbb1 100644
 +	s.Register(buildRecoveryDecideTool(d))
 +	// [v0.35.0] OpenVEX v0.2.0 文書の決定論的生成 + 構造 lint(SBOM の過剰報告を補完)
 +	s.Register(buildVEXTool(d))
++	// [v0.35.0] harness レベル再帰的自己改善(RSI)の決定論的カーネル(STOP/Darwin Gödel)
++	s.Register(buildSelfImproveTool(d))
  }
  
  // ─── yagura_list ─────────────────────────────────────────────
-@@ -198,8 +213,8 @@ type listOut struct {
+@@ -198,8 +215,8 @@ type listOut struct {
  	Stage          string `json:"stage"`
  	Priority       int    `json:"priority"`
  	Language       string `json:"language,omitempty"`
@@ -6785,7 +6952,7 @@ index 939a67e..118fbb1 100644
  	CIStatus       string `json:"ci_status,omitempty"`
  	LatestVersion  string `json:"latest_version,omitempty"`
  	DaysSinceCommit int   `json:"days_since_commit"`
-@@ -245,7 +260,7 @@ type todayItem struct {
+@@ -245,7 +262,7 @@ type todayItem struct {
  func buildSecretScanTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_secretscan",
@@ -6794,7 +6961,7 @@ index 939a67e..118fbb1 100644
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
-@@ -766,7 +781,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+@@ -766,7 +783,7 @@ func buildHarnessRecommendTool(d Deps) *Tool {
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
  		Name: "yagura_skill_audit",
@@ -7922,6 +8089,153 @@ index 0000000..c0946c4
 +	})
 +	if _, err := tool.Handler(tCtx(), bad); err == nil {
 +		t.Error("expected error for invalid weights override")
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_selfimprove.go b/yagura-v0.35.0/internal/mcp/tools_selfimprove.go
+new file mode 100644
+index 0000000..bbc2f5f
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_selfimprove.go
+@@ -0,0 +1,76 @@
++// tools_selfimprove.go: yagura_self_improve — harness レベルの再帰的自己改善(RSI)を
++// 安全な形で回すための決定論的カーネル(internal/selfimprove)。
++//
++// STOP(arXiv 2310.02304)が示すとおり、モデルを固定したまま最適化できるのは
++// 「足場(harness)」であり、Yagura はその harness。本 tool は harness 自身の観測値
++// (yagura_token_stats / yagura_skill_audit / yagura_harness_coverage 由来)を受け、
++// 優先度つきの改善提案を rule-based に返す。前回窓(prev_tools)を渡すと、
++// Darwin Gödel Machine(arXiv 2505.22954)流に「後退」を検出して採用/巻き戻しを助言する
++// (盲目採用を避け、misevolution = arXiv 2509.26354 を防ぐ)。
++//
++// Yagura は自分のコードを書き換えない(ADR-0001 / 安全性)。判断は決定論的で audit 可能、
++// 実行は人間/エージェント側。parallel_plan(1→N)・recovery_decide(失敗時)と並ぶ
++// control-plane の一部。
++
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++
++	"github.com/shizukutanaka/yagura/internal/selfimprove"
++)
++
++func buildSelfImproveTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_self_improve",
++		Description: "[S] Turn harness self-metrics into ranked, gated improvement proposals (RSI, deterministic).",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"tools": map[string]any{
++					"type":        "array",
++					"description": "observed per-tool stats (from yagura_token_stats): [{name, calls, errors, avg_resp_bytes}].",
++					"items": map[string]any{
++						"type": "object",
++						"properties": map[string]any{
++							"name":           map[string]any{"type": "string"},
++							"calls":          map[string]any{"type": "integer"},
++							"errors":         map[string]any{"type": "integer"},
++							"avg_resp_bytes": map[string]any{"type": "integer"},
++						},
++						"required": []string{"name"},
++					},
++				},
++				"prev_tools": map[string]any{
++					"type":        "array",
++					"description": "previous window's tool stats; enables fitness/regression detection (revert advice).",
++					"items":       map[string]any{"type": "object"},
++				},
++				"skills": map[string]any{
++					"type":        "array",
++					"description": "skill audit results (from yagura_skill_audit): [{path, score, retire}].",
++					"items":       map[string]any{"type": "object"},
++				},
++				"coverage_gaps": map[string]any{
++					"type":        "array",
++					"description": "Fowler matrix quadrants with no control (from yagura_harness_coverage).",
++					"items":       map[string]any{"type": "string"},
++				},
++				"session_calls": map[string]any{
++					"type":        "integer",
++					"description": "total tool calls in the window (used for token-economy call-share thresholds).",
++				},
++			},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var snap selfimprove.Snapshot
++			if len(args) > 0 {
++				if err := json.Unmarshal(args, &snap); err != nil {
++					return nil, &ToolError{Code: "invalid_input", Cause: err}
++				}
++			}
++			return selfimprove.Analyze(snap), nil
++		},
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_selfimprove_test.go b/yagura-v0.35.0/internal/mcp/tools_selfimprove_test.go
+new file mode 100644
+index 0000000..d45bf18
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_selfimprove_test.go
+@@ -0,0 +1,59 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++)
++
++func TestSelfImproveTool(t *testing.T) {
++	tool := buildSelfImproveTool(Deps{})
++	out, err := tool.Handler(context.Background(), json.RawMessage(`{
++		"session_calls": 100,
++		"tools": [{"name":"yagura_x","calls":20,"errors":8,"avg_resp_bytes":200}],
++		"skills": [{"path":"a/SKILL.md","score":20,"retire":true}],
++		"coverage_gaps": ["feedback:runtime"]
++	}`))
++	if err != nil {
++		t.Fatalf("handler error: %v", err)
++	}
++	b, _ := json.Marshal(out)
++	var r struct {
++		Proposals []struct {
++			Kind     string `json:"kind"`
++			Severity string `json:"severity"`
++		} `json:"proposals"`
++		Summary string `json:"summary"`
++	}
++	if err := json.Unmarshal(b, &r); err != nil {
++		t.Fatalf("unmarshal: %v", err)
++	}
++	if len(r.Proposals) < 3 {
++		t.Errorf("expected reliability+retire+coverage proposals, got %d: %s", len(r.Proposals), b)
++	}
++	if r.Proposals[0].Severity != "high" {
++		t.Errorf("highest-severity proposal should rank first, got %s", r.Proposals[0].Severity)
++	}
++	if r.Summary == "" {
++		t.Error("summary should be set")
++	}
++}
++
++func TestSelfImproveTool_Empty(t *testing.T) {
++	tool := buildSelfImproveTool(Deps{})
++	out, err := tool.Handler(context.Background(), json.RawMessage(`{}`))
++	if err != nil {
++		t.Fatalf("handler error: %v", err)
++	}
++	b, _ := json.Marshal(out)
++	if !json.Valid(b) {
++		t.Fatal("output not valid json")
++	}
++}
++
++func TestSelfImproveTool_BadInput(t *testing.T) {
++	tool := buildSelfImproveTool(Deps{})
++	if _, err := tool.Handler(context.Background(), json.RawMessage(`{`)); err == nil {
++		t.Error("expected error for malformed JSON")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_test.go b/yagura-v0.35.0/internal/mcp/tools_test.go
@@ -9751,6 +10065,407 @@ index 024402e..56e8f05 100644
  		{
  			name:     "Google API key",
  			text:     `key = AIzaabcdefghijklmnopqrstuvwxyzABCDEFGHI`,
+diff --git a/yagura-v0.35.0/internal/selfimprove/selfimprove.go b/yagura-v0.35.0/internal/selfimprove/selfimprove.go
+new file mode 100644
+index 0000000..517f201
+--- /dev/null
++++ b/yagura-v0.35.0/internal/selfimprove/selfimprove.go
+@@ -0,0 +1,247 @@
++// Package selfimprove は「再帰的自己改善(recursive self-improvement, RSI)」を
++// Yagura の設計思想に沿って安全な形で取り込む決定論的カーネルである。
++//
++// 文献の整理(調査):
++//   - STOP(arXiv 2310.02304): モデルを固定したまま「足場(scaffold/harness)」を
++//     最適化対象とみなす。= 自己改善は重みではなく harness に宿る。Yagura は
++//     まさにその harness なので、RSI の対象は Yagura が観測する harness 自身。
++//   - Darwin Gödel Machine(arXiv 2505.22954): Gödel machine の「改善を*証明*して
++//     から採用」を「*経験的検証*(produce → trial → select)」に緩める。良かった
++//     ものは archive に残す。→ 盲目採用せず、計測で良し悪しを判定して gate する。
++//   - "Your Agent May Misevolve"(arXiv 2509.26354)/ ICLR 2026 RSI workshop:
++//     自己進化エージェントには misevolution の創発リスクがあり、「feedback loop を
++//     計装し、報酬をリアルタイムに記録し、変更を guardrail 内に収め、記憶を監査可能に
++//     保つ」ときだけ安全に自己改善できる。
++//
++// Yagura のスタンス(control-plane thesis = "kernel not brain"):
++//
++//	Yagura は **自分のコードを書き換えない**(それは ADR-0001 に反し、misevolution の
++//	危険そのもの)。代わりに、エージェントの harness レベル自己改善ループを
++//	**計測可能・gate 可能・監査可能**にする決定論的 substrate になる。
++//	本パッケージは「観測した自己メトリクスから、優先度つきの改善提案を rule-based に
++//	生成し(STOP の方向)、前回との差分から後退を検出して採用/巻き戻しを助言する
++//	(Darwin Gödel の経験的検証)」。提案はあくまで助言で、実行は人間/エージェント側。
++//	LLM は呼ばない。決定論的で、出力は audit log に残せる。
++package selfimprove
++
++import (
++	"fmt"
++	"sort"
++)
++
++// しきい値(named const = テスト可能 & 仕様として明示)。
++const (
++	// reliability: この回数以上呼ばれ、エラー率がこれ以上なら「要修繕」。
++	minCallsForReliability = 5
++	highErrorRate          = 0.20 // 20%+ は high
++	mediumErrorRate        = 0.05 // 5%+ は medium
++	// token economy: 平均応答がこのバイト数以上 かつ よく呼ばれる tool は圧縮余地。
++	largeResponseBytes = 4096
++	chattyCallShare    = 0.10 // セッション総 call の 10%+ を占める
++	// retire: このスコア未満の skill は retire 候補(MUSE-Autoskill の self-cleaning)。
++	lowSkillScore = 40
++	// fitness: エラー率がこの絶対値以上「悪化」したら regression として high。
++	regressionDelta = 0.10
++)
++
++// ToolStat は 1 tool の観測値(yagura_token_stats 由来を想定)。
++type ToolStat struct {
++	Name         string `json:"name"`
++	Calls        uint64 `json:"calls"`
++	Errors       uint64 `json:"errors"`
++	AvgRespBytes int    `json:"avg_resp_bytes"`
++}
++
++// SkillScore は 1 skill の監査結果(yagura_skill_audit 由来を想定)。
++type SkillScore struct {
++	Path   string `json:"path"`
++	Score  int    `json:"score"`
++	Retire bool   `json:"retire"`
++}
++
++// Snapshot は harness 自身の観測スナップショット。
++// PrevTools を渡すと前回窓との fitness(後退検出)も行う(Darwin Gödel の経験的検証)。
++type Snapshot struct {
++	Tools        []ToolStat   `json:"tools"`
++	PrevTools    []ToolStat   `json:"prev_tools,omitempty"`
++	Skills       []SkillScore `json:"skills,omitempty"`
++	CoverageGaps []string     `json:"coverage_gaps,omitempty"` // 例: Fowler 行列で sensor/guide が欠ける象限
++	SessionCalls uint64       `json:"session_calls,omitempty"` // 窓内の総 call 数(比率しきい値用)
++}
++
++// Proposal は 1 件の改善提案。
++type Proposal struct {
++	ID        string         `json:"id"`
++	Kind      string         `json:"kind"` // reliability | token_economy | retire | coverage | fitness
++	Target    string         `json:"target"`
++	Severity  string         `json:"severity"` // high | medium | low
++	Rationale string         `json:"rationale"`
++	Action    string         `json:"action"`
++	Evidence  map[string]any `json:"evidence,omitempty"`
++}
++
++// Report は自己改善カーネルの出力。
++type Report struct {
++	Proposals  []Proposal     `json:"proposals"`
++	ByKind     map[string]int `json:"by_kind"`
++	BySeverity map[string]int `json:"by_severity"`
++	Summary    string         `json:"summary"`
++}
++
++// Analyze は snapshot を rule-based に評価し、優先度つき改善提案を返す。
++// 出力は決定論的(severity 降順 → kind → target で安定整列)。LLM は使わない。
++func Analyze(snap Snapshot) Report {
++	var ps []Proposal
++
++	// ① reliability — 高エラー率の tool は schema 見直し / repair_args。
++	for _, t := range snap.Tools {
++		if t.Calls < minCallsForReliability || t.Errors == 0 {
++			continue
++		}
++		rate := float64(t.Errors) / float64(t.Calls)
++		sev := ""
++		switch {
++		case rate >= highErrorRate:
++			sev = "high"
++		case rate >= mediumErrorRate:
++			sev = "medium"
++		}
++		if sev == "" {
++			continue
++		}
++		ps = append(ps, Proposal{
++			ID:       "reliability:" + t.Name,
++			Kind:     "reliability",
++			Target:   t.Name,
++			Severity: sev,
++			Rationale: fmt.Sprintf("%s fails %.0f%% of calls (%d/%d) — likely a schema/usage mismatch the harness can fix",
++				t.Name, rate*100, t.Errors, t.Calls),
++			Action:   "review the tool's input schema and description; tighten arg validation or add a usage example",
++			Evidence: map[string]any{"calls": t.Calls, "errors": t.Errors, "error_rate": round2(rate)},
++		})
++	}
++
++	// ② token economy — 大きい応答をよく呼ぶ tool は圧縮余地(input token 削減)。
++	for _, t := range snap.Tools {
++		if t.AvgRespBytes < largeResponseBytes {
++			continue
++		}
++		share := 0.0
++		if snap.SessionCalls > 0 {
++			share = float64(t.Calls) / float64(snap.SessionCalls)
++		}
++		if snap.SessionCalls > 0 && share < chattyCallShare {
++			continue // 大きいが滅多に呼ばれない → 後回し
++		}
++		sev := "low"
++		if share >= chattyCallShare {
++			sev = "medium"
++		}
++		ps = append(ps, Proposal{
++			ID:       "token_economy:" + t.Name,
++			Kind:     "token_economy",
++			Target:   t.Name,
++			Severity: sev,
++			Rationale: fmt.Sprintf("%s returns ~%d bytes/call and is %.0f%% of session calls — every byte is agent input token",
++				t.Name, t.AvgRespBytes, share*100),
++			Action:   "add/use summary_only or a limit arg, or enable YAGURA_MCP_COMPACT, to shrink the response",
++			Evidence: map[string]any{"avg_resp_bytes": t.AvgRespBytes, "calls": t.Calls, "call_share": round2(share)},
++		})
++	}
++
++	// ③ retire — 低品質 skill は retire(ライブラリが育つほど retrieval noise を増やす)。
++	for _, s := range snap.Skills {
++		if !s.Retire && s.Score >= lowSkillScore {
++			continue
++		}
++		ps = append(ps, Proposal{
++			ID:       "retire:" + s.Path,
++			Kind:     "retire",
++			Target:   s.Path,
++			Severity: "low",
++			Rationale: fmt.Sprintf("%s scores %d (retire=%v) — low-value skills dilute retrieval as the library grows",
++				s.Path, s.Score, s.Retire),
++			Action:   "retire or rewrite this skill (MUSE-Autoskill self-cleaning); never auto-delete — human decides",
++			Evidence: map[string]any{"score": s.Score, "retire": s.Retire},
++		})
++	}
++
++	// ④ coverage — Fowler 行列で欠けている feedforward/feedback を補う。
++	for _, q := range snap.CoverageGaps {
++		ps = append(ps, Proposal{
++			ID:        "coverage:" + q,
++			Kind:      "coverage",
++			Target:    q,
++			Severity:  "medium",
++			Rationale: fmt.Sprintf("harness has no control in %q — a blind spot in the feedforward/feedback matrix", q),
++			Action:    "add a guide ([G]) or sensor ([S]) covering this quadrant",
++			Evidence:  map[string]any{"quadrant": q},
++		})
++	}
++
++	// ⑤ fitness — 前回窓との比較で「後退」を検出(Darwin Gödel の produce→trial→select)。
++	// 良くなった/悪くなったを助言し、盲目的な採用を避ける(misevolution 対策)。
++	if len(snap.PrevTools) > 0 {
++		prev := make(map[string]ToolStat, len(snap.PrevTools))
++		for _, t := range snap.PrevTools {
++			prev[t.Name] = t
++		}
++		for _, t := range snap.Tools {
++			p, ok := prev[t.Name]
++			if !ok || t.Calls < minCallsForReliability || p.Calls == 0 {
++				continue
++			}
++			now := float64(t.Errors) / float64(t.Calls)
++			before := float64(p.Errors) / float64(p.Calls)
++			delta := now - before
++			if delta >= regressionDelta {
++				ps = append(ps, Proposal{
++					ID:       "fitness:" + t.Name,
++					Kind:     "fitness",
++					Target:   t.Name,
++					Severity: "high",
++					Rationale: fmt.Sprintf("%s error rate rose %.0f%%→%.0f%% since the last window — a recent change may have regressed it",
++						t.Name, before*100, now*100),
++					Action:   "treat the last harness change to this tool as unvalidated: revert or fix before keeping it",
++					Evidence: map[string]any{"prev_rate": round2(before), "cur_rate": round2(now), "delta": round2(delta)},
++				})
++			}
++		}
++	}
++
++	sortProposals(ps)
++	rep := Report{Proposals: ps, ByKind: map[string]int{}, BySeverity: map[string]int{}}
++	for _, p := range ps {
++		rep.ByKind[p.Kind]++
++		rep.BySeverity[p.Severity]++
++	}
++	rep.Summary = summarize(rep)
++	return rep
++}
++
++var severityRank = map[string]int{"high": 0, "medium": 1, "low": 2}
++var kindRank = map[string]int{"fitness": 0, "reliability": 1, "coverage": 2, "token_economy": 3, "retire": 4}
++
++func sortProposals(ps []Proposal) {
++	sort.SliceStable(ps, func(i, j int) bool {
++		if severityRank[ps[i].Severity] != severityRank[ps[j].Severity] {
++			return severityRank[ps[i].Severity] < severityRank[ps[j].Severity]
++		}
++		if kindRank[ps[i].Kind] != kindRank[ps[j].Kind] {
++			return kindRank[ps[i].Kind] < kindRank[ps[j].Kind]
++		}
++		return ps[i].Target < ps[j].Target
++	})
++}
++
++func summarize(r Report) string {
++	if len(r.Proposals) == 0 {
++		return "no improvement proposals — harness metrics are within thresholds"
++	}
++	return fmt.Sprintf("%d proposal(s): %d high / %d medium / %d low",
++		len(r.Proposals), r.BySeverity["high"], r.BySeverity["medium"], r.BySeverity["low"])
++}
++
++func round2(f float64) float64 {
++	return float64(int(f*100+0.5)) / 100
++}
+diff --git a/yagura-v0.35.0/internal/selfimprove/selfimprove_test.go b/yagura-v0.35.0/internal/selfimprove/selfimprove_test.go
+new file mode 100644
+index 0000000..24b7a90
+--- /dev/null
++++ b/yagura-v0.35.0/internal/selfimprove/selfimprove_test.go
+@@ -0,0 +1,142 @@
++package selfimprove
++
++import (
++	"encoding/json"
++	"testing"
++)
++
++func ids(r Report) []string {
++	out := make([]string, len(r.Proposals))
++	for i, p := range r.Proposals {
++		out[i] = p.ID
++	}
++	return out
++}
++
++func has(r Report, id string) *Proposal {
++	for i := range r.Proposals {
++		if r.Proposals[i].ID == id {
++			return &r.Proposals[i]
++		}
++	}
++	return nil
++}
++
++func TestAnalyze_Empty(t *testing.T) {
++	r := Analyze(Snapshot{})
++	if len(r.Proposals) != 0 {
++		t.Errorf("expected no proposals, got %v", ids(r))
++	}
++	if r.Summary == "" {
++		t.Error("summary should be set")
++	}
++}
++
++func TestAnalyze_ReliabilityHighVsMedium(t *testing.T) {
++	r := Analyze(Snapshot{Tools: []ToolStat{
++		{Name: "tool_high", Calls: 10, Errors: 3}, // 30% → high
++		{Name: "tool_med", Calls: 100, Errors: 8}, // 8% → medium
++		{Name: "tool_ok", Calls: 100, Errors: 1},  // 1% → none
++		{Name: "tool_few", Calls: 3, Errors: 3},   // below minCalls → none
++	}})
++	if p := has(r, "reliability:tool_high"); p == nil || p.Severity != "high" {
++		t.Errorf("tool_high should be high reliability, got %+v", p)
++	}
++	if p := has(r, "reliability:tool_med"); p == nil || p.Severity != "medium" {
++		t.Errorf("tool_med should be medium, got %+v", p)
++	}
++	if has(r, "reliability:tool_ok") != nil || has(r, "reliability:tool_few") != nil {
++		t.Error("tool_ok / tool_few should not produce a proposal")
++	}
++}
++
++func TestAnalyze_TokenEconomy(t *testing.T) {
++	r := Analyze(Snapshot{
++		SessionCalls: 100,
++		Tools: []ToolStat{
++			{Name: "chatty_big", Calls: 30, AvgRespBytes: 8000}, // big + 30% share → medium
++			{Name: "rare_big", Calls: 2, AvgRespBytes: 9000},    // big but rare → skipped
++			{Name: "small", Calls: 50, AvgRespBytes: 100},       // small → skipped
++		},
++	})
++	if p := has(r, "token_economy:chatty_big"); p == nil || p.Severity != "medium" {
++		t.Errorf("chatty_big should be medium token_economy, got %+v", p)
++	}
++	if has(r, "token_economy:rare_big") != nil {
++		t.Error("rare_big should be skipped (low call share)")
++	}
++	if has(r, "token_economy:small") != nil {
++		t.Error("small should be skipped")
++	}
++}
++
++func TestAnalyze_Retire(t *testing.T) {
++	r := Analyze(Snapshot{Skills: []SkillScore{
++		{Path: "a/SKILL.md", Score: 30, Retire: true},
++		{Path: "b/SKILL.md", Score: 95, Retire: false},
++	}})
++	if has(r, "retire:a/SKILL.md") == nil {
++		t.Error("low-score skill should be a retire proposal")
++	}
++	if has(r, "retire:b/SKILL.md") != nil {
++		t.Error("high-score skill should not be retired")
++	}
++}
++
++func TestAnalyze_Coverage(t *testing.T) {
++	r := Analyze(Snapshot{CoverageGaps: []string{"feedback:runtime"}})
++	if p := has(r, "coverage:feedback:runtime"); p == nil || p.Severity != "medium" {
++		t.Errorf("coverage gap should yield a medium proposal, got %+v", p)
++	}
++}
++
++func TestAnalyze_FitnessRegression(t *testing.T) {
++	r := Analyze(Snapshot{
++		PrevTools: []ToolStat{{Name: "evolving", Calls: 100, Errors: 2}},  // 2%
++		Tools:     []ToolStat{{Name: "evolving", Calls: 100, Errors: 20}}, // 20% → +18% regression
++	})
++	p := has(r, "fitness:evolving")
++	if p == nil || p.Severity != "high" {
++		t.Fatalf("expected high fitness regression proposal, got %+v", p)
++	}
++	// high severity ranks first
++	if r.Proposals[0].Kind != "fitness" {
++		t.Errorf("fitness regression should rank first, got %s", r.Proposals[0].Kind)
++	}
++}
++
++func TestAnalyze_NoFitnessWhenImproved(t *testing.T) {
++	r := Analyze(Snapshot{
++		PrevTools: []ToolStat{{Name: "evolving", Calls: 100, Errors: 20}},
++		Tools:     []ToolStat{{Name: "evolving", Calls: 100, Errors: 1}}, // improved
++	})
++	if has(r, "fitness:evolving") != nil {
++		t.Error("improvement should not produce a regression proposal")
++	}
++}
++
++func TestAnalyze_Deterministic_SeverityOrder(t *testing.T) {
++	snap := Snapshot{
++		SessionCalls: 100,
++		Tools: []ToolStat{
++			{Name: "z_high", Calls: 10, Errors: 5},            // high reliability
++			{Name: "a_chatty", Calls: 30, AvgRespBytes: 8000}, // medium token_economy
++		},
++		Skills:       []SkillScore{{Path: "x", Score: 10, Retire: true}}, // low retire
++		CoverageGaps: []string{"q1"},                                     // medium coverage
++	}
++	r1 := Analyze(snap)
++	r2 := Analyze(snap)
++	b1, _ := json.Marshal(r1)
++	b2, _ := json.Marshal(r2)
++	if string(b1) != string(b2) {
++		t.Error("Analyze must be deterministic")
++	}
++	// order: high first, low (retire) last
++	if r1.Proposals[0].Severity != "high" {
++		t.Errorf("first proposal should be high, got %s", r1.Proposals[0].Severity)
++	}
++	if r1.Proposals[len(r1.Proposals)-1].Kind != "retire" {
++		t.Errorf("retire (low) should be last, got %s", r1.Proposals[len(r1.Proposals)-1].Kind)
++	}
++}
 diff --git a/yagura-v0.35.0/internal/vex/vex.go b/yagura-v0.35.0/internal/vex/vex.go
 new file mode 100644
 index 0000000..16f7677
