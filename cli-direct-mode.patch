@@ -319,10 +319,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..0b755f5 100644
+index 9b29eec..48d192b 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,607 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,623 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -912,6 +912,22 @@ index 9b29eec..0b755f5 100644
 +  正規化されて stats に記録 / `hookNameFor` の写像 / 既存 Claude Code テスト全 pass。`go vet` クリーン。
 +  live dogfood: `/hooks/agent` に Gemini/Codex イベント → `hook_stats` が
 +  `{total:2, PreToolUse:1, PostToolUseFailure:1, Bash×2, error_count:1}`。
++
++- **`session_summary` を記録済み timeline に対応(observability ループを閉じる)**。前段で
++  `/hooks/agent` が任意エージェントのイベントを記録するようにしたが、`yagura_session_summary` は
++  「リクエストで渡した events」しか要約できず、daemon が**記録したセッション**を要約できなかった。
++  `slug`(+ optional `session` / `limit`)を受けると、hook receiver の Timeline から記録済みイベントを
++  取得し、各イベントを `agentevent.Normalize` に通して(live 取り込みと同じ正規化規則=DRY)集約する
++  ように拡張。Timeline は新しい順なので時系列(古い順)へ戻してから集約する(連続エラー検出が正しく
++  効くように)。これで「取り込み(任意エージェント, `/hooks/agent`)→ 記録 → `slug` で要約」が
++  サーバ側で完結し、dashboard やエージェントが「project X で何が起きたか」をイベント再送なしに
++  問い合わせられる。`events` を渡す従来の使い方は不変。tool builder に `*Server` を渡して
++  `HookReceiver().Timeline` にアクセス(hook receiver 未設定時は unavailable)。外部依存ゼロ、
++  新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。テスト: `recordedToEvents`
++  (時系列復元 / session filter / error 写像)+ 既存 events パス。`go vet` クリーン。live dogfood:
++  Claude Code + Gemini の混在セッションを `/hooks/agent` に記録 → `session_summary {slug}` が
++  「8 events / 4 calls / 75% error / Bash×3 / 異常 3 consecutive errors + Bash failing(3/3)」。
++  `MCP_TOOLS.md` 再生成。
 +
 +### What's not yet
 +
@@ -4604,7 +4620,7 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..c9a475b 100644
+index 689c182..7fee93f 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
@@ -4841,19 +4857,22 @@ index 689c182..c9a475b 100644
  ### `yagura_session_load`
  
  [S] Load handoff context. Null if none.
-@@ -366,6 +537,30 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -366,6 +537,33 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
 +### `yagura_session_summary`
 +
-+[S] Structured tool-call summary of an agent session (any agent): counts/sequence/errors/anomalies.
++[S] Structured tool-call summary of an agent session (any agent): pass events, or a slug to summarize the recorded timeline.
 +
 +**Arguments:**
 +
 +| Name | Required | Description |
 +|---|---|---|
-+| `events` (array) | ★ | chronological raw lifecycle events from any agent (each normalized via agent_event). |
++| `events` (array) |  | chronological raw lifecycle events from any agent (each normalized via agent_event). |
++| `limit` (integer) |  | with slug: max recorded events to consider (default 500). |
++| `session` (string) |  | with slug: restrict to one session id. |
++| `slug` (string) |  | summarize the daemon's recorded hook timeline for this project instead of passing events. |
 +
 +---
 +
@@ -4872,7 +4891,7 @@ index 689c182..c9a475b 100644
  ### `yagura_token_stats`
  
  [S] Per-tool byte counts since daemon start.
-@@ -397,6 +592,33 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -397,6 +595,33 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -4906,7 +4925,7 @@ index 689c182..c9a475b 100644
  ## Observability
  
  ### `yagura_agent_status`
-@@ -576,7 +798,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -576,7 +801,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -9621,7 +9640,7 @@ index 1549179..0a1b2c2 100644
  		t.Errorf("expected at least %d tools, got %d: %v", minExpectedTools, len(names), names)
  	}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..2fdd384 100644
+index 939a67e..d949ad9 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
 @@ -11,25 +11,20 @@ import (
@@ -9714,7 +9733,7 @@ index 939a67e..2fdd384 100644
 +	// [v0.35.0] 任意エージェントの lifecycle イベントを OTel GenAI semconv へ正規化(汎用化)
 +	s.Register(buildAgentEventTool(d))
 +	// [v0.35.0] エージェントセッションの構造化 tool-call サマリ(Hermes Desktop 参照)
-+	s.Register(buildSessionSummaryTool(d))
++	s.Register(buildSessionSummaryTool(d, s))
  }
  
  // ─── yagura_list ─────────────────────────────────────────────
@@ -11907,32 +11926,35 @@ index 0000000..b1cf56b
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_sessionsummary.go b/yagura-v0.35.0/internal/mcp/tools_sessionsummary.go
 new file mode 100644
-index 0000000..c36b860
+index 0000000..c0edf29
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_sessionsummary.go
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,116 @@
 +// tools_sessionsummary.go: yagura_session_summary — エージェントのイベント列を
 +// セッション活動の構造化サマリへ集約する(internal/sessionsummary)。
 +//
 +// 着想(Hermes Desktop 参照): Hermes Desktop の目玉「ライブ tool activity と構造化 tool-call
-+// サマリ」の kernel 側 deterministic 版。raw イベント列を agentevent.Normalize で正規化してから
-+// Summarize するので、Claude Code / Gemini CLI / Codex / OTel いずれのセッションでも同じサマリが
-+// 得られる。UI(Hermes 風でも Yagura dashboard でも)はこれを render するだけ。LLM 不使用。
++// サマリ」の kernel 側 deterministic 版。`events` を直接渡すか、`slug`(+ optional `session`)で
++// daemon が記録済みの hook timeline を要約する。どちらも agentevent.Normalize を通すので、
++// Claude Code / Gemini CLI / Codex / OTel いずれのセッションでも同じサマリが得られる。
++// UI(Hermes 風でも Yagura dashboard でも)はこれを render するだけ。LLM 不使用。
 +
 +package mcp
 +
 +import (
 +	"context"
 +	"encoding/json"
++	"time"
 +
 +	"github.com/shizukutanaka/yagura/internal/agentevent"
++	"github.com/shizukutanaka/yagura/internal/hookreceiver"
 +	"github.com/shizukutanaka/yagura/internal/sessionsummary"
 +)
 +
-+func buildSessionSummaryTool(d Deps) *Tool {
++func buildSessionSummaryTool(d Deps, srv *Server) *Tool {
 +	return &Tool{
 +		Name:        "yagura_session_summary",
-+		Description: "[S] Structured tool-call summary of an agent session (any agent): counts/sequence/errors/anomalies.",
++		Description: "[S] Structured tool-call summary of an agent session (any agent): pass events, or a slug to summarize the recorded timeline.",
 +		InputSchema: map[string]any{
 +			"type": "object",
 +			"properties": map[string]any{
@@ -11941,43 +11963,107 @@ index 0000000..c36b860
 +					"description": "chronological raw lifecycle events from any agent (each normalized via agent_event).",
 +					"items":       map[string]any{"type": "object"},
 +				},
++				"slug": map[string]any{
++					"type":        "string",
++					"description": "summarize the daemon's recorded hook timeline for this project instead of passing events.",
++				},
++				"session": map[string]any{
++					"type":        "string",
++					"description": "with slug: restrict to one session id.",
++				},
++				"limit": map[string]any{
++					"type":        "integer",
++					"description": "with slug: max recorded events to consider (default 500).",
++				},
 +			},
-+			"required": []string{"events"},
 +		},
 +		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
 +			var in struct {
-+				Events []map[string]any `json:"events"`
++				Events  []map[string]any `json:"events"`
++				Slug    string           `json:"slug"`
++				Session string           `json:"session"`
++				Limit   int              `json:"limit"`
 +			}
-+			if err := json.Unmarshal(args, &in); err != nil {
-+				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			if len(args) > 0 {
++				if err := json.Unmarshal(args, &in); err != nil {
++					return nil, &ToolError{Code: "invalid_input", Cause: err}
++				}
 +			}
-+			if len(in.Events) == 0 {
-+				return nil, &ToolError{Code: "invalid_input", Message: "events must list at least one event"}
++
++			var norm []agentevent.Event
++			switch {
++			case len(in.Events) > 0:
++				norm = make([]agentevent.Event, 0, len(in.Events))
++				for _, raw := range in.Events {
++					norm = append(norm, agentevent.Normalize(raw))
++				}
++			case in.Slug != "":
++				hr := srv.HookReceiver()
++				if hr == nil {
++					return nil, &ToolError{Code: "unavailable", Message: "hook receiver not configured"}
++				}
++				limit := in.Limit
++				if limit <= 0 {
++					limit = 500
++				}
++				recorded := hr.Timeline(in.Slug, time.Time{}, "", limit)
++				norm = recordedToEvents(recorded, in.Session)
++			default:
++				return nil, &ToolError{Code: "invalid_input", Message: "provide either 'events' or 'slug'"}
 +			}
-+			norm := make([]agentevent.Event, 0, len(in.Events))
-+			for _, raw := range in.Events {
-+				norm = append(norm, agentevent.Normalize(raw))
-+			}
++
 +			return sessionsummary.Summarize(norm), nil
 +		},
 +	}
 +}
++
++// recordedToEvents は記録済み hook event を agentevent.Event へ写す。
++// 各 event を Normalize に通すので live 取り込みと同じ正規化規則になる(DRY)。
++// session != "" のときはその session id だけに絞る。Timeline は新しい順なので逆順にして
++// 時系列(古い順)へ戻す(連続エラー検出などが正しく効くように)。
++func recordedToEvents(recorded []hookreceiver.Event, session string) []agentevent.Event {
++	out := make([]agentevent.Event, 0, len(recorded))
++	for i := len(recorded) - 1; i >= 0; i-- {
++		e := recorded[i]
++		if session != "" && e.SessionID != session {
++			continue
++		}
++		raw := map[string]any{
++			"hook_event_name": e.HookEventName,
++			"tool_name":       e.ToolName,
++			"session_id":      e.SessionID,
++		}
++		if e.DurationMS > 0 {
++			raw["duration_ms"] = e.DurationMS
++		}
++		if e.AgentType != "" {
++			raw["agent"] = e.AgentType
++		}
++		if e.IsError {
++			raw["status"] = "error"
++		}
++		out = append(out, agentevent.Normalize(raw))
++	}
++	return out
++}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_sessionsummary_test.go b/yagura-v0.35.0/internal/mcp/tools_sessionsummary_test.go
 new file mode 100644
-index 0000000..7584224
+index 0000000..f1f63b3
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_sessionsummary_test.go
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,88 @@
 +package mcp
 +
 +import (
 +	"context"
 +	"encoding/json"
 +	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/hookreceiver"
 +)
 +
 +func TestSessionSummaryTool(t *testing.T) {
-+	tool := buildSessionSummaryTool(Deps{})
++	tool := buildSessionSummaryTool(Deps{}, nil)
 +	// raw events from mixed agents (Claude Code hook + generic), normalized then summarized
 +	out, err := tool.Handler(context.Background(), json.RawMessage(`{"events":[
 +		{"hook_event_name":"PreToolUse","tool_name":"Bash","session_id":"s"},
@@ -12016,16 +12102,42 @@ index 0000000..7584224
 +}
 +
 +func TestSessionSummaryTool_EmptyEvents(t *testing.T) {
-+	tool := buildSessionSummaryTool(Deps{})
++	tool := buildSessionSummaryTool(Deps{}, nil)
 +	if _, err := tool.Handler(context.Background(), json.RawMessage(`{"events":[]}`)); err == nil {
 +		t.Error("expected error for empty events")
 +	}
 +}
 +
 +func TestSessionSummaryTool_BadInput(t *testing.T) {
-+	tool := buildSessionSummaryTool(Deps{})
++	tool := buildSessionSummaryTool(Deps{}, nil)
 +	if _, err := tool.Handler(context.Background(), json.RawMessage(`{`)); err == nil {
 +		t.Error("expected error for malformed JSON")
++	}
++}
++
++func TestRecordedToEvents(t *testing.T) {
++	// Timeline returns newest-first; recordedToEvents must restore chronological order,
++	// map fields via agentevent.Normalize, and honor the session filter.
++	recorded := []hookreceiver.Event{
++		// newest first:
++		{HookEventName: "PostToolUseFailure", ToolName: "Bash", SessionID: "s1", IsError: true},
++		{HookEventName: "PreToolUse", ToolName: "Bash", SessionID: "s1"},
++		{HookEventName: "PreToolUse", ToolName: "Read", SessionID: "other"},
++	}
++	got := recordedToEvents(recorded, "s1")
++	if len(got) != 2 {
++		t.Fatalf("session filter failed: got %d events", len(got))
++	}
++	// chronological: PreToolUse(start) before PostToolUseFailure(error)
++	if got[0].Operation != "execute_tool" || got[0].Phase != "start" {
++		t.Errorf("first should be execute_tool/start, got %+v", got[0])
++	}
++	if got[1].Phase != "error" {
++		t.Errorf("second should be error phase, got %+v", got[1])
++	}
++	// no session filter → all 3
++	if len(recordedToEvents(recorded, "")) != 3 {
++		t.Error("no-filter should include all events")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_test.go b/yagura-v0.35.0/internal/mcp/tools_test.go
