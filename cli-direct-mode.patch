@@ -79,7 +79,7 @@ index ec74583..84ca474 100644
      "ask": ["Write", "Edit", "Bash"]
    },
 diff --git a/yagura-v0.35.0/.claude/skills/yagura/SKILL.md b/yagura-v0.35.0/.claude/skills/yagura/SKILL.md
-index 53c27ee..b24842c 100644
+index 53c27ee..98c619e 100644
 --- a/yagura-v0.35.0/.claude/skills/yagura/SKILL.md
 +++ b/yagura-v0.35.0/.claude/skills/yagura/SKILL.md
 @@ -5,7 +5,7 @@ description: Use when the user asks about portfolio status, project registry, de
@@ -87,7 +87,7 @@ index 53c27ee..b24842c 100644
  # yagura — Portfolio Orchestrator Skill
  
 -yagura is a long-running daemon that manages m's 23+ project portfolio. It exposes 30 MCP tools. Call them via the local MCP endpoint instead of guessing portfolio state from memory.
-+yagura is a long-running daemon that manages m's 23+ project portfolio. It exposes 48 MCP tools. Call them via the local MCP endpoint instead of guessing portfolio state from memory.
++yagura is a long-running daemon that manages m's 23+ project portfolio. It exposes 62 MCP tools. Call them via the local MCP endpoint instead of guessing portfolio state from memory.
  
  ## Mental model
  
@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..0a146e0 100644
+index 9b29eec..397f0fc 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,699 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,710 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1005,6 +1005,17 @@ index 9b29eec..0a146e0 100644
 +  これで shipped doc セット(`.claude`/`docs`/`README`/`CHANGELOG`)が publicity-scan
 +  0 件でクリーン。gha-audit は不変(release.yml の SLSA generator は仕様上 semver タグ
 +  必須=唯一の意図的例外で据置)。コード変更なし(tool 62 / package 50 不変)、ADR-0001 維持。
++- **SKILL.md の tool 数を実数と同期 + drift を物理的に防ぐ regression guard**
++  (`.claude/skills/yagura/SKILL.md` / `cmd/yagura/skilldoc_test.go`)。自己診断で
++  shipped doc の数値主張を実測と突き合わせたところ、配布される skill doc が「exposes
++  **48** MCP tools」と古いまま(実際は 62。README/CLAUDE/MCP_TOOLS は 62 で正)だった。
++  エージェントが読む skill doc が実数と 14 ずれていたのを 62 へ修正。さらに、prose の
++  tool 数は `integration_test.go` の `expectedTools`(source of truth)と違い無防備で
++  silent に drift するため、SKILL.md の "exposes N MCP tools" を `RegisterDefaultTools`
++  後の実登録数(`Server.ToolNames()`)と突き合わせる guard test を追加。これで tool 追加時に
++  skill doc の更新漏れが CI で fail する(「逸脱を物理的に潰す」を doc に適用)。guard 自身も
++  数値を 99 に壊して fail することを確認。コード変更は test 追加のみ(tool 62 / package 50
++  不変)、ADR-0001 維持。publicity-scan(.claude)は引き続き 0 件。
 +
 +### What's not yet
 +
@@ -1023,7 +1034,7 @@ index 9b29eec..0a146e0 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8377,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8388,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -4917,6 +4928,54 @@ index 0000000..fccaa9c
 +	// both agents counted under the same tool → value 2
 +	if !strings.Contains(out, `tool="Bash"} 2`) {
 +		t.Errorf("expected 2 Bash calls across agents:\n%s", out)
++	}
++}
+diff --git a/yagura-v0.35.0/cmd/yagura/skilldoc_test.go b/yagura-v0.35.0/cmd/yagura/skilldoc_test.go
+new file mode 100644
+index 0000000..3bf6dd6
+--- /dev/null
++++ b/yagura-v0.35.0/cmd/yagura/skilldoc_test.go
+@@ -0,0 +1,42 @@
++// skilldoc_test.go: the shipped skill doc advertises a fixed MCP tool count
++// (".claude/skills/yagura/SKILL.md" → "exposes N MCP tools"). That prose drifts
++// silently as tools are added. This guard ties it to the actual registered count
++// so a mismatch fails CI — "逸脱を物理的に潰す" applied to the skill doc.
++package main
++
++import (
++	"os"
++	"regexp"
++	"strconv"
++	"testing"
++	"time"
++
++	"github.com/shizukutanaka/yagura/internal/mcp"
++	"github.com/shizukutanaka/yagura/internal/registry"
++)
++
++func TestSkillDoc_ToolCountMatchesRegistered(t *testing.T) {
++	// actual registered tool count (same path RegisterDefaultTools uses at startup)
++	reg, err := registry.New(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	s := mcp.New("", nil)
++	mcp.RegisterDefaultTools(s, mcp.Deps{Registry: reg, Now: func() time.Time { return time.Unix(0, 0) }})
++	registered := len(s.ToolNames())
++
++	const path = "../../.claude/skills/yagura/SKILL.md"
++	b, err := os.ReadFile(path)
++	if err != nil {
++		t.Fatalf("read %s: %v", path, err)
++	}
++	m := regexp.MustCompile(`exposes (\d+) MCP tools`).FindSubmatch(b)
++	if m == nil {
++		t.Fatalf("%s: could not find an \"exposes N MCP tools\" claim to verify", path)
++	}
++	stated, _ := strconv.Atoi(string(m[1]))
++	if stated != registered {
++		t.Errorf("%s advertises %d MCP tools but %d are registered — update the skill doc",
++			path, stated, registered)
 +	}
 +}
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
