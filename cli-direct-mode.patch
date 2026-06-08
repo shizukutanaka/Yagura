@@ -319,10 +319,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..437b550 100644
+index 9b29eec..95cee18 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,558 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,574 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -864,6 +864,22 @@ index 9b29eec..437b550 100644
 +  icon.svg を 200 配信、head に PWA タグ確認。ガイド `docs/desktop.md` 追加(非 CLI ユーザー向け)。
 +  Sources: W3C Web App Manifest / MDN PWA installability / Chromium `--app` フラグ。
 +
++- **dashboard から GUI でプロジェクト登録(非 CLI ユーザーが「閲覧」だけでなく「操作」できる)**。
++  前イテレーションで dashboard をインストール可能なデスクトップアプリにしたが、真の非 CLI ユーザーは
++  新規登録できず空のアプリで詰まっていた(`yagura register` は CLI のみ、empty-state も「Claude Code を
++  使え」という行き止まり)。`internal/dashboard` に **「+ Add a project」フォーム**(slug / repository
++  必須 + display_name / language / local_path 任意)を追加し、最小の inline JS が `/mcp` の
++  `yagura_register` を叩く。empty-state もフォームへ誘導する文言に修正。
++  **根幹は不変**: 状態変更は **MCP サーバ経由のみ**(=「browser write path を作らない」設計を維持。
++  呼出は `mcp_call_ok` で監査される)、register は manual metadata のみで **sensor 値は scanner 専用の
++  まま(trust base 不変)**、外部依存ゼロ、daemon / MCP / SSR 描画は無変更、MCP tool 数 62・package 数 50
++  不変。表示は完全 SSR のまま(フォームだけ progressive enhancement、JS 無効でも表示は壊れない)。
++  `YAGURA_MCP_TOKEN` 設定時はフォームが token を付けられず 401 → CLI 登録を案内(graceful degradation)。
++  テスト: dashboard HTML に form / `yagura_register` / `/mcp` / 各 input、empty-state がフォーム誘導、
++  旧 CLI 行き止まり文言が消えたこと。live dogfood: フォームの送る exact `/mcp` 呼出 → register ok →
++  dashboard が SSR 再描画で breeze を表示 → 監査ログに `mcp_call_ok target=yagura_register`。
++  README / QUICKSTART / docs/desktop.md の「read-only」記述を「read-mostly(register のみ MCP 経由)」へ更新。
++
 +### What's not yet
 +
 +- `vulns` / `scorecard` の CLG 化(現状 sensor で scanner 専用)。
@@ -946,7 +962,7 @@ index bc406e1..dad7c59 100644
  - `internal/telemetry` — internal stats
  - `internal/metrics` — counter / gauge primitives
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..10ae549 100644
+index 986f84e..85ee18c 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -967,10 +983,13 @@ index 986f84e..10ae549 100644
  │  │  - HTTP hook receiver                          │  │
  │  │  - Prometheus /metrics                         │  │
  │  │  - .well-known/mcp (2026 spec)                 │  │
-@@ -60,6 +60,17 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
+@@ -58,7 +58,20 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
+ - **Local-first.** Binds to `127.0.0.1` by default. State lives in `~/.yagura/state/` as JSON files.
+ - **Read-default, write-explicit.** Yagura never writes back to GitHub. Disk writes require `write: true`.
  - **Append-only audit.** Every MCP call recorded in JSONL with hash chain for tamper detection.
- - **MCP-first.** Designed to be invoked by an AI agent, not clicked on. The HTML dashboard at `/dashboard` is read-only.
- 
+-- **MCP-first.** Designed to be invoked by an AI agent, not clicked on. The HTML dashboard at `/dashboard` is read-only.
++- **MCP-first.** Designed to be invoked by an AI agent, not clicked on. The HTML dashboard at `/dashboard` is read-mostly: its one state-changing action (registering a project) is sent to the MCP server and audited like any other call — sensor data stays scanner-only.
++
 +## Desktop app (no terminal required)
 +
 +Prefer not to use the command line? The dashboard is an **installable web app
@@ -978,14 +997,15 @@ index 986f84e..10ae549 100644
 +icon that opens in its own window, like a native app. On Windows, double-click
 +`yagura-tray.exe` to start the daemon, get a tray icon, and open the dashboard
 +as an app window; on macOS/Linux, run `yagura-tray` for the same one-click
-+launch. This adds nothing to the core — the daemon and the 62 MCP tools are
++launch. From the app you can **register your first project with a form** (no
++terminal needed) — it goes through the MCP server and is audited like any other
++call. This adds nothing to the core — the daemon and the 62 MCP tools are
 +unchanged; the desktop app is just the dashboard made installable via web
 +standards. See [docs/desktop.md](docs/desktop.md).
-+
+ 
  ## Install
  
- ### Pre-built binary (recommended)
-@@ -96,6 +107,21 @@ Requires Go 1.22+. No other build tools.
+@@ -96,6 +109,21 @@ Requires Go 1.22+. No other build tools.
  make build-all          # → bin/yagura-{linux,darwin,windows}-{amd64,arm64}{.exe}
  ```
  
@@ -1007,7 +1027,7 @@ index 986f84e..10ae549 100644
  ## Quickstart
  
  ```bash
-@@ -114,7 +140,7 @@ curl -sS -X POST http://127.0.0.1:8090/mcp -H 'Content-Type: application/json' -
+@@ -114,7 +142,7 @@ curl -sS -X POST http://127.0.0.1:8090/mcp -H 'Content-Type: application/json' -
      "arguments":{
        "slug":"breeze",
        "repository":"shizukutanaka/breeze",
@@ -1016,7 +1036,7 @@ index 986f84e..10ae549 100644
        "language":"javascript"
      }
    }}'
-@@ -151,7 +177,17 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
+@@ -151,7 +179,17 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
  
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
  
@@ -1035,7 +1055,7 @@ index 986f84e..10ae549 100644
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
-@@ -159,6 +195,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -159,6 +197,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  |---|---|---|
  | Inventory | `list`, `get`, `search`, `today`, `stats`, `register`, `unregister`, `update` | Manage the portfolio |
  | Security `[S]` | `vulns`, `scorecard`, `secretscan`, `sbom`, `gha_audit`, `pin_drift`, `ai_verify`, `test_audit`, `quality_check` | Computational sensors |
@@ -1044,7 +1064,7 @@ index 986f84e..10ae549 100644
  | Harness `[G]` | `agents_md`, `feature_list`, `progress_file`, `init_sh`, `harness_recommend` | Generate handoff artifacts |
  | Self-audit `[G]` | `harness_coverage` | Fowler matrix self-check |
  | Alerts | `alert_fix`, `alert_resolve` | Lifecycle: active / resolved / snoozed |
-@@ -166,6 +204,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -166,6 +206,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  | Handoff | 8 tools | Plan / Run / Handoff for cross-session work |
  | Observability | `hook_timeline`, `hook_stats`, `agent_status`, `quota_report` | Claude Code activity |
  | Graph | 3 tools | Cross-project dependencies |
@@ -1053,7 +1073,7 @@ index 986f84e..10ae549 100644
  
  Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
  
-@@ -239,6 +279,8 @@ sha256sum -c SHA256SUMS
+@@ -239,6 +281,8 @@ sha256sum -c SHA256SUMS
  │   ├── MCP_TOOLS.md
  │   ├── WINDOWS.md
  │   ├── security-spec.md
@@ -4761,9 +4781,18 @@ index 689c182..c9a475b 100644
  **Arguments:**
  
 diff --git a/yagura-v0.35.0/docs/QUICKSTART.md b/yagura-v0.35.0/docs/QUICKSTART.md
-index 62e02cd..3142700 100644
+index 62e02cd..b34cb24 100644
 --- a/yagura-v0.35.0/docs/QUICKSTART.md
 +++ b/yagura-v0.35.0/docs/QUICKSTART.md
+@@ -165,7 +165,7 @@ open      http://127.0.0.1:8090/dashboard   # macOS
+ start     http://127.0.0.1:8090/dashboard   # Windows
+ ```
+ 
+-The dashboard is read-only — every action goes through the MCP server, never through the browser.
++The dashboard is read-mostly — apart from the "Add a project" form (which sends an audited `yagura_register` to the MCP server), every action goes through the MCP server, not a separate browser write path.
+ 
+ ## 10. Stop
+ 
 @@ -177,7 +177,7 @@ The process drains for 5 seconds (`/readyz` returns 503) then shuts down gracefu
  
  ## What next?
@@ -4775,10 +4804,10 @@ index 62e02cd..3142700 100644
  - [security-spec.md](security-spec.md) — threat model.
 diff --git a/yagura-v0.35.0/docs/desktop.md b/yagura-v0.35.0/docs/desktop.md
 new file mode 100644
-index 0000000..692b291
+index 0000000..011b4e5
 --- /dev/null
 +++ b/yagura-v0.35.0/docs/desktop.md
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,65 @@
 +# Yagura as a desktop app (no terminal required)
 +
 +Yagura's core is a single local daemon, but you don't need the command line to
@@ -4816,12 +4845,24 @@ index 0000000..692b291
 +`/dashboard/sw.js`, which is what makes it installable and resilient to brief
 +network blips.
 +
-+## 3. What you can see
++## 3. Add your first project (no terminal)
 +
-+The dashboard is a read-only overview: every project, its stage, CI status,
-+security signals, staleness, and (if configured) agent quota. It refreshes on
-+reload. Actions still go through the MCP server by design — the browser never
-+mutates state directly.
++A fresh dashboard is empty. Use the **+ Add a project** form at the top: enter a
++slug (e.g. `breeze`) and a `owner/repo` repository, and click **Register**. The
++form sends a `yagura_register` call to the MCP server (the same audited path the
++CLI and agents use), then reloads to show your project.
++
++> If this instance was started with `YAGURA_MCP_TOKEN`, the form can't attach the
++> token, so it will ask you to register from the CLI instead. The default local
++> setup has no token, so the form just works.
++
++## 4. What you can see
++
++The rest of the dashboard is a read-only overview: every project, its stage, CI
++status, security signals, staleness, and (if configured) agent quota. It
++refreshes on reload. Apart from the register form, the browser never mutates
++state directly — and even that goes through the MCP server, so sensor data stays
++scanner-only.
 +
 +## Notes
 +
@@ -6584,10 +6625,23 @@ index af23d66..6b601a7 100644
  
  // envInt は環境変数を int として読む。未設定 or parse 失敗時は def を返す。
 diff --git a/yagura-v0.35.0/internal/dashboard/dashboard.go b/yagura-v0.35.0/internal/dashboard/dashboard.go
-index 6981102..53166de 100644
+index 6981102..cfb07b0 100644
 --- a/yagura-v0.35.0/internal/dashboard/dashboard.go
 +++ b/yagura-v0.35.0/internal/dashboard/dashboard.go
-@@ -55,14 +55,14 @@ func New(reg *registry.Registry, logger *slog.Logger) (*Handler, error) {
+@@ -2,7 +2,11 @@
+ //
+ // 設計判断:
+ //   - zero-dep: html/template のみ(stdlib)
+-//   - サーバサイドレンダリング only(JS なし、最小帯域)
++//   - サーバサイドレンダリング基本(最小帯域)。表示は完全 SSR。
++//   - progressive enhancement: 「+ Add a project」フォームだけは小さな inline JS で
++//     /mcp(yagura_register)を叩く。非 CLI ユーザーが GUI から登録できるようにするため。
++//     JS が無くても表示は壊れない。状態変更は MCP サーバ経由のみ(監査される。sensor 値は
++//     scanner 専用のまま=trust base は不変)。
+ //   - 単一ページ: 全プロジェクトをテーブルで一覧表示
+ //   - スタイル: インライン CSS(外部リソース読込なし)
+ //   - 200ms 以内のレスポンスを目標(in-memory データなので余裕)
+@@ -55,14 +59,14 @@ func New(reg *registry.Registry, logger *slog.Logger) (*Handler, error) {
  		logger = slog.Default()
  	}
  	tmpl, err := template.New("dashboard").Funcs(template.FuncMap{
@@ -6610,7 +6664,7 @@ index 6981102..53166de 100644
  	}).Parse(htmlTemplate)
  	if err != nil {
  		return nil, fmt.Errorf("parse template: %w", err)
-@@ -87,6 +87,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+@@ -87,6 +91,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -6624,7 +6678,7 @@ index 6981102..53166de 100644
  	now := h.now()
  	projects := h.registry.List()
  	sort.SliceStable(projects, func(i, j int) bool {
-@@ -406,6 +413,13 @@ const htmlTemplate = `<!DOCTYPE html>
+@@ -406,6 +417,13 @@ const htmlTemplate = `<!DOCTYPE html>
  <meta charset="UTF-8">
  <title>Yagura Portfolio Dashboard</title>
  <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -6638,7 +6692,49 @@ index 6981102..53166de 100644
  <style>
  * { box-sizing: border-box; margin: 0; padding: 0; }
  html { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
-@@ -653,7 +667,8 @@ a:focus-visible {
+@@ -458,6 +476,17 @@ tr:hover td { background: #161b22; }
+ footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #30363d; color: #6e7681; font-size: 12px; text-align: center; }
+ .empty { text-align: center; padding: 40px; color: #8b949e; }
+ .empty code { background: #21262d; padding: 2px 8px; border-radius: 3px; }
++.addproj { margin-bottom: 24px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; }
++.addproj > summary { cursor: pointer; padding: 12px 16px; font-weight: 600; color: #e6edf3; user-select: none; }
++.addproj[open] > summary { border-bottom: 1px solid #30363d; }
++.addproj form { padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: end; }
++.addproj label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
++.addproj input { width: 100%; height: 36px; padding: 0 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; }
++.addproj input:focus { outline: none; border-color: #58a6ff; }
++.addproj .actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
++.addproj button { height: 36px; padding: 0 16px; background: #238636; border: none; border-radius: 6px; color: #fff; font-weight: 600; cursor: pointer; }
++.addproj button:hover { background: #2ea043; }
++.addproj .msg { color: #8b949e; font-size: 12px; }
+ .summary { color: #8b949e; font-size: 12px; margin-bottom: 12px; }
+ 
+ /* ─── WCAG 2.1 AA accessibility ─────────────────────────── */
+@@ -560,10 +589,22 @@ a:focus-visible {
+     <div class="kpi {{if gt .Stale 0}}warn{{else}}ok{{end}}" role="status"><div class="label">Stale ≥14d</div><div class="val">{{.Stale}}</div></div>
+   </div>
+ 
++  <details class="addproj" {{if eq .Total 0}}open{{end}}>
++    <summary>+ Add a project</summary>
++    <form id="addproj-form" autocomplete="off">
++      <div><label for="ap-slug">Slug (a-z0-9-)</label><input id="ap-slug" name="slug" required pattern="[a-z0-9][a-z0-9-]{0,49}" placeholder="breeze"></div>
++      <div><label for="ap-repo">Repository (owner/repo)</label><input id="ap-repo" name="repository" required placeholder="shizukutanaka/breeze"></div>
++      <div><label for="ap-name">Display name (optional)</label><input id="ap-name" name="display_name" placeholder="Breeze"></div>
++      <div><label for="ap-lang">Language (optional)</label><input id="ap-lang" name="language" placeholder="go"></div>
++      <div><label for="ap-path">Local path (optional)</label><input id="ap-path" name="local_path" placeholder="/home/you/code/breeze"></div>
++      <div class="actions"><button type="submit">Register</button><span id="addproj-msg" class="msg" role="status" aria-live="polite"></span></div>
++    </form>
++  </details>
++
+   {{if eq .Total 0}}
+   <div class="empty" role="region" aria-label="Empty portfolio">
+     No projects registered yet.<br>
+-    Use the MCP tool <code>yagura_register</code> from Claude Code to add one.
++    Add your first one with the <strong>+ Add a project</strong> form above — no terminal needed.
+   </div>
+   {{else}}
+   <table aria-label="Registered projects">
+@@ -653,7 +694,29 @@ a:focus-visible {
    {{end}}
    </main>
  
@@ -6646,6 +6742,27 @@ index 6981102..53166de 100644
 +  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.35.0</footer>
  </div>
 +<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/dashboard/sw.js',{scope:'/dashboard'}).catch(function(){});}</script>
++<script>
++(function(){
++  var f=document.getElementById('addproj-form'); if(!f)return;
++  var msg=document.getElementById('addproj-msg');
++  f.addEventListener('submit',function(e){
++    e.preventDefault();
++    var args={};
++    ['slug','repository','display_name','language','local_path'].forEach(function(k){
++      var el=f.elements[k]; if(el&&el.value.trim())args[k]=el.value.trim();
++    });
++    msg.textContent='Registering…';
++    fetch('/mcp',{method:'POST',headers:{'Content-Type':'application/json'},
++      body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'yagura_register',arguments:args}})})
++      .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
++      .then(function(j){ if(j.error) throw new Error((j.error&&j.error.message)||'register failed');
++        msg.textContent='Registered. Reloading…'; location.reload(); })
++      .catch(function(err){ msg.textContent='Could not register: '+err.message+
++        ' — if this instance needs a token, use the CLI: yagura register <slug> <owner/repo>'; });
++  });
++})();
++</script>
  </body>
  </html>`
 diff --git a/yagura-v0.35.0/internal/dashboard/pwa.go b/yagura-v0.35.0/internal/dashboard/pwa.go
@@ -6740,10 +6857,10 @@ index 0000000..3c7487c
 +}
 diff --git a/yagura-v0.35.0/internal/dashboard/pwa_test.go b/yagura-v0.35.0/internal/dashboard/pwa_test.go
 new file mode 100644
-index 0000000..3c94a81
+index 0000000..d2b4928
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/dashboard/pwa_test.go
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,137 @@
 +package dashboard
 +
 +import (
@@ -6855,6 +6972,30 @@ index 0000000..3c94a81
 +	w := get(t, newPWAHandler(t), "/dashboard/")
 +	if w.Code != 200 || !strings.Contains(w.Body.String(), "Yagura") {
 +		t.Errorf("unknown subpath should render dashboard: code=%d", w.Code)
++	}
++}
++
++func TestDashboard_AddProjectForm(t *testing.T) {
++	// fresh (0 projects): the add-project form must be present and open,
++	// and it must target the MCP yagura_register tool (state changes go via MCP).
++	w := get(t, newPWAHandler(t), "/dashboard")
++	html := w.Body.String()
++	for _, want := range []string{
++		`id="addproj-form"`,
++		`class="addproj"`,
++		"yagura_register",
++		"/mcp",
++		`name="slug"`,
++		`name="repository"`,
++		"+ Add a project", // empty-state points to the form, not the CLI
++	} {
++		if !strings.Contains(html, want) {
++			t.Errorf("dashboard HTML missing %q", want)
++		}
++	}
++	// the old CLI-only dead-end message must be gone
++	if strings.Contains(html, "from Claude Code to add one") {
++		t.Error("empty state still tells non-CLI users to use Claude Code")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/harness/agentconfig_audit.go b/yagura-v0.35.0/internal/harness/agentconfig_audit.go
