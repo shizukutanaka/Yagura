@@ -319,10 +319,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..dab3ee0 100644
+index 9b29eec..788caba 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,496 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,520 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -802,6 +802,30 @@ index 9b29eec..dab3ee0 100644
 +  Sources: arXiv 2506.06384(heuristic injection detection)/ OWASP LLM01:2025 / 多言語 web 調査
 +  (en defense-in-depth, zh 多层防御, ko 신뢰 경계 = LLM 独立サーバ層)。
 +
++- **`agent_event`: 任意エージェントの event を OTel GenAI semconv へ正規化(汎用化・
++  deepresearch・新 package `internal/agentevent`・MCP tool #61)**。「Claude Code だけでなく
++  汎用に機能する仕組み」: Yagura の governance / MCP サーフェスは元々エージェント非依存だが、
++  observability の取り込み口だけが Claude Code の hook 形式に結合していた(`/hooks/claude-code`)。
++  深掘り調査の知見: 各エージェントの hook 形式は異なる(Claude Code 12+ events / Gemini CLI
++  10 events / Codex は hook 無し)が lifecycle 概念は共通で、ベンダー中立の標準は
++  **OpenTelemetry GenAI semantic conventions**(2026, semconv 1.40.0:
++  `gen_ai.operation.name`=execute_tool/invoke_agent/create_agent/chat、`gen_ai.tool.name`、
++  `gen_ai.agent.name`、`gen_ai.conversation.id`、`error.type`)。AGENTS.md は既に
++  Linux Foundation(AAIF)の cross-tool 標準で Yagura は元々生成済み。`Normalize(raw)` が
++  Claude Code / Gemini CLI / Codex / 汎用 / OTel 形式を自動判定し、フィールド別名を吸収して
++  canonical Event(agent / operation / phase / tool / session / error_type / duration)へ写し、
++  `OTel()` で `gen_ai.*` attribute bag を出す。独自語彙を作らず標準語彙へ写すことで OTel 対応の
++  任意ツールと相互運用でき、hook_timeline / hook_stats / telemetry を「どのエージェントでも」
++  効かせる土台になる。MCP tool `yagura_agent_event`(`{event}` → `{normalized, otel,
++  source_format}`)。LLM 不使用。新 package(48→49)、tool 数 60 → **61**、stdlib のみ
++  (ADR-0001)。テスト: Claude Code 各 hook(Pre/Post/Failure/Stop/Subagent/SessionStart)/
++  OTel passthrough / 汎用+明示 agent(gemini_cli/codex)/ nested error / status→error /
++  OTel 出力(ms→s)/ 決定論 / unknown・chat 既定(`internal/agentevent` 91.1%)+ tool テスト。
++  live dogfood: claude_code / gemini_cli / codex / otel の 4 形式が同一 canonical へ正規化。
++  README に「Other agents」節を追加。`MCP_TOOLS.md` 再生成。Sources: OpenTelemetry GenAI
++  semconv 1.40.0(gen-ai-agent-spans / gen-ai-spans)/ AGENTS.md(agents.md, AAIF)/
++  Gemini CLI hooks docs / 各エージェント hook 比較(lilting.ch)。
++
 +### What's not yet
 +
 +- `vulns` / `scorecard` の CLG 化(現状 sensor で scanner 専用)。
@@ -820,7 +844,7 @@ index 9b29eec..dab3ee0 100644
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
 diff --git a/yagura-v0.35.0/CLAUDE.md b/yagura-v0.35.0/CLAUDE.md
-index bc406e1..499419d 100644
+index bc406e1..48db9f9 100644
 --- a/yagura-v0.35.0/CLAUDE.md
 +++ b/yagura-v0.35.0/CLAUDE.md
 @@ -21,19 +21,25 @@ cortex flywheel 4 段階すべてを単体で機械化:
@@ -828,13 +852,13 @@ index bc406e1..499419d 100644
  - code generation tool(yagura は audit/orchestrate のみ)
  
 -## Map — 31 internal packages
-+## Map — 48 internal packages
++## Map — 49 internal packages
  
  ### Core orchestration
  - `internal/registry` — 23+ projects の inventory CRUD
  - `internal/project` — Project struct + validation
 -- `internal/mcp` — MCP server + 38 tool definitions
-+- `internal/mcp` — MCP server + 60 tool definitions
++- `internal/mcp` — MCP server + 61 tool definitions
  - `internal/audit` — JSONL audit log + replay
  - `internal/config` — env / flag 設定
  
@@ -871,8 +895,18 @@ index bc406e1..499419d 100644
  
  ### Graph / dependencies
  - `internal/projectgraph` — depends_on graph(neighbors / impact / stats)
+@@ -60,6 +77,9 @@ cortex flywheel 4 段階すべてを単体で機械化:
+ - `internal/alertfix` — health signal aggregator + rule-based recommendation ★ v0.27
+ 
+ ### Observation / meta
++- `internal/agentevent` — 任意エージェント(Claude Code/Gemini CLI/Codex/OTel/汎用)の
++  lifecycle イベントを OpenTelemetry GenAI semconv 整合の canonical event へ正規化
++  (observability を Claude Code 専用でなく汎用に。MCP `yagura_agent_event`)★ v0.35
+ - `internal/dashboard` — HTML dashboard (薄め)
+ - `internal/telemetry` — internal stats
+ - `internal/metrics` — counter / gauge primitives
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..a328fc6 100644
+index 986f84e..1c39917 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -880,7 +914,7 @@ index 986f84e..a328fc6 100644
  **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
  
 -Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
-+Status: **v0.35.0** — 60 MCP tools, 48 internal packages, CLI direct mode, 30 consecutive reproducible releases.
++Status: **v0.35.0** — 61 MCP tools, 49 internal packages, CLI direct mode, 30 consecutive reproducible releases.
  
  ---
  
@@ -889,7 +923,7 @@ index 986f84e..a328fc6 100644
  │  ┌────────────────────────────────────────────────┐  │
  │  │  yagura daemon (single binary, ~9 MB)          │  │
 -│  │  - 46 MCP tools                                │  │
-+│  │  - 60 MCP tools                                │  │
++│  │  - 61 MCP tools                                │  │
  │  │  - HTTP hook receiver                          │  │
  │  │  - Prometheus /metrics                         │  │
  │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -924,16 +958,26 @@ index 986f84e..a328fc6 100644
        "language":"javascript"
      }
    }}'
-@@ -151,7 +166,7 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
+@@ -151,7 +166,17 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
  
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
  
 -## MCP tools (46 total)
-+## MCP tools (60 total)
++### Other agents (Gemini CLI, Codex, custom)
++
++Yagura is agent-agnostic. Its 61 MCP tools work with **any** MCP client, and
++`yagura_agent_event` normalizes any agent's lifecycle event — Claude Code,
++Gemini CLI, Codex, raw OpenTelemetry, or a generic shape — into a vendor-neutral
++canonical event aligned to the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
++(`gen_ai.operation.name`, `gen_ai.tool.name`, …). Point your agent's hooks at a
++thin forwarder that calls `yagura_agent_event`, and the same observability and
++governance tools apply regardless of which agent you run.
++
++## MCP tools (61 total)
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
-@@ -159,6 +174,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -159,6 +184,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  |---|---|---|
  | Inventory | `list`, `get`, `search`, `today`, `stats`, `register`, `unregister`, `update` | Manage the portfolio |
  | Security `[S]` | `vulns`, `scorecard`, `secretscan`, `sbom`, `gha_audit`, `pin_drift`, `ai_verify`, `test_audit`, `quality_check` | Computational sensors |
@@ -942,7 +986,7 @@ index 986f84e..a328fc6 100644
  | Harness `[G]` | `agents_md`, `feature_list`, `progress_file`, `init_sh`, `harness_recommend` | Generate handoff artifacts |
  | Self-audit `[G]` | `harness_coverage` | Fowler matrix self-check |
  | Alerts | `alert_fix`, `alert_resolve` | Lifecycle: active / resolved / snoozed |
-@@ -166,6 +183,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -166,6 +193,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  | Handoff | 8 tools | Plan / Run / Handoff for cross-session work |
  | Observability | `hook_timeline`, `hook_stats`, `agent_status`, `quota_report` | Claude Code activity |
  | Graph | 3 tools | Cross-project dependencies |
@@ -951,7 +995,7 @@ index 986f84e..a328fc6 100644
  
  Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
  
-@@ -239,6 +258,8 @@ sha256sum -c SHA256SUMS
+@@ -239,6 +268,8 @@ sha256sum -c SHA256SUMS
  │   ├── MCP_TOOLS.md
  │   ├── WINDOWS.md
  │   ├── security-spec.md
@@ -3946,10 +3990,10 @@ index 0000000..dc7fbf7
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
-index cfb6e51..5fe2d07 100644
+index cfb6e51..9ac229a 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
 +++ b/yagura-v0.35.0/cmd/yagura/integration_test.go
-@@ -164,6 +164,23 @@ func TestIntegration_MCPToolsList(t *testing.T) {
+@@ -164,6 +164,25 @@ func TestIntegration_MCPToolsList(t *testing.T) {
  		// v0.27 — cortex flywheel ④ Alert-Fix
  		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
  		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",
@@ -3970,6 +4014,8 @@ index cfb6e51..5fe2d07 100644
 +		"yagura_ops_risk",
 +		// v0.35 — 間接プロンプトインジェクション検出
 +		"yagura_inject_scan",
++		// v0.35 — 任意エージェントの event 正規化(OTel GenAI semconv)
++		"yagura_agent_event",
  	}
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
@@ -4200,14 +4246,14 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..da2ceff 100644
+index 689c182..15c324a 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
  # MCP tools reference
  
 -Generated from a live yagura — **46 tools**.
-+Generated from a live yagura — **60 tools**.
++Generated from a live yagura — **61 tools**.
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -4216,7 +4262,7 @@ index 689c182..da2ceff 100644
  - [Harness (guides)](#harness-guides) (8)
  - [Inventory](#inventory) (8)
 -- [Misc](#misc) (8)
-+- [Misc](#misc) (22)
++- [Misc](#misc) (23)
  - [Observability](#observability) (4)
  - [Plan tracking](#plan-tracking) (2)
  - [Security (sensors)](#security-sensors) (10)
@@ -4252,7 +4298,7 @@ index 689c182..da2ceff 100644
  | `query` (string) |  | slug/name/notes/tags を横断する部分一致 |
  | `stage` (string) |  | active / maintenance / paused / archived |
  | `tag` (string) |  | tag 完全一致 (大文字小文字無視) |
-@@ -311,6 +318,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -311,6 +318,30 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ## Misc
  
@@ -4268,10 +4314,22 @@ index 689c182..da2ceff 100644
 +
 +---
 +
++### `yagura_agent_event`
++
++[G] Normalize any agent's lifecycle event (Claude Code/Gemini/Codex/OTel/generic) to OTel GenAI semconv.
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `event` (object) | ★ | the raw lifecycle event object from any agent's hook/telemetry. |
++
++---
++
  ### `yagura_dedupe_stats`
  
  [S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.
-@@ -329,6 +348,95 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -329,6 +360,95 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -4367,7 +4425,7 @@ index 689c182..da2ceff 100644
  ### `yagura_quota_forecast`
  
  [S] Empty-time linreg forecast. Needs ≥3 samples.
-@@ -341,6 +449,57 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -341,6 +461,57 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -4425,7 +4483,7 @@ index 689c182..da2ceff 100644
  ### `yagura_session_load`
  
  [S] Load handoff context. Null if none.
-@@ -366,6 +525,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -366,6 +537,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -4444,7 +4502,7 @@ index 689c182..da2ceff 100644
  ### `yagura_token_stats`
  
  [S] Per-tool byte counts since daemon start.
-@@ -397,6 +568,33 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -397,6 +580,33 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -4478,7 +4536,7 @@ index 689c182..da2ceff 100644
  ## Observability
  
  ### `yagura_agent_status`
-@@ -576,7 +774,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -576,7 +786,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -4488,7 +4546,7 @@ index 689c182..da2ceff 100644
  **Arguments:**
  
 diff --git a/yagura-v0.35.0/docs/QUICKSTART.md b/yagura-v0.35.0/docs/QUICKSTART.md
-index 62e02cd..033f75a 100644
+index 62e02cd..53f8278 100644
 --- a/yagura-v0.35.0/docs/QUICKSTART.md
 +++ b/yagura-v0.35.0/docs/QUICKSTART.md
 @@ -177,7 +177,7 @@ The process drains for 5 seconds (`/readyz` returns 503) then shuts down gracefu
@@ -4496,7 +4554,7 @@ index 62e02cd..033f75a 100644
  ## What next?
  
 -- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 46 tools.
-+- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 60 tools.
++- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 61 tools.
  - [WINDOWS.md](WINDOWS.md) — Task Scheduler / NSSM / Windows service setup.
  - [ARCHITECTURE.md](../ARCHITECTURE.md) — internals and design rationale.
  - [security-spec.md](security-spec.md) — threat model.
@@ -5089,6 +5147,397 @@ index 8e8321b..d089d5f 100644
  ## Current statements
  
  (none — Yagura v0.2.0 has not yet observed CVEs affecting Go that warrant
+diff --git a/yagura-v0.35.0/internal/agentevent/agentevent.go b/yagura-v0.35.0/internal/agentevent/agentevent.go
+new file mode 100644
+index 0000000..3bd6f07
+--- /dev/null
++++ b/yagura-v0.35.0/internal/agentevent/agentevent.go
+@@ -0,0 +1,237 @@
++// Package agentevent は、任意のコーディングエージェント(Claude Code / Gemini CLI /
++// Codex / 汎用 / OpenTelemetry 形式)が発する lifecycle イベントを、ベンダー中立な
++// canonical イベントへ決定論的に正規化する。
++//
++// 動機(Claude Code だけでなく汎用に): Yagura の governance / MCP サーフェスは元々
++// エージェント非依存だが、observability の取り込み口だけが Claude Code の hook 形式に
++// 結合していた(`/hooks/claude-code`)。各エージェントの hook 形式は異なる(Claude Code は
++// 12+ events、Gemini CLI は 10 events、Codex は hook 無し)が、lifecycle の概念は共通
++// (pre/post-tool, session start/stop)。
++//
++// 正規化先は **OpenTelemetry GenAI semantic conventions**(2026, semconv 1.40.0)という
++// 業界標準: `gen_ai.operation.name`(execute_tool / invoke_agent / create_agent / chat)、
++// `gen_ai.tool.name`、`gen_ai.agent.name`、`gen_ai.conversation.id`、`error.type`。
++// 独自語彙を作らず標準語彙へ写すことで、OTel 対応の任意のツールと相互運用できる。
++// LLM は呼ばず、フィールドの別名を吸収して決定論的に Event を返す。
++package agentevent
++
++import (
++	"encoding/json"
++	"strings"
++)
++
++// 既知の OTel gen_ai.operation.name 値。
++const (
++	OpExecuteTool = "execute_tool"
++	OpInvokeAgent = "invoke_agent"
++	OpCreateAgent = "create_agent"
++	OpChat        = "chat"
++)
++
++// Phase は point イベントの位相(span ではなく hook ストリーム向け)。
++const (
++	PhaseStart = "start"
++	PhaseEnd   = "end"
++	PhaseError = "error"
++)
++
++// Event は正規化済みの canonical イベント。
++type Event struct {
++	Agent        string `json:"agent,omitempty"`       // 発生元エージェント(claude_code/gemini_cli/codex/...)
++	Operation    string `json:"operation"`             // OTel gen_ai.operation.name 値
++	Phase        string `json:"phase"`                 // start|end|error
++	Tool         string `json:"tool,omitempty"`        // gen_ai.tool.name
++	Session      string `json:"session,omitempty"`     // gen_ai.conversation.id
++	ErrorType    string `json:"error_type,omitempty"`  // error.type
++	DurationMs   int64  `json:"duration_ms,omitempty"` // gen_ai.client.operation.duration(ms 表現)
++	Timestamp    string `json:"timestamp,omitempty"`   // RFC3339(渡されたまま)
++	SourceFormat string `json:"source_format"`         // 検出した入力形式
++}
++
++// Normalize は raw イベント(map)を canonical Event に正規化する。
++func Normalize(raw map[string]any) Event {
++	e := Event{SourceFormat: detect(raw)}
++
++	rawName := firstString(raw, "gen_ai.operation.name", "hook_event_name", "hookEventName",
++		"event", "event_type", "type", "hook", "operation")
++	e.Tool = firstString(raw, "gen_ai.tool.name", "tool_name", "toolName", "tool")
++	e.Session = firstString(raw, "gen_ai.conversation.id", "conversation_id", "session_id",
++		"sessionId", "session")
++	e.Agent = firstString(raw, "agent", "gen_ai.agent.name", "gen_ai.provider.name", "provider")
++	e.Timestamp = firstString(raw, "timestamp", "time", "ts", "@timestamp")
++	e.ErrorType = extractError(raw)
++	e.DurationMs = firstInt(raw, "duration_ms", "durationMs", "duration")
++
++	if e.Agent == "" {
++		e.Agent = inferAgent(raw, e.SourceFormat)
++	}
++	e.Phase = derivePhase(rawName, raw, e.ErrorType)
++	e.Operation = deriveOperation(rawName, e.Tool)
++	return e
++}
++
++// NormalizeJSON は raw JSON bytes を正規化する。
++func NormalizeJSON(data []byte) (Event, error) {
++	var raw map[string]any
++	if err := json.Unmarshal(data, &raw); err != nil {
++		return Event{}, err
++	}
++	return Normalize(raw), nil
++}
++
++// OTel は Event を OpenTelemetry GenAI semconv の attribute bag に変換する。
++func (e Event) OTel() map[string]any {
++	m := map[string]any{"gen_ai.operation.name": e.Operation}
++	if e.Tool != "" {
++		m["gen_ai.tool.name"] = e.Tool
++	}
++	if e.Agent != "" {
++		m["gen_ai.agent.name"] = e.Agent
++	}
++	if e.Session != "" {
++		m["gen_ai.conversation.id"] = e.Session
++	}
++	if e.ErrorType != "" {
++		m["error.type"] = e.ErrorType
++	}
++	if e.DurationMs > 0 {
++		// OTel の duration metric は秒(double)。ms から換算。
++		m["gen_ai.client.operation.duration"] = float64(e.DurationMs) / 1000.0
++	}
++	return m
++}
++
++// detect は入力形式を推定する。
++func detect(raw map[string]any) string {
++	for k := range raw {
++		if strings.HasPrefix(k, "gen_ai.") {
++			return "otel"
++		}
++	}
++	if _, ok := raw["hook_event_name"]; ok {
++		return "claude_code"
++	}
++	if _, ok := raw["hookEventName"]; ok {
++		return "claude_code"
++	}
++	if a := firstString(raw, "agent", "provider"); a != "" {
++		return strings.ToLower(strings.ReplaceAll(a, " ", "_"))
++	}
++	if firstString(raw, "operation", "event", "type", "hook") != "" {
++		return "generic"
++	}
++	return "unknown"
++}
++
++// inferAgent は agent 名が無い場合に形式から推定する。
++func inferAgent(raw map[string]any, format string) string {
++	switch format {
++	case "claude_code":
++		return "claude_code"
++	case "otel", "generic", "unknown":
++		// cwd + hook 形式は Claude Code の手掛かりだが断定はしない。
++		if _, ok := raw["cwd"]; ok {
++			if _, ok2 := raw["tool_name"]; ok2 {
++				return "claude_code"
++			}
++		}
++		return format
++	default:
++		return format
++	}
++}
++
++// derivePhase は event 名/状態/エラーから位相を決める(error > start > end の優先)。
++func derivePhase(rawName string, raw map[string]any, errType string) string {
++	n := strings.ToLower(rawName)
++	status := strings.ToLower(firstString(raw, "status", "result", "outcome"))
++	if errType != "" || strings.Contains(n, "fail") || strings.Contains(n, "error") ||
++		status == "error" || status == "failure" || status == "failed" {
++		return PhaseError
++	}
++	if p := strings.ToLower(firstString(raw, "phase")); p != "" {
++		return p
++	}
++	switch {
++	case strings.Contains(n, "pre") || strings.Contains(n, "before") ||
++		strings.Contains(n, "start") || strings.Contains(n, "submit") || strings.Contains(n, "begin"):
++		return PhaseStart
++	case strings.Contains(n, "post") || strings.Contains(n, "after") ||
++		strings.Contains(n, "stop") || strings.Contains(n, "end") || strings.Contains(n, "complete"):
++		return PhaseEnd
++	}
++	return PhaseEnd
++}
++
++// deriveOperation は event 名/tool 有無から OTel operation 値へ写す。
++func deriveOperation(rawName, tool string) string {
++	n := strings.ToLower(rawName)
++	switch n {
++	case OpExecuteTool, OpInvokeAgent, OpCreateAgent, OpChat:
++		return n
++	}
++	switch {
++	case strings.Contains(n, "tool"):
++		return OpExecuteTool
++	case strings.Contains(n, "subagent") || strings.Contains(n, "agent"):
++		return OpInvokeAgent
++	case strings.Contains(n, "prompt") || strings.Contains(n, "message") ||
++		strings.Contains(n, "chat") || strings.Contains(n, "user"):
++		return OpChat
++	case strings.Contains(n, "session") || strings.Contains(n, "stop") || strings.Contains(n, "start"):
++		return OpInvokeAgent
++	}
++	if tool != "" {
++		return OpExecuteTool
++	}
++	return OpChat
++}
++
++// ─── helpers ─────────────────────────────────────────────────
++
++func firstString(m map[string]any, keys ...string) string {
++	for _, k := range keys {
++		if v, ok := m[k]; ok {
++			if s, ok := v.(string); ok && s != "" {
++				return s
++			}
++		}
++	}
++	return ""
++}
++
++func firstInt(m map[string]any, keys ...string) int64 {
++	for _, k := range keys {
++		if v, ok := m[k]; ok {
++			switch n := v.(type) {
++			case float64:
++				return int64(n)
++			case int64:
++				return n
++			case int:
++				return int64(n)
++			}
++		}
++	}
++	return 0
++}
++
++// extractError は error.type(literal)/ nested error.type / error 文字列 / tool_error を吸収。
++func extractError(m map[string]any) string {
++	if s := firstString(m, "error.type", "errorType", "tool_error", "error_message"); s != "" {
++		return s
++	}
++	if v, ok := m["error"]; ok {
++		switch e := v.(type) {
++		case string:
++			if e != "" {
++				return e
++			}
++		case map[string]any:
++			if s := firstString(e, "type", "code", "message"); s != "" {
++				return s
++			}
++		}
++	}
++	return ""
++}
+diff --git a/yagura-v0.35.0/internal/agentevent/agentevent_test.go b/yagura-v0.35.0/internal/agentevent/agentevent_test.go
+new file mode 100644
+index 0000000..2c6e268
+--- /dev/null
++++ b/yagura-v0.35.0/internal/agentevent/agentevent_test.go
+@@ -0,0 +1,142 @@
++package agentevent
++
++import (
++	"encoding/json"
++	"testing"
++)
++
++func norm(t *testing.T, js string) Event {
++	t.Helper()
++	e, err := NormalizeJSON([]byte(js))
++	if err != nil {
++		t.Fatalf("normalize: %v", err)
++	}
++	return e
++}
++
++func TestClaudeCode_PreToolUse(t *testing.T) {
++	e := norm(t, `{"hook_event_name":"PreToolUse","tool_name":"Bash","session_id":"abc","cwd":"/x"}`)
++	if e.SourceFormat != "claude_code" || e.Agent != "claude_code" {
++		t.Errorf("detect/agent: %+v", e)
++	}
++	if e.Operation != OpExecuteTool || e.Phase != PhaseStart || e.Tool != "Bash" || e.Session != "abc" {
++		t.Errorf("unexpected: %+v", e)
++	}
++}
++
++func TestClaudeCode_PostToolUseFailure(t *testing.T) {
++	e := norm(t, `{"hook_event_name":"PostToolUseFailure","tool_name":"Edit","tool_error":"timeout"}`)
++	if e.Operation != OpExecuteTool || e.Phase != PhaseError || e.ErrorType != "timeout" {
++		t.Errorf("error phase not derived: %+v", e)
++	}
++}
++
++func TestClaudeCode_StopAndSubagent(t *testing.T) {
++	if e := norm(t, `{"hook_event_name":"Stop","session_id":"s"}`); e.Operation != OpInvokeAgent || e.Phase != PhaseEnd {
++		t.Errorf("Stop: %+v", e)
++	}
++	if e := norm(t, `{"hook_event_name":"SubagentStop"}`); e.Operation != OpInvokeAgent || e.Phase != PhaseEnd {
++		t.Errorf("SubagentStop: %+v", e)
++	}
++	if e := norm(t, `{"hook_event_name":"SessionStart"}`); e.Operation != OpInvokeAgent || e.Phase != PhaseStart {
++		t.Errorf("SessionStart: %+v", e)
++	}
++}
++
++func TestOTelFormat_PassThrough(t *testing.T) {
++	e := norm(t, `{"gen_ai.operation.name":"execute_tool","gen_ai.tool.name":"search","gen_ai.conversation.id":"c1","gen_ai.agent.name":"my-agent"}`)
++	if e.SourceFormat != "otel" {
++		t.Errorf("should detect otel, got %s", e.SourceFormat)
++	}
++	if e.Operation != OpExecuteTool || e.Tool != "search" || e.Session != "c1" || e.Agent != "my-agent" {
++		t.Errorf("otel mapping: %+v", e)
++	}
++}
++
++func TestGenericAndExplicitAgent(t *testing.T) {
++	// explicit agent (e.g. gemini_cli) + generic event names
++	e := norm(t, `{"agent":"gemini_cli","event":"beforeToolCall","tool":"write_file","session":"g1"}`)
++	if e.Agent != "gemini_cli" {
++		t.Errorf("agent: %+v", e)
++	}
++	if e.Operation != OpExecuteTool || e.Phase != PhaseStart || e.Tool != "write_file" {
++		t.Errorf("generic mapping: %+v", e)
++	}
++	// status-based error
++	e = norm(t, `{"agent":"codex","type":"toolResult","tool":"shell","status":"failure"}`)
++	if e.Phase != PhaseError {
++		t.Errorf("status failure → error: %+v", e)
++	}
++}
++
++func TestErrorNested(t *testing.T) {
++	e := norm(t, `{"event":"tool.error","tool":"x","error":{"type":"rate_limit"}}`)
++	if e.ErrorType != "rate_limit" || e.Phase != PhaseError {
++		t.Errorf("nested error: %+v", e)
++	}
++}
++
++func TestOTelOutput(t *testing.T) {
++	e := norm(t, `{"hook_event_name":"PreToolUse","tool_name":"Bash","session_id":"s","duration_ms":2500}`)
++	o := e.OTel()
++	if o["gen_ai.operation.name"] != OpExecuteTool || o["gen_ai.tool.name"] != "Bash" {
++		t.Errorf("otel out: %+v", o)
++	}
++	if o["gen_ai.client.operation.duration"] != 2.5 {
++		t.Errorf("duration ms→s: %+v", o["gen_ai.client.operation.duration"])
++	}
++}
++
++func TestDeterminism(t *testing.T) {
++	js := `{"hook_event_name":"PostToolUse","tool_name":"Read","session_id":"z"}`
++	a := norm(t, js)
++	b := norm(t, js)
++	ba, _ := json.Marshal(a)
++	bb, _ := json.Marshal(b)
++	if string(ba) != string(bb) {
++		t.Error("Normalize must be deterministic")
++	}
++}
++
++func TestBadJSON(t *testing.T) {
++	if _, err := NormalizeJSON([]byte(`{`)); err == nil {
++		t.Error("expected error for bad json")
++	}
++}
++
++func TestUnknownAndChatDefault(t *testing.T) {
++	// no recognizable fields → unknown format, chat default operation
++	e := norm(t, `{"foo":"bar"}`)
++	if e.SourceFormat != "unknown" || e.Agent != "unknown" || e.Operation != OpChat {
++		t.Errorf("unknown/chat default: %+v", e)
++	}
++	// explicit create_agent passthrough
++	if e := norm(t, `{"operation":"create_agent","agent":"x"}`); e.Operation != OpCreateAgent {
++		t.Errorf("create_agent passthrough: %+v", e)
++	}
++}
++
++func TestAgentInferenceFromOTelWithCwd(t *testing.T) {
++	// gen_ai.* present (otel) but also looks like a Claude Code hook payload
++	e := norm(t, `{"gen_ai.tool.name":"Bash","cwd":"/x","tool_name":"Bash"}`)
++	if e.SourceFormat != "otel" {
++		t.Errorf("format: %+v", e)
++	}
++	if e.Agent != "claude_code" {
++		t.Errorf("agent inference via cwd+tool_name: %+v", e)
++	}
++}
++
++func TestTimestampPassthrough(t *testing.T) {
++	e := norm(t, `{"event":"chat","time":"2026-06-08T00:00:00Z"}`)
++	if e.Timestamp != "2026-06-08T00:00:00Z" {
++		t.Errorf("timestamp: %+v", e)
++	}
++}
++
++func TestExplicitPhase(t *testing.T) {
++	e := norm(t, `{"event":"something","phase":"start","tool":"t"}`)
++	if e.Phase != "start" {
++		t.Errorf("explicit phase should win: %+v", e)
++	}
++}
 diff --git a/yagura-v0.35.0/internal/agentparallel/agentparallel.go b/yagura-v0.35.0/internal/agentparallel/agentparallel.go
 new file mode 100644
 index 0000000..76f4caa
@@ -8201,7 +8650,7 @@ index 0000000..0750148
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..95d27f0 100644
+index 939a67e..d59e759 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
 @@ -11,25 +11,20 @@ import (
@@ -8262,7 +8711,7 @@ index 939a67e..95d27f0 100644
  }
  
  // QuotaMonitor は両 agent の quota 状態を管理する interface。
-@@ -188,21 +188,46 @@ func RegisterDefaultTools(s *Server, d Deps) {
+@@ -188,21 +188,48 @@ func RegisterDefaultTools(s *Server, d Deps) {
  	s.Register(buildHookStatsTool(s))
  	s.Register(buildProgressFileTool(d, s))
  	s.Register(buildInitShTool(d))
@@ -8291,6 +8740,8 @@ index 939a67e..95d27f0 100644
 +	s.Register(buildOpsRiskTool(d))
 +	// [v0.35.0] untrusted content の間接プロンプトインジェクション検出(多言語、S4.3)
 +	s.Register(buildInjectScanTool(d))
++	// [v0.35.0] 任意エージェントの lifecycle イベントを OTel GenAI semconv へ正規化(汎用化)
++	s.Register(buildAgentEventTool(d))
  }
  
  // ─── yagura_list ─────────────────────────────────────────────
@@ -8319,7 +8770,7 @@ index 939a67e..95d27f0 100644
  }
  
  // ─── yagura_get ──────────────────────────────────────────────
-@@ -212,14 +237,14 @@ type listOut struct {
+@@ -212,14 +239,14 @@ type listOut struct {
  // ─── yagura_today ────────────────────────────────────────────
  
  type todayItem struct {
@@ -8342,7 +8793,7 @@ index 939a67e..95d27f0 100644
  }
  
  // ─── yagura_register ─────────────────────────────────────────
-@@ -244,16 +269,16 @@ type todayItem struct {
+@@ -244,16 +271,16 @@ type todayItem struct {
  
  func buildSecretScanTool(d Deps) *Tool {
  	return &Tool{
@@ -8363,7 +8814,7 @@ index 939a67e..95d27f0 100644
  				},
  			},
  		},
-@@ -394,13 +419,13 @@ type SbomGenerator interface {
+@@ -394,13 +421,13 @@ type SbomGenerator interface {
  
  func buildSbomTool(d Deps) *Tool {
  	return &Tool{
@@ -8379,7 +8830,7 @@ index 939a67e..95d27f0 100644
  				},
  			},
  		},
-@@ -442,16 +467,16 @@ type GhaAuditor interface {
+@@ -442,16 +469,16 @@ type GhaAuditor interface {
  
  func buildGhaAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -8399,7 +8850,7 @@ index 939a67e..95d27f0 100644
  				},
  			},
  			"required": []string{"files"},
-@@ -496,19 +521,19 @@ type PinDriftChecker interface {
+@@ -496,19 +523,19 @@ type PinDriftChecker interface {
  
  func buildPinDriftTool(d Deps) *Tool {
  	return &Tool{
@@ -8423,7 +8874,7 @@ index 939a67e..95d27f0 100644
  				},
  			},
  			"required": []string{"files"},
-@@ -611,7 +636,7 @@ func buildPinDriftTool(d Deps) *Tool {
+@@ -611,7 +638,7 @@ func buildPinDriftTool(d Deps) *Tool {
  // 外から注入する設計にする。
  func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
  	return &Tool{
@@ -8432,7 +8883,7 @@ index 939a67e..95d27f0 100644
  		Description: "[S] Per-tool byte counts since daemon start.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -645,7 +670,7 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
+@@ -645,7 +672,7 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
  }
  
  // ─── yagura_graph_neighbors / impact / stats (v0.18.0) ───────
@@ -8441,7 +8892,7 @@ index 939a67e..95d27f0 100644
  // Inspired by cortex (aircloset, 辻 2026/05) "Product Graph" 構想:
  // portfolio の depends_on を semantic graph として AI から探索可能にする。
  
-@@ -658,14 +683,14 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
+@@ -658,14 +685,14 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
  
  func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
  	return &Tool{
@@ -8460,7 +8911,7 @@ index 939a67e..95d27f0 100644
  				"summary_only": map[string]any{"type": "boolean"},
  			},
  		},
-@@ -709,13 +734,13 @@ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
+@@ -709,13 +736,13 @@ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
  // formatQualityResult is MCP-friendly output formatter.
  func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
  	out := map[string]any{
@@ -8481,7 +8932,7 @@ index 939a67e..95d27f0 100644
  	}
  	if !summaryOnly {
  		out["findings"] = res.Findings
-@@ -730,7 +755,7 @@ func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
+@@ -730,7 +757,7 @@ func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
  
  func buildHarnessRecommendTool(d Deps) *Tool {
  	return &Tool{
@@ -8490,7 +8941,7 @@ index 939a67e..95d27f0 100644
  		Description: "[G] Claude Code .claude/ scaffold by slug or language.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -765,8 +790,8 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+@@ -765,8 +792,8 @@ func buildHarnessRecommendTool(d Deps) *Tool {
  
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -8501,7 +8952,7 @@ index 939a67e..95d27f0 100644
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
-@@ -791,7 +816,7 @@ func buildSkillAuditTool(d Deps) *Tool {
+@@ -791,7 +818,7 @@ func buildSkillAuditTool(d Deps) *Tool {
  
  func buildSubagentAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -8510,7 +8961,7 @@ index 939a67e..95d27f0 100644
  		Description: "[G] Subagent .md audit: prompt style, tools, description.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -822,7 +847,7 @@ func buildSubagentAuditTool(d Deps) *Tool {
+@@ -822,7 +849,7 @@ func buildSubagentAuditTool(d Deps) *Tool {
  
  func buildToolsCatalogTool(s *Server) *Tool {
  	return &Tool{
@@ -8519,7 +8970,7 @@ index 939a67e..95d27f0 100644
  		Description: "[G] Full tool details lookup. Use when compact mode hides info you need.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -885,7 +910,7 @@ func buildToolsCatalogTool(s *Server) *Tool {
+@@ -885,7 +912,7 @@ func buildToolsCatalogTool(s *Server) *Tool {
  
  func buildDedupeStatsTool(s *Server) *Tool {
  	return &Tool{
@@ -8528,7 +8979,7 @@ index 939a67e..95d27f0 100644
  		Description: "[S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -905,7 +930,7 @@ func buildDedupeStatsTool(s *Server) *Tool {
+@@ -905,7 +932,7 @@ func buildDedupeStatsTool(s *Server) *Tool {
  
  func buildPlanStatusTool(d Deps, cache plantracker.CacheLike) *Tool {
  	return &Tool{
@@ -8537,7 +8988,7 @@ index 939a67e..95d27f0 100644
  		Description: "[G] Plan.md progress for project. Parses checkboxes + required sections (目的/スコープ/フェーズ/DoD).",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -968,7 +993,7 @@ func loadPlanMd(localPath string) (string, string, error) {
+@@ -968,7 +995,7 @@ func loadPlanMd(localPath string) (string, string, error) {
  
  func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
  	return &Tool{
@@ -8546,7 +8997,7 @@ index 939a67e..95d27f0 100644
  		Description: "[S] Cross-project release readiness ranking. Aggregates Plan/CI/issues/quality/AI-risk.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1123,7 +1148,7 @@ func pickReason(plan plantracker.PlanState, ciStatus string, openCrit int,
+@@ -1123,7 +1150,7 @@ func pickReason(plan plantracker.PlanState, ciStatus string, openCrit int,
  
  func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
  	return &Tool{
@@ -8555,7 +9006,7 @@ index 939a67e..95d27f0 100644
  		Description: "[G] AI code risk audit. 6 categories: auth/billing/data/external/crypto/secret. 2x multiplier inside AI-marker zones.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1222,7 +1247,7 @@ func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
+@@ -1222,7 +1249,7 @@ func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
  
  func buildTestAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -8564,7 +9015,7 @@ index 939a67e..95d27f0 100644
  		Description: "[G] Source-test coverage detection. Go/TS/JS/Python/Rust/Java filename + Rust inline #[cfg(test)] + Python doctest.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1267,7 +1292,7 @@ func buildTestAuditTool(d Deps) *Tool {
+@@ -1267,7 +1294,7 @@ func buildTestAuditTool(d Deps) *Tool {
  
  func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Store) *Tool {
  	return &Tool{
@@ -8573,7 +9024,7 @@ index 939a67e..95d27f0 100644
  		Description: "[S] Aggregate health signals across portfolio. Returns actionable alerts with suggested_tool + args.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1425,15 +1450,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
+@@ -1425,15 +1452,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
  
  func buildAlertResolveTool(store *alertfix.Store) *Tool {
  	return &Tool{
@@ -8594,7 +9045,7 @@ index 939a67e..95d27f0 100644
  			},
  			"required": []string{"alert_id", "action"},
  		},
-@@ -1475,9 +1500,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+@@ -1475,9 +1502,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
  			}
  			st, _ := store.Get(in.AlertID)
  			return map[string]any{
@@ -8607,7 +9058,7 @@ index 939a67e..95d27f0 100644
  				"lifecycle_stats": store.Stats(),
  			}, nil
  		},
-@@ -1492,14 +1517,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+@@ -1492,14 +1519,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
  
  func buildAgentsMdTool(d Deps) *Tool {
  	return &Tool{
@@ -8625,7 +9076,7 @@ index 939a67e..95d27f0 100644
  			},
  			"required": []string{"slug"},
  		},
-@@ -1578,7 +1603,7 @@ func buildAgentsMdTool(d Deps) *Tool {
+@@ -1578,7 +1605,7 @@ func buildAgentsMdTool(d Deps) *Tool {
  
  func buildFeatureListTool(d Deps) *Tool {
  	return &Tool{
@@ -8634,7 +9085,7 @@ index 939a67e..95d27f0 100644
  		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1643,7 +1668,7 @@ func buildFeatureListTool(d Deps) *Tool {
+@@ -1643,7 +1670,7 @@ func buildFeatureListTool(d Deps) *Tool {
  
  func buildHarnessCoverageTool(d Deps) *Tool {
  	return &Tool{
@@ -8643,7 +9094,7 @@ index 939a67e..95d27f0 100644
  		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -1687,11 +1712,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
+@@ -1687,11 +1714,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
  				}
  			}
  			return map[string]any{
@@ -8659,6 +9110,137 @@ index 939a67e..95d27f0 100644
  			}, nil
  		},
  	}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_agentevent.go b/yagura-v0.35.0/internal/mcp/tools_agentevent.go
+new file mode 100644
+index 0000000..6cb5a41
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_agentevent.go
+@@ -0,0 +1,53 @@
++// tools_agentevent.go: yagura_agent_event — 任意のエージェントの lifecycle イベントを
++// ベンダー中立な canonical イベント(OpenTelemetry GenAI semconv 整合)へ正規化する
++// (internal/agentevent)。
++//
++// Yagura の governance / MCP サーフェスは元々エージェント非依存だが、observability の
++// 取り込み口だけが Claude Code の hook 形式に結合していた。本 tool は Claude Code /
++// Gemini CLI / Codex / 汎用 / OTel 形式のイベントを受け、`gen_ai.operation.name`
++// (execute_tool/invoke_agent/chat) 等の標準語彙へ写す。これで hook_timeline / hook_stats /
++// telemetry を「どのエージェントでも」効かせる土台になり、OTel 対応ツールとも相互運用できる。
++// Yagura は LLM を呼ばず、決定論的に正規化する。
++
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++
++	"github.com/shizukutanaka/yagura/internal/agentevent"
++)
++
++func buildAgentEventTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_agent_event",
++		Description: "[G] Normalize any agent's lifecycle event (Claude Code/Gemini/Codex/OTel/generic) to OTel GenAI semconv.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"event": map[string]any{
++					"type":        "object",
++					"description": "the raw lifecycle event object from any agent's hook/telemetry.",
++				},
++			},
++			"required": []string{"event"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Event map[string]any `json:"event"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if len(in.Event) == 0 {
++				return nil, &ToolError{Code: "invalid_input", Message: "event object is required"}
++			}
++			e := agentevent.Normalize(in.Event)
++			return map[string]any{
++				"normalized":    e,
++				"otel":          e.OTel(),
++				"source_format": e.SourceFormat,
++			}, nil
++		},
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_agentevent_test.go b/yagura-v0.35.0/internal/mcp/tools_agentevent_test.go
+new file mode 100644
+index 0000000..44b6508
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_agentevent_test.go
+@@ -0,0 +1,66 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++)
++
++func TestAgentEventTool(t *testing.T) {
++	tool := buildAgentEventTool(Deps{})
++	out, err := tool.Handler(context.Background(), json.RawMessage(`{"event":{"hook_event_name":"PreToolUse","tool_name":"Bash","session_id":"s1","cwd":"/x"}}`))
++	if err != nil {
++		t.Fatalf("handler error: %v", err)
++	}
++	b, _ := json.Marshal(out)
++	var r struct {
++		SourceFormat string `json:"source_format"`
++		Normalized   struct {
++			Operation string `json:"operation"`
++			Phase     string `json:"phase"`
++			Tool      string `json:"tool"`
++			Agent     string `json:"agent"`
++		} `json:"normalized"`
++		OTel map[string]any `json:"otel"`
++	}
++	if err := json.Unmarshal(b, &r); err != nil {
++		t.Fatal(err)
++	}
++	if r.SourceFormat != "claude_code" || r.Normalized.Operation != "execute_tool" ||
++		r.Normalized.Phase != "start" || r.Normalized.Tool != "Bash" || r.Normalized.Agent != "claude_code" {
++		t.Errorf("unexpected normalization: %s", b)
++	}
++	if r.OTel["gen_ai.operation.name"] != "execute_tool" || r.OTel["gen_ai.tool.name"] != "Bash" {
++		t.Errorf("otel bag: %+v", r.OTel)
++	}
++}
++
++func TestAgentEventTool_OTelInput(t *testing.T) {
++	tool := buildAgentEventTool(Deps{})
++	out, _ := tool.Handler(context.Background(), json.RawMessage(`{"event":{"gen_ai.operation.name":"invoke_agent","gen_ai.agent.name":"gemini"}}`))
++	b, _ := json.Marshal(out)
++	if !json.Valid(b) {
++		t.Fatal("invalid output")
++	}
++	var r struct {
++		SourceFormat string `json:"source_format"`
++	}
++	_ = json.Unmarshal(b, &r)
++	if r.SourceFormat != "otel" {
++		t.Errorf("expected otel source, got %q", r.SourceFormat)
++	}
++}
++
++func TestAgentEventTool_EmptyEvent(t *testing.T) {
++	tool := buildAgentEventTool(Deps{})
++	if _, err := tool.Handler(context.Background(), json.RawMessage(`{"event":{}}`)); err == nil {
++		t.Error("expected error for empty event")
++	}
++}
++
++func TestAgentEventTool_BadInput(t *testing.T) {
++	tool := buildAgentEventTool(Deps{})
++	if _, err := tool.Handler(context.Background(), json.RawMessage(`{`)); err == nil {
++		t.Error("expected error for malformed JSON")
++	}
++}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_audit.go b/yagura-v0.35.0/internal/mcp/tools_audit.go
 new file mode 100644
 index 0000000..08b542a
