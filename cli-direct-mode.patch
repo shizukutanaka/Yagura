@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..55446be 100644
+index 9b29eec..b9ddddc 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,890 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,899 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1196,6 +1196,15 @@ index 9b29eec..55446be 100644
 +  `yagura_cache_hits_total 1`(disk 由来の hit)。テスト追加(restart 越え hit / TTL 越え
 +  失効 + prune / 起動時 prune / Delete の disk 削除 / 未有効化は従来動作)。外部依存ゼロ、
 +  新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持、`-race` green。
++- **persistent cache: 長時間稼働向けの定期 disk prune**(`internal/dedupe` /
++  `cmd/yagura/main.go`)。前 slice の persistent cache は起動時にしか期限切れ disk ファイルを
++  prune せず、24/7 稼働する daemon では「memory LRU で evict されたが disk に残る期限切れ
++  エントリ」が走行中ずっと溜まり得た。`pruneExpiredDisk` を `PruneExpiredDisk()` として
++  export し、persistence 有効時に daemon が 1 時間ごと(既定 TTL 整合)に呼ぶ goroutine を
++  追加(ctx キャンセルで停止)。これで `{StateDir}/cache` が working set 近傍に保たれる。
++  persistence 未有効なら no-op。テスト追加(memory cap 超過で disk に残った 3 件を TTL 経過後
++  の mid-run prune で全回収 / 未有効は no-op)。test/内部のみ(tool 62 / package 50 不変)、
++  ADR-0001 維持、`-race` green。
 +
 +### What's not yet
 +
@@ -1214,7 +1223,7 @@ index 9b29eec..55446be 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8568,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8577,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -4954,7 +4963,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..9a572d3 100644
+index bd1fe39..4a26453 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -5155,7 +5164,7 @@ index bd1fe39..9a572d3 100644
  	})
  	scan.Start(ctx)
  	logger.Info("scanner started", "interval", cfg.ScanInterval)
-@@ -466,12 +522,19 @@ func run() error {
+@@ -466,12 +522,35 @@ func run() error {
  	mcpServer := mcp.New(cfg.MCPToken, logger)
  	mcpServer.SetAudit(auditLog)
  
@@ -5163,9 +5172,25 @@ index bd1fe39..9a572d3 100644
 +	// heavy sbom / ai_verify / quality_check results survive a daemon restart.
 +	// Best-effort: a mkdir failure just leaves the cache in-memory only.
 +	if cfg.StateDir != "" {
-+		if err := mcpServer.Cache().EnablePersistence(filepath.Join(cfg.StateDir, "cache")); err != nil {
++		cacheDir := filepath.Join(cfg.StateDir, "cache")
++		if err := mcpServer.Cache().EnablePersistence(cacheDir); err != nil {
 +			logger.Warn("cache persistence disabled (continuing in-memory only)",
-+				"path", filepath.Join(cfg.StateDir, "cache"), "err", err)
++				"path", cacheDir, "err", err)
++		} else {
++			// Long-running daemon: reclaim expired on-disk entries that memory LRU
++			// evicted, so {StateDir}/cache doesn't accumulate stale files over a run.
++			go func() {
++				ticker := time.NewTicker(time.Hour)
++				defer ticker.Stop()
++				for {
++					select {
++					case <-ctx.Done():
++						return
++					case <-ticker.C:
++						mcpServer.Cache().PruneExpiredDisk()
++					}
++				}
++			}()
 +		}
 +	}
 +
@@ -5180,7 +5205,7 @@ index bd1fe39..9a572d3 100644
  		mcpServer.SetAlertStore(alertStore)
  	}
  
-@@ -568,6 +631,14 @@ func run() error {
+@@ -568,6 +647,14 @@ func run() error {
  	// v0.14.0: agent handoff panel on dashboard
  	dash.SetAgentStatusProvider(quotaMon)
  
@@ -5195,7 +5220,7 @@ index bd1fe39..9a572d3 100644
  	// 9. HTTP server
  	var ready atomic.Bool
  	ready.Store(true)
-@@ -591,7 +662,7 @@ func run() error {
+@@ -591,7 +678,7 @@ func run() error {
  		mreg.ServeHTTP(w, r)
  		// v0.31.0: ToolStats + AlertFix + HookReceiver の label 付き metric を追加
  		// 同一 endpoint で全 yagura metrics が揃う(Prometheus 慣行)
@@ -5204,7 +5229,7 @@ index bd1fe39..9a572d3 100644
  		_ = promexport.Render(w, extras)
  	})
  	mux.Handle("/mcp", mcpServer)
-@@ -603,6 +674,10 @@ func run() error {
+@@ -603,6 +690,10 @@ func run() error {
  	// observation mode: 全 event を JSONL persist、空 response で agent 継続
  	if hookReceiver != nil {
  		mux.HandleFunc("/hooks/claude-code", hookReceiver.Handle)
@@ -5215,7 +5240,7 @@ index bd1fe39..9a572d3 100644
  	}
  
  	// v0.31.0: MCP 2026 spec .well-known metadata endpoint
-@@ -610,15 +685,16 @@ func run() error {
+@@ -610,15 +701,16 @@ func run() error {
  	// 接続前に server capabilities を発見可能にする
  	mux.HandleFunc("/.well-known/mcp", func(w http.ResponseWriter, _ *http.Request) {
  		meta := map[string]any{
@@ -5238,7 +5263,7 @@ index bd1fe39..9a572d3 100644
  			},
  			"capabilities": map[string]any{
  				"tools":               len(mcpServer.ToolNames()),
-@@ -637,18 +713,18 @@ func run() error {
+@@ -637,18 +729,18 @@ func run() error {
  	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
  	// v0.12.0: per-route rate limiting で DoS / PAT 枯渇を防止
  	sbomLimiter := httplimit.New(httplimit.Options{
@@ -5263,7 +5288,7 @@ index bd1fe39..9a572d3 100644
  		KeyFn:           httplimit.TokenKey,
  	})
  	// 定期 GC で idle bucket を回収(メモリ leak 防止)
-@@ -761,8 +837,8 @@ type scannerMetricsAdapter struct {
+@@ -761,8 +853,8 @@ type scannerMetricsAdapter struct {
  	lastAt   *metrics.Gauge
  }
  
@@ -5274,7 +5299,7 @@ index bd1fe39..9a572d3 100644
  func (a *scannerMetricsAdapter) SetLastScanDuration(d time.Duration) {
  	a.duration.Set(d.Milliseconds())
  }
-@@ -832,6 +908,171 @@ type registryLookup struct {
+@@ -832,6 +924,171 @@ type registryLookup struct {
  	reg *registry.Registry
  }
  
@@ -5446,7 +5471,7 @@ index bd1fe39..9a572d3 100644
  func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  	if l == nil || l.reg == nil || cwd == "" {
  		return "", false
-@@ -850,7 +1091,7 @@ func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
+@@ -850,7 +1107,7 @@ func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  //
  // 既存 metrics.Registry が scan counters を担い、こちらが label 付き metrics
  // (per-tool, per-project) を担当する分担。
@@ -5455,7 +5480,7 @@ index bd1fe39..9a572d3 100644
  	var out []promexport.Collection
  
  	// MCP tool stats (per-tool counters)
-@@ -878,6 +1119,25 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -878,6 +1135,25 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  			Samples: errs},
  	)
  
@@ -5481,7 +5506,7 @@ index bd1fe39..9a572d3 100644
  	// Cache stats
  	if cs := srv.CacheStats(); cs.Hits+cs.Misses > 0 {
  		out = append(out,
-@@ -892,7 +1152,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -892,7 +1168,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  
  	// Hook receiver stats (per-project event counters)
  	if hr != nil {
@@ -5490,7 +5515,7 @@ index bd1fe39..9a572d3 100644
  		for slug, st := range hr.AllStats() {
  			for event, count := range st.ByEvent {
  				hookCalls = append(hookCalls, promexport.Sample{
-@@ -900,6 +1160,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -900,6 +1176,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  					Value:  float64(count),
  				})
  			}
@@ -5505,7 +5530,7 @@ index bd1fe39..9a572d3 100644
  			hookErrs = append(hookErrs, promexport.Sample{
  				Labels: map[string]string{"project": slug},
  				Value:  float64(st.ErrorCount),
-@@ -908,13 +1176,21 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -908,13 +1192,21 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  		if len(hookCalls) > 0 {
  			out = append(out,
  				promexport.Collection{Name: "yagura_hook_events_total",
@@ -9338,7 +9363,7 @@ index 0000000..d8d30ea
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/dedupe/dedupe.go b/yagura-v0.35.0/internal/dedupe/dedupe.go
-index f9a48ec..7b1e9e4 100644
+index f9a48ec..ca16635 100644
 --- a/yagura-v0.35.0/internal/dedupe/dedupe.go
 +++ b/yagura-v0.35.0/internal/dedupe/dedupe.go
 @@ -1,13 +1,14 @@
@@ -9504,7 +9529,7 @@ index f9a48ec..7b1e9e4 100644
  }
  
  // Delete は key を削除する。存在しない場合は no-op。
-@@ -183,6 +218,91 @@ func (c *Cache) Delete(key string) {
+@@ -183,6 +218,94 @@ func (c *Cache) Delete(key string) {
  		c.lru.Remove(elem)
  		delete(c.entries, key)
  	}
@@ -9535,7 +9560,7 @@ index f9a48ec..7b1e9e4 100644
 +	c.mu.Lock()
 +	c.dir = dir
 +	c.mu.Unlock()
-+	c.pruneExpiredDisk()
++	c.PruneExpiredDisk()
 +	return nil
 +}
 +
@@ -9567,8 +9592,11 @@ index f9a48ec..7b1e9e4 100644
 +	}
 +}
 +
-+// pruneExpiredDisk は dir 内の TTL 超過ファイルを削除する(起動時 + EnablePersistence)。
-+func (c *Cache) pruneExpiredDisk() {
++// PruneExpiredDisk は dir 内の TTL 超過ファイルを削除する。EnablePersistence(起動時)で
++// 一度走るほか、長時間稼働する daemon では定期的に呼ぶことで「memory LRU で evict されたが
++// disk には残る期限切れエントリ」を回収し、cache ディレクトリの肥大を防ぐ。persistence 未
++// 有効(dir 空)なら no-op。best-effort(I/O エラーは無視)。
++func (c *Cache) PruneExpiredDisk() {
 +	c.mu.Lock()
 +	dir, ttl, now := c.dir, c.ttl, c.now()
 +	c.mu.Unlock()
@@ -9596,7 +9624,7 @@ index f9a48ec..7b1e9e4 100644
  }
  
  // Len は現在の entry 数を返す。
-@@ -198,8 +318,8 @@ type Stats struct {
+@@ -198,8 +321,8 @@ type Stats struct {
  	Misses      uint64  `json:"misses"`
  	Evictions   uint64  `json:"evictions"`
  	Expirations uint64  `json:"expirations"`
@@ -9608,7 +9636,7 @@ index f9a48ec..7b1e9e4 100644
  	MaxSize     int     `json:"max_size"`
  	TTLSeconds  int64   `json:"ttl_seconds"`
 diff --git a/yagura-v0.35.0/internal/dedupe/dedupe_test.go b/yagura-v0.35.0/internal/dedupe/dedupe_test.go
-index 706e5a5..5913414 100644
+index 706e5a5..aad82bf 100644
 --- a/yagura-v0.35.0/internal/dedupe/dedupe_test.go
 +++ b/yagura-v0.35.0/internal/dedupe/dedupe_test.go
 @@ -2,6 +2,7 @@ package dedupe
@@ -9628,7 +9656,7 @@ index 706e5a5..5913414 100644
  	c.Set("d", []byte("4")) // b が evict されるはず(LRU)
  
  	if _, ok := c.Get("a"); !ok {
-@@ -246,3 +247,103 @@ func TestNew_DefaultsApplied(t *testing.T) {
+@@ -246,3 +247,132 @@ func TestNew_DefaultsApplied(t *testing.T) {
  		t.Errorf("defaults not applied: max=%d ttl=%v", c.max, c.ttl)
  	}
  }
@@ -9731,6 +9759,35 @@ index 706e5a5..5913414 100644
 +	if _, ok := c2.Get(Key("x")); ok {
 +		t.Error("a separate in-memory cache must not see another's entries")
 +	}
++}
++
++func TestCache_PruneExpiredDisk_ReclaimsMidRun(t *testing.T) {
++	dir := t.TempDir()
++	base := time.Now()
++	now := base
++	c := New(2, time.Hour) // tiny memory cap so disk outlives memory
++	c.NowFn = func() time.Time { return now }
++	if err := c.EnablePersistence(dir); err != nil {
++		t.Fatal(err)
++	}
++	// write 3 entries; memory cap=2 evicts one from RAM but all 3 stay on disk
++	c.Set(Key("a"), []byte("1"))
++	c.Set(Key("b"), []byte("2"))
++	c.Set(Key("c"), []byte("3"))
++	if n, _ := os.ReadDir(dir); len(n) != 3 {
++		t.Fatalf("expected 3 disk files, got %d", len(n))
++	}
++	// advance past TTL and prune (no restart) — all expired files reclaimed
++	now = base.Add(2 * time.Hour)
++	c.PruneExpiredDisk()
++	if n, _ := os.ReadDir(dir); len(n) != 0 {
++		t.Errorf("PruneExpiredDisk should reclaim expired files mid-run, %d remain", len(n))
++	}
++}
++
++func TestCache_PruneExpiredDisk_NoPersistenceIsNoop(t *testing.T) {
++	c := New(10, time.Hour) // persistence not enabled
++	c.PruneExpiredDisk()    // must not panic
 +}
 diff --git a/yagura-v0.35.0/internal/harness/agentconfig_audit.go b/yagura-v0.35.0/internal/harness/agentconfig_audit.go
 new file mode 100644
