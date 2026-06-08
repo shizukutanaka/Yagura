@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..d570854 100644
+index 9b29eec..734bded 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,738 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,753 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1044,6 +1044,21 @@ index 9b29eec..d570854 100644
 +  (非 test の .go を含むディレクトリ数)と突き合わせる guard test を追加。package 追加時に
 +  doc 更新漏れが CI で fail する。guard 自身も数値を 38 に戻して fail することを確認。
 +  test/doc のみの変更(tool 62 / package 50 不変)、ADR-0001 維持。
++- **Scanner ↔ alert_fix periodic loop(roadmap #2 の最初の slice)**
++  (`internal/scanner` / `cmd/yagura/main.go`)。これまで `alert_fix` の health 評価は
++  MCP tool の on-demand 呼出でしか走らず、daemon は scan で sensor を更新しても自分では
++  health を見ていなかった。scanner に汎用 post-scan hook `Config.AfterScan` を追加し
++  (scanner 自身は alertfix に依存しない疎結合のまま)、daemon 側でこれを「各 scan cycle
++  後に全プロジェクトの sensor を `alert_fix` で評価し、構造化 health サマリを log する」
++  closure に接続した。findings があるときだけ Info で
++  `health sweep projects=N alerts=M critical=… high=… has_critical=…` を出し、健全なら
++  Debug(平時は静か)。snapshot 抽出は `yagura_alert_fix` と同一(`mcp.ProjectToSnapshot`
++  を export して single source of truth 化)、判定は同じ `alertfix.EvaluateAll`(決定論)。
++  Plan.md enrichment は per-cycle の disk I/O を避けるため sweep では省略(on-demand tool は
++  従来通り richer 評価)。live dogfood: vuln_critical=2 のプロジェクトで起動直後の scan 後に
++  `health sweep … alerts=1 critical=1 has_critical=true` を確認。テスト追加(scanner: hook が
++  cycle 毎に走る/nil hook 安全、main: healthSweep が critical を検出/健全 portfolio)。
++  外部依存ゼロ、新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1062,7 +1077,7 @@ index 9b29eec..d570854 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8416,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8431,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -4497,6 +4512,70 @@ index 0000000..dc7fbf7
 +		t.Errorf("missing path: code=%d out=%q", code, mout)
 +	}
 +}
+diff --git a/yagura-v0.35.0/cmd/yagura/healthsweep_test.go b/yagura-v0.35.0/cmd/yagura/healthsweep_test.go
+new file mode 100644
+index 0000000..43cb165
+--- /dev/null
++++ b/yagura-v0.35.0/cmd/yagura/healthsweep_test.go
+@@ -0,0 +1,58 @@
++package main
++
++import (
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/alertfix"
++	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/registry"
++)
++
++func TestHealthSweep_FlagsCriticalVuln(t *testing.T) {
++	reg, err := registry.New(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := reg.Add(&project.Project{
++		Slug: "breeze", DisplayName: "Breeze", Repository: "github.com/o/breeze",
++		Stage: project.StageActive,
++	}); err != nil {
++		t.Fatal(err)
++	}
++	// sensor fields are scanner-only in production (MCP can't set them), but the
++	// registry layer persists the full struct — mirror what the scanner does.
++	p, _ := reg.Get("breeze")
++	p.VulnCritical = 3
++	if err := reg.Update(p); err != nil {
++		t.Fatalf("inject sensor data: %v", err)
++	}
++
++	report := healthSweep(reg)
++	if report.ProjectsScanned != 1 {
++		t.Errorf("projects_scanned = %d, want 1", report.ProjectsScanned)
++	}
++	if !report.HasCritical {
++		t.Errorf("expected a critical alert for 3 critical vulns, got %+v", report.BySeverity)
++	}
++	if report.BySeverity[alertfix.SevCritical] < 1 {
++		t.Errorf("expected >=1 critical, got %d", report.BySeverity[alertfix.SevCritical])
++	}
++}
++
++func TestHealthSweep_CleanPortfolio(t *testing.T) {
++	reg, err := registry.New(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	_ = reg.Add(&project.Project{
++		Slug: "calm", DisplayName: "Calm", Repository: "github.com/o/calm",
++		Stage: project.StageActive,
++	})
++	report := healthSweep(reg)
++	if report.ProjectsScanned != 1 {
++		t.Errorf("projects_scanned = %d, want 1", report.ProjectsScanned)
++	}
++	if report.HasCritical {
++		t.Error("a project with no sensor findings should not be critical")
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura/httpapi_test.go b/yagura-v0.35.0/cmd/yagura/httpapi_test.go
 index 2d5c53c..7d0451c 100644
 --- a/yagura-v0.35.0/cmd/yagura/httpapi_test.go
@@ -4618,7 +4697,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..283e432 100644
+index bd1fe39..e87f0b2 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -4773,7 +4852,30 @@ index bd1fe39..283e432 100644
  	results, err := audit.Verify(auditDir)
  	if err != nil {
  		return fmt.Errorf("verify: %w", err)
-@@ -568,6 +592,12 @@ func run() error {
+@@ -368,6 +392,22 @@ func run() error {
+ 		Metrics:     scannerMetrics,
+ 		Interval:    cfg.ScanInterval,
+ 		ScanTimeout: cfg.ScanTimeout,
++		// Scanner ↔ alert_fix periodic loop (v0.35): after each scan cycle, run a
++		// health sweep over the freshly-updated sensor data and log a structured
++		// summary so operators see health drift without an on-demand alert_fix call.
++		AfterScan: func(context.Context) {
++			report := healthSweep(reg)
++			if report.Total > 0 {
++				logger.Info("health sweep",
++					"projects", report.ProjectsScanned,
++					"alerts", report.Total,
++					"critical", report.BySeverity[alertfix.SevCritical],
++					"high", report.BySeverity[alertfix.SevHigh],
++					"has_critical", report.HasCritical)
++			} else {
++				logger.Debug("health sweep clean", "projects", report.ProjectsScanned)
++			}
++		},
+ 	})
+ 	scan.Start(ctx)
+ 	logger.Info("scanner started", "interval", cfg.ScanInterval)
+@@ -568,6 +608,12 @@ func run() error {
  	// v0.14.0: agent handoff panel on dashboard
  	dash.SetAgentStatusProvider(quotaMon)
  
@@ -4786,7 +4888,7 @@ index bd1fe39..283e432 100644
  	// 9. HTTP server
  	var ready atomic.Bool
  	ready.Store(true)
-@@ -603,6 +633,10 @@ func run() error {
+@@ -603,6 +649,10 @@ func run() error {
  	// observation mode: 全 event を JSONL persist、空 response で agent 継続
  	if hookReceiver != nil {
  		mux.HandleFunc("/hooks/claude-code", hookReceiver.Handle)
@@ -4797,7 +4899,7 @@ index bd1fe39..283e432 100644
  	}
  
  	// v0.31.0: MCP 2026 spec .well-known metadata endpoint
-@@ -610,15 +644,16 @@ func run() error {
+@@ -610,15 +660,16 @@ func run() error {
  	// 接続前に server capabilities を発見可能にする
  	mux.HandleFunc("/.well-known/mcp", func(w http.ResponseWriter, _ *http.Request) {
  		meta := map[string]any{
@@ -4820,7 +4922,7 @@ index bd1fe39..283e432 100644
  			},
  			"capabilities": map[string]any{
  				"tools":               len(mcpServer.ToolNames()),
-@@ -637,18 +672,18 @@ func run() error {
+@@ -637,18 +688,18 @@ func run() error {
  	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
  	// v0.12.0: per-route rate limiting で DoS / PAT 枯渇を防止
  	sbomLimiter := httplimit.New(httplimit.Options{
@@ -4845,7 +4947,7 @@ index bd1fe39..283e432 100644
  		KeyFn:           httplimit.TokenKey,
  	})
  	// 定期 GC で idle bucket を回収(メモリ leak 防止)
-@@ -761,8 +796,8 @@ type scannerMetricsAdapter struct {
+@@ -761,8 +812,8 @@ type scannerMetricsAdapter struct {
  	lastAt   *metrics.Gauge
  }
  
@@ -4856,10 +4958,25 @@ index bd1fe39..283e432 100644
  func (a *scannerMetricsAdapter) SetLastScanDuration(d time.Duration) {
  	a.duration.Set(d.Milliseconds())
  }
-@@ -832,6 +867,88 @@ type registryLookup struct {
+@@ -832,6 +883,103 @@ type registryLookup struct {
  	reg *registry.Registry
  }
  
++// healthSweep evaluates alert_fix over every registered project's current sensor
++// data and returns the aggregate report. Used by the scanner's AfterScan hook to
++// drive a periodic health sweep. Reuses mcp.ProjectToSnapshot (same extraction as
++// yagura_alert_fix) and alertfix.EvaluateAll, so the deterministic rules match the
++// on-demand tool. Plan.md enrichment is intentionally skipped here (sensor-only;
++// no per-cycle disk I/O) — the on-demand tool still does the richer evaluation.
++func healthSweep(reg *registry.Registry) alertfix.Report {
++	projects := reg.List()
++	snaps := make([]alertfix.ProjectSnapshot, 0, len(projects))
++	for _, p := range projects {
++		snaps = append(snaps, mcp.ProjectToSnapshot(*p))
++	}
++	return alertfix.EvaluateAll(snaps, alertfix.DefaultThresholds())
++}
++
 +// hookActivityAdapter adapts the hook receiver's per-project stats to the
 +// dashboard's HookActivityProvider (read-only Activity column + drill-down).
 +type hookActivityAdapter struct {
@@ -4945,7 +5062,7 @@ index bd1fe39..283e432 100644
  func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  	if l == nil || l.reg == nil || cwd == "" {
  		return "", false
-@@ -892,7 +1009,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -892,7 +1040,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  
  	// Hook receiver stats (per-project event counters)
  	if hr != nil {
@@ -4954,7 +5071,7 @@ index bd1fe39..283e432 100644
  		for slug, st := range hr.AllStats() {
  			for event, count := range st.ByEvent {
  				hookCalls = append(hookCalls, promexport.Sample{
-@@ -900,6 +1017,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -900,6 +1048,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  					Value:  float64(count),
  				})
  			}
@@ -4969,7 +5086,7 @@ index bd1fe39..283e432 100644
  			hookErrs = append(hookErrs, promexport.Sample{
  				Labels: map[string]string{"project": slug},
  				Value:  float64(st.ErrorCount),
-@@ -908,10 +1033,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -908,10 +1064,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  		if len(hookCalls) > 0 {
  			out = append(out,
  				promexport.Collection{Name: "yagura_hook_events_total",
@@ -10615,7 +10732,7 @@ index 1549179..0a1b2c2 100644
  		t.Errorf("expected at least %d tools, got %d: %v", minExpectedTools, len(names), names)
  	}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..d6258ef 100644
+index 939a67e..8081fe8 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
 @@ -11,25 +11,20 @@ import (
@@ -11024,7 +11141,21 @@ index 939a67e..d6258ef 100644
  		Description: "[S] Aggregate health signals across portfolio. Returns actionable alerts with suggested_tool + args.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1425,15 +1466,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
+@@ -1382,6 +1423,13 @@ func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Stor
+ }
+ 
+ // projectToSnapshot は registry.Project から alertfix snapshot に必要な field を抽出する。
++// ProjectToSnapshot maps a registry Project to an alertfix sensor snapshot.
++// Exported so the daemon's periodic health sweep (scanner AfterScan hook) reuses
++// the exact same field extraction as yagura_alert_fix (single source of truth).
++func ProjectToSnapshot(p project.Project) alertfix.ProjectSnapshot {
++	return projectToSnapshot(p)
++}
++
+ func projectToSnapshot(p project.Project) alertfix.ProjectSnapshot {
+ 	return alertfix.ProjectSnapshot{
+ 		Slug:           p.Slug,
+@@ -1425,15 +1473,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
  
  func buildAlertResolveTool(store *alertfix.Store) *Tool {
  	return &Tool{
@@ -11045,7 +11176,7 @@ index 939a67e..d6258ef 100644
  			},
  			"required": []string{"alert_id", "action"},
  		},
-@@ -1475,9 +1516,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+@@ -1475,9 +1523,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
  			}
  			st, _ := store.Get(in.AlertID)
  			return map[string]any{
@@ -11058,7 +11189,7 @@ index 939a67e..d6258ef 100644
  				"lifecycle_stats": store.Stats(),
  			}, nil
  		},
-@@ -1492,14 +1533,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+@@ -1492,14 +1540,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
  
  func buildAgentsMdTool(d Deps) *Tool {
  	return &Tool{
@@ -11076,7 +11207,7 @@ index 939a67e..d6258ef 100644
  			},
  			"required": []string{"slug"},
  		},
-@@ -1578,7 +1619,7 @@ func buildAgentsMdTool(d Deps) *Tool {
+@@ -1578,7 +1626,7 @@ func buildAgentsMdTool(d Deps) *Tool {
  
  func buildFeatureListTool(d Deps) *Tool {
  	return &Tool{
@@ -11085,7 +11216,7 @@ index 939a67e..d6258ef 100644
  		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1643,7 +1684,7 @@ func buildFeatureListTool(d Deps) *Tool {
+@@ -1643,7 +1691,7 @@ func buildFeatureListTool(d Deps) *Tool {
  
  func buildHarnessCoverageTool(d Deps) *Tool {
  	return &Tool{
@@ -11094,7 +11225,7 @@ index 939a67e..d6258ef 100644
  		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -1687,11 +1728,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
+@@ -1687,11 +1735,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
  				}
  			}
  			return map[string]any{
@@ -16135,6 +16266,128 @@ index 0000000..c75d626
 +		}
 +	}
 +}
+diff --git a/yagura-v0.35.0/internal/scanner/scanner.go b/yagura-v0.35.0/internal/scanner/scanner.go
+index e6969ac..685846d 100644
+--- a/yagura-v0.35.0/internal/scanner/scanner.go
++++ b/yagura-v0.35.0/internal/scanner/scanner.go
+@@ -44,6 +44,7 @@ type Scanner struct {
+ 	metrics     Metrics
+ 	interval    time.Duration
+ 	scanTimeout time.Duration
++	afterScan   func(context.Context)
+ 
+ 	wg     sync.WaitGroup
+ 	stopCh chan struct{}
+@@ -57,6 +58,10 @@ type Config struct {
+ 	Metrics     Metrics
+ 	Interval    time.Duration
+ 	ScanTimeout time.Duration
++	// AfterScan, if set, is invoked at the end of every ScanAll cycle (after
++	// metrics are recorded). The daemon uses it for a periodic alert_fix health
++	// sweep. Optional; nil disables it.
++	AfterScan func(context.Context)
+ }
+ 
+ func New(c Config) *Scanner {
+@@ -79,6 +84,7 @@ func New(c Config) *Scanner {
+ 		metrics:     c.Metrics,
+ 		interval:    c.Interval,
+ 		scanTimeout: c.ScanTimeout,
++		afterScan:   c.AfterScan,
+ 		stopCh:      make(chan struct{}),
+ 	}
+ }
+@@ -145,6 +151,13 @@ func (s *Scanner) ScanAll(ctx context.Context) {
+ 	s.logger.Info("scanner cycle done",
+ 		"scanned", scanned, "failed", failed,
+ 		"duration", time.Since(start).Round(time.Millisecond))
++
++	// v0.35: post-scan hook. The daemon wires this to run an alert_fix health
++	// sweep over freshly-scanned sensor data (Scanner ↔ alert_fix periodic loop).
++	// Kept as a generic callback so the scanner stays decoupled from alertfix.
++	if s.afterScan != nil {
++		s.afterScan(ctx)
++	}
+ }
+ 
+ func (s *Scanner) scanOne(parentCtx context.Context, p *project.Project) error {
+diff --git a/yagura-v0.35.0/internal/scanner/scanner_test.go b/yagura-v0.35.0/internal/scanner/scanner_test.go
+index 13429b7..ecc17e0 100644
+--- a/yagura-v0.35.0/internal/scanner/scanner_test.go
++++ b/yagura-v0.35.0/internal/scanner/scanner_test.go
+@@ -137,6 +137,37 @@ func TestScanner_ScanAll_Empty(t *testing.T) {
+ 	// no panic, no projects to scan
+ }
+ 
++func TestScanner_AfterScanHookRuns(t *testing.T) {
++	reg, err := registry.New(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	var calls int
++	s := New(Config{
++		Interval: 30 * time.Second,
++		Registry: reg,
++		Logger:   logging.Discard(),
++		AfterScan: func(context.Context) {
++			calls++
++		},
++	})
++	s.ScanAll(context.Background())
++	if calls != 1 {
++		t.Errorf("AfterScan should run once per ScanAll cycle, got %d", calls)
++	}
++	// a second cycle invokes it again
++	s.ScanAll(context.Background())
++	if calls != 2 {
++		t.Errorf("AfterScan should run each cycle, got %d", calls)
++	}
++}
++
++func TestScanner_NilAfterScanIsSafe(t *testing.T) {
++	reg, _ := registry.New(t.TempDir())
++	s := New(Config{Registry: reg, Logger: logging.Discard()}) // AfterScan nil
++	s.ScanAll(context.Background())                            // must not panic
++}
++
+ func TestScanner_ScanProject_UpdatesAutoFields(t *testing.T) {
+ 	s, reg, srv := newTestEnv(t, 3, 7, "success", false)
+ 	defer srv.Close()
+@@ -265,20 +296,20 @@ func TestNoopMetrics(t *testing.T) {
+ 
+ func TestMapCIStatus_AllInputs(t *testing.T) {
+ 	tests := map[string]project.CIStatus{
+-		"success":          project.CIStatusPassing,
+-		"SUCCESS":          project.CIStatusPassing,
+-		"Success":          project.CIStatusPassing,
+-		"failure":          project.CIStatusFailing,
+-		"timed_out":        project.CIStatusFailing,
+-		"startup_failure":  project.CIStatusFailing,
+-		"action_required":  project.CIStatusFailing,
+-		"":                 project.CIStatusUnknown,
+-		"pending":          project.CIStatusUnknown,
+-		"queued":           project.CIStatusUnknown,
+-		"in_progress":      project.CIStatusUnknown,
+-		"skipped":          project.CIStatusUnknown,
+-		"cancelled":        project.CIStatusUnknown,
+-		"random_garbage":   project.CIStatusUnknown,
++		"success":         project.CIStatusPassing,
++		"SUCCESS":         project.CIStatusPassing,
++		"Success":         project.CIStatusPassing,
++		"failure":         project.CIStatusFailing,
++		"timed_out":       project.CIStatusFailing,
++		"startup_failure": project.CIStatusFailing,
++		"action_required": project.CIStatusFailing,
++		"":                project.CIStatusUnknown,
++		"pending":         project.CIStatusUnknown,
++		"queued":          project.CIStatusUnknown,
++		"in_progress":     project.CIStatusUnknown,
++		"skipped":         project.CIStatusUnknown,
++		"cancelled":       project.CIStatusUnknown,
++		"random_garbage":  project.CIStatusUnknown,
+ 	}
+ 	for in, want := range tests {
+ 		if got := mapCIStatus(in); got != want {
 diff --git a/yagura-v0.35.0/internal/secretscan/secretscan.go b/yagura-v0.35.0/internal/secretscan/secretscan.go
 index f870332..8719b6c 100644
 --- a/yagura-v0.35.0/internal/secretscan/secretscan.go
