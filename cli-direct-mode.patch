@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..e3e720b 100644
+index 9b29eec..47477a6 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,822 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,834 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1128,6 +1128,18 @@ index 9b29eec..e3e720b 100644
 +  vuln_critical=2 のプロジェクトで `/metrics` に `yagura_portfolio_alerts{severity="critical"} 1`。
 +  テスト追加(sweep 前は gauge 無し / sweep 後に severity 別値、`collectYaguraMetrics` 経由)。
 +  外部依存ゼロ、新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。
++- **metrics リファレンス doc + 未文書 metric を物理的に防ぐ guard**
++  (`docs/METRICS.md` / `cmd/yagura/metricsdoc_test.go` / `README.md`)。`/metrics` が出す
++  Prometheus metric は数イテレーションで増えていたのに専用ドキュメントが無かった。
++  全 20 metric(process/scan gauge、portfolio health、MCP tool、agent hook、cache、
++  alert lifecycle)を type / labels / 説明付きで `docs/METRICS.md` にまとめ、Grafana の
++  alert rule 例も添えた。さらに tool 数 / package 数 guard と同じ流儀で、main.go の metric
++  定義サイト(`mreg.NewCounter/NewGauge("…")` と `promexport.Collection` の `Name: "…"`)から
++  metric 名を抽出し、各々が `docs/METRICS.md` に記載されているかを検査する guard test を追加。
++  metric を増やしてドキュメント更新を忘れると CI で fail する(audit record の Kind
++  `yagura_started`/`yagura_stopped` は metric ではないので定義サイト限定の抽出で誤検出回避)。
++  guard 自身も 1 metric を doc から消して fail することを確認。README の `/metrics` 行から
++  リンク。doc/test のみ(tool 62 / package 50 不変)、ADR-0001 維持、publicity-scan clean。
 +
 +### What's not yet
 +
@@ -1146,7 +1158,7 @@ index 9b29eec..e3e720b 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8500,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8512,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -1220,7 +1232,7 @@ index bc406e1..dad7c59 100644
  - `internal/telemetry` — internal stats
  - `internal/metrics` — counter / gauge primitives
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..1e4cc46 100644
+index 986f84e..e32b1ed 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -1335,6 +1347,15 @@ index 986f84e..1e4cc46 100644
  
  Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
  
+@@ -175,7 +221,7 @@ Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
+ |---|---|---|
+ | `/mcp` | POST | JSON-RPC 2.0 MCP endpoint |
+ | `/hooks/claude-code` | POST | Receive Claude Code HTTP hooks |
+-| `/metrics` | GET | Prometheus exposition format |
++| `/metrics` | GET | Prometheus exposition format ([reference](docs/METRICS.md)) |
+ | `/.well-known/mcp` | GET | MCP 2026 spec server metadata |
+ | `/healthz` | GET | Liveness |
+ | `/readyz` | GET | Readiness (drains 5 s on shutdown) |
 @@ -220,7 +266,7 @@ sha256sum -c SHA256SUMS
  ```
  .
@@ -5531,6 +5552,71 @@ index 0000000..f82f1aa
 +		t.Errorf("expected medium=0 gauge:\n%s", out)
 +	}
 +}
+diff --git a/yagura-v0.35.0/cmd/yagura/metricsdoc_test.go b/yagura-v0.35.0/cmd/yagura/metricsdoc_test.go
+new file mode 100644
+index 0000000..0b3968c
+--- /dev/null
++++ b/yagura-v0.35.0/cmd/yagura/metricsdoc_test.go
+@@ -0,0 +1,59 @@
++// metricsdoc_test.go: every Prometheus metric the daemon can emit must be
++// documented in docs/METRICS.md. Metric names are defined as string literals in
++// main.go — either registered via mreg.NewCounter/NewGauge or named in a
++// promexport.Collection (collectYaguraMetrics). This guard extracts those exact
++// definition sites and fails the build if any name is missing from the doc, so
++// adding a metric without documenting it can't slip through ("逸脱を物理的に潰す").
++package main
++
++import (
++	"os"
++	"regexp"
++	"sort"
++	"strings"
++	"testing"
++)
++
++func definedMetricNames(t *testing.T) []string {
++	t.Helper()
++	src, err := os.ReadFile("main.go")
++	if err != nil {
++		t.Fatalf("read main.go: %v", err)
++	}
++	// metric definition sites only — NOT every "yagura_*" literal (audit record
++	// Kinds like "yagura_started" are not metrics).
++	res := []*regexp.Regexp{
++		regexp.MustCompile(`mreg\.New(?:Counter|Gauge)\("(yagura_[a-z_]+)"`),
++		regexp.MustCompile(`Name: *"(yagura_[a-z_]+)"`),
++	}
++	seen := map[string]bool{}
++	for _, re := range res {
++		for _, m := range re.FindAllSubmatch(src, -1) {
++			seen[string(m[1])] = true
++		}
++	}
++	var names []string
++	for n := range seen {
++		names = append(names, n)
++	}
++	sort.Strings(names)
++	return names
++}
++
++func TestMetricsDoc_AllMetricsDocumented(t *testing.T) {
++	names := definedMetricNames(t)
++	if len(names) == 0 {
++		t.Fatal("found no metric definitions in main.go — guard regex is stale")
++	}
++	doc, err := os.ReadFile("../../docs/METRICS.md")
++	if err != nil {
++		t.Fatalf("read docs/METRICS.md: %v", err)
++	}
++	body := string(doc)
++	for _, n := range names {
++		// documented as `yagura_xxx` in a table row
++		if !strings.Contains(body, "`"+n+"`") {
++			t.Errorf("metric %q is emitted by the daemon but not documented in docs/METRICS.md", n)
++		}
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura/pkgcount_test.go b/yagura-v0.35.0/cmd/yagura/pkgcount_test.go
 new file mode 100644
 index 0000000..5c961c5
@@ -5975,6 +6061,104 @@ index 689c182..2d5ee7c 100644
  
  **Arguments:**
  
+diff --git a/yagura-v0.35.0/docs/METRICS.md b/yagura-v0.35.0/docs/METRICS.md
+new file mode 100644
+index 0000000..d0fa073
+--- /dev/null
++++ b/yagura-v0.35.0/docs/METRICS.md
+@@ -0,0 +1,92 @@
++# Metrics reference
++
++Yagura exposes Prometheus metrics at **`GET /metrics`** (plain-text exposition
++format, no auth). They fall into two groups, both served from the same endpoint:
++
++1. **Process / scan gauges** — registered at startup (`internal/metrics`).
++2. **Label-rich operational metrics** — assembled per-scrape from live daemon
++   state (`collectYaguraMetrics` in `cmd/yagura/main.go`): MCP tools, agent
++   hooks, dedupe cache, portfolio health, and alert lifecycle.
++
++All names are prefixed `yagura_`. Counters are monotonic; gauges can go up or
++down. This file is kept in sync with the code by
++`cmd/yagura/metricsdoc_test.go` — every metric the daemon can emit must appear
++here, or the build fails.
++
++> Zero dependencies (ADR-0001): the exposition format is rendered by
++> `internal/promexport`, stdlib only — no Prometheus client library.
++
++## Process & scan
++
++| Metric | Type | Labels | Description |
++|---|---|---|---|
++| `yagura_build_info` | gauge | `version` | Always `1`; the build version rides in the label. |
++| `yagura_start_time_unix` | gauge | — | Unix timestamp of process start. |
++| `yagura_scan_total` | counter | — | Total project scans performed. |
++| `yagura_scan_failed_total` | counter | — | Total scans that failed (per project, per cycle). |
++| `yagura_last_scan_duration_ms` | gauge | — | Duration of the most recent scan cycle, milliseconds. |
++| `yagura_last_scan_unix` | gauge | — | Unix timestamp of the most recent scan cycle. |
++| `yagura_projects_total` | gauge | — | Total registered projects. |
++| `yagura_projects_active` | gauge | — | Projects in the `active` stage. |
++| `yagura_projects_failing_ci` | gauge | — | Projects whose last observed CI status is failing. |
++
++## Portfolio health
++
++Emitted from the latest `alert_fix` health sweep (the scanner runs one after each
++cycle). Resolved/snoozed alerts are already excluded — these are *open* alerts.
++The series is **absent until the first sweep has run** (no misleading zeros).
++
++| Metric | Type | Labels | Description |
++|---|---|---|---|
++| `yagura_portfolio_alerts` | gauge | `severity` (`critical`/`high`/`medium`/`low`) | Open alerts from the latest health sweep, by severity. |
++| `yagura_alert_lifecycle_current` | gauge | `status` (`active`/`resolved`/`snoozed`) | Current count of alerts by lifecycle status (from the alert store). |
++
++Example alerting rule:
++
++```yaml
++- alert: YaguraCriticalPortfolioAlert
++  expr: yagura_portfolio_alerts{severity="critical"} > 0
++  for: 10m
++  annotations:
++    summary: "A critical alert is open across the project portfolio"
++```
++
++## MCP tools
++
++Per-tool counters covering every MCP tool invocation through `/mcp`.
++
++| Metric | Type | Labels | Description |
++|---|---|---|---|
++| `yagura_mcp_tool_calls_total` | counter | `tool` | Total invocations per tool. |
++| `yagura_mcp_tool_errors_total` | counter | `tool` | Total errors returned per tool. |
++| `yagura_mcp_tool_request_bytes_total` | counter | `tool` | Cumulative request bytes per tool. |
++| `yagura_mcp_tool_response_bytes_total` | counter | `tool` | Cumulative response bytes per tool. |
++
++## Agent hooks
++
++Any agent (Claude Code / Gemini CLI / Codex / OTel) that posts lifecycle events
++to `/hooks/agent` is aggregated here. Tool names map to the OpenTelemetry GenAI
++`gen_ai.tool.name` convention, exposed as the `tool` label.
++
++| Metric | Type | Labels | Description |
++|---|---|---|---|
++| `yagura_hook_events_total` | counter | `project`, `event` | Hook events received per project per event type. |
++| `yagura_hook_tool_calls_total` | counter | `project`, `tool` | Tool calls observed via hooks per project per tool. |
++| `yagura_hook_errors_total` | counter | `project` | Tool errors observed via hooks per project. |
++
++## Cache
++
++Emitted only once the dedupe cache has been exercised.
++
++| Metric | Type | Labels | Description |
++|---|---|---|---|
++| `yagura_cache_hits_total` | counter | — | Cumulative dedupe cache hits. |
++| `yagura_cache_misses_total` | counter | — | Cumulative dedupe cache misses. |
++
++## Notes
++
++- Label-rich operational metrics are computed lazily per scrape from live state,
++  so values always reflect the moment of scraping.
++- Conditional series (`yagura_portfolio_alerts`, `yagura_cache_*`,
++  `yagura_hook_*`, `yagura_alert_lifecycle_current`) appear only once there is
++  data — before then the series is simply absent, which is normal.
 diff --git a/yagura-v0.35.0/docs/QUICKSTART.md b/yagura-v0.35.0/docs/QUICKSTART.md
 index 62e02cd..b34cb24 100644
 --- a/yagura-v0.35.0/docs/QUICKSTART.md
