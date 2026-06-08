@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..94d3b8b 100644
+index 9b29eec..e3e720b 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,810 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,822 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1116,6 +1116,18 @@ index 9b29eec..94d3b8b 100644
 +  `yagura_alert_resolve` が記録されることを確認。テスト追加(resolve/snooze ボタン + alert ID +
 +  `/mcp` POST の markup 検証)。外部依存ゼロ、新規 tool/package なし(tool 62 / package 50
 +  不変)、ADR-0001 維持。
++- **portfolio health を Prometheus へ(`yagura_portfolio_alerts{severity}`)**
++  (`cmd/yagura/main.go`)。health sweep の結果は log・dashboard には出ていたが Prometheus
++  には無く、外部監視基盤が「ポートフォリオ全体の alert 圧」で page/alert できなかった。
++  直近 sweep(`healthState`、lifecycle filter 済み=resolved/snoozed 除外)の severity 別
++  open alert 数を `yagura_portfolio_alerts{severity="critical|high|medium|low"}` gauge として
++  `/metrics` に追加。sweep 実行前は series 自体を出さない(初期値の誤読防止)。`PortfolioHealth()`
++  accessor を再利用(dashboard banner と同じ source、二重計算なし)。これで health が
++  log / dashboard / Prometheus の 3 面で観測可能になり、Grafana 等で
++  `yagura_portfolio_alerts{severity="critical"} > 0` のような alert rule が書ける。live dogfood:
++  vuln_critical=2 のプロジェクトで `/metrics` に `yagura_portfolio_alerts{severity="critical"} 1`。
++  テスト追加(sweep 前は gauge 無し / sweep 後に severity 別値、`collectYaguraMetrics` 経由)。
++  外部依存ゼロ、新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1134,7 +1146,7 @@ index 9b29eec..94d3b8b 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8488,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8500,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -4841,7 +4853,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..bb41ddc 100644
+index bd1fe39..29ab2d4 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -5071,6 +5083,15 @@ index bd1fe39..bb41ddc 100644
  	// 9. HTTP server
  	var ready atomic.Bool
  	ready.Store(true)
+@@ -591,7 +652,7 @@ func run() error {
+ 		mreg.ServeHTTP(w, r)
+ 		// v0.31.0: ToolStats + AlertFix + HookReceiver の label 付き metric を追加
+ 		// 同一 endpoint で全 yagura metrics が揃う(Prometheus 慣行)
+-		extras := collectYaguraMetrics(mcpServer, hookReceiver)
++		extras := collectYaguraMetrics(mcpServer, hookReceiver, health)
+ 		_ = promexport.Render(w, extras)
+ 	})
+ 	mux.Handle("/mcp", mcpServer)
 @@ -603,6 +664,10 @@ func run() error {
  	// observation mode: 全 event を JSONL persist、空 response で agent 継続
  	if hookReceiver != nil {
@@ -5313,7 +5334,42 @@ index bd1fe39..bb41ddc 100644
  func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  	if l == nil || l.reg == nil || cwd == "" {
  		return "", false
-@@ -892,7 +1123,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -850,7 +1081,7 @@ func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
+ //
+ // 既存 metrics.Registry が scan counters を担い、こちらが label 付き metrics
+ // (per-tool, per-project) を担当する分担。
+-func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexport.Collection {
++func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver, health *healthState) []promexport.Collection {
+ 	var out []promexport.Collection
+ 
+ 	// MCP tool stats (per-tool counters)
+@@ -878,6 +1109,25 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+ 			Samples: errs},
+ 	)
+ 
++	// Portfolio health (latest alert_fix sweep). Lets external monitoring page on
++	// portfolio-wide alert pressure (resolved/snoozed already excluded), not just
++	// per-project sensors. Emitted only once a sweep has run.
++	if health != nil {
++		if hs, ok := health.PortfolioHealth(); ok {
++			out = append(out, promexport.Collection{
++				Name: "yagura_portfolio_alerts",
++				Type: "gauge",
++				Help: "Open alerts from the latest health sweep by severity (resolved/snoozed excluded)",
++				Samples: []promexport.Sample{
++					{Labels: map[string]string{"severity": "critical"}, Value: float64(hs.Critical)},
++					{Labels: map[string]string{"severity": "high"}, Value: float64(hs.High)},
++					{Labels: map[string]string{"severity": "medium"}, Value: float64(hs.Medium)},
++					{Labels: map[string]string{"severity": "low"}, Value: float64(hs.Low)},
++				},
++			})
++		}
++	}
++
+ 	// Cache stats
+ 	if cs := srv.CacheStats(); cs.Hits+cs.Misses > 0 {
+ 		out = append(out,
+@@ -892,7 +1142,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  
  	// Hook receiver stats (per-project event counters)
  	if hr != nil {
@@ -5322,7 +5378,7 @@ index bd1fe39..bb41ddc 100644
  		for slug, st := range hr.AllStats() {
  			for event, count := range st.ByEvent {
  				hookCalls = append(hookCalls, promexport.Sample{
-@@ -900,6 +1131,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -900,6 +1150,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  					Value:  float64(count),
  				})
  			}
@@ -5337,7 +5393,7 @@ index bd1fe39..bb41ddc 100644
  			hookErrs = append(hookErrs, promexport.Sample{
  				Labels: map[string]string{"project": slug},
  				Value:  float64(st.ErrorCount),
-@@ -908,10 +1147,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -908,10 +1166,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  		if len(hookCalls) > 0 {
  			out = append(out,
  				promexport.Collection{Name: "yagura_hook_events_total",
@@ -5368,10 +5424,10 @@ index f923a14..5cdb82b 100644
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/cmd/yagura/metrics_test.go b/yagura-v0.35.0/cmd/yagura/metrics_test.go
 new file mode 100644
-index 0000000..fccaa9c
+index 0000000..f82f1aa
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/metrics_test.go
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,103 @@
 +package main
 +
 +import (
@@ -5382,6 +5438,7 @@ index 0000000..fccaa9c
 +	"strings"
 +	"testing"
 +
++	"github.com/shizukutanaka/yagura/internal/alertfix"
 +	"github.com/shizukutanaka/yagura/internal/hookreceiver"
 +	"github.com/shizukutanaka/yagura/internal/mcp"
 +	"github.com/shizukutanaka/yagura/internal/project"
@@ -5418,7 +5475,7 @@ index 0000000..fccaa9c
 +		hr.Handle(httptest.NewRecorder(), req)
 +	}
 +
-+	cols := collectYaguraMetrics(mcp.New("", nil), hr)
++	cols := collectYaguraMetrics(mcp.New("", nil), hr, &healthState{})
 +	var buf bytes.Buffer
 +	if err := promexport.Render(&buf, cols); err != nil {
 +		t.Fatal(err)
@@ -5433,6 +5490,45 @@ index 0000000..fccaa9c
 +	// both agents counted under the same tool → value 2
 +	if !strings.Contains(out, `tool="Bash"} 2`) {
 +		t.Errorf("expected 2 Bash calls across agents:\n%s", out)
++	}
++}
++
++func TestCollectYaguraMetrics_PortfolioAlerts(t *testing.T) {
++	hr, err := hookreceiver.NewReceiver(filepath.Join(t.TempDir(), "hooks.jsonl"), nil, 10)
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	// before any sweep → no portfolio gauge
++	h := &healthState{}
++	var buf bytes.Buffer
++	_ = promexport.Render(&buf, collectYaguraMetrics(mcp.New("", nil), hr, h))
++	if strings.Contains(buf.String(), "yagura_portfolio_alerts") {
++		t.Error("portfolio gauge should be absent before the first sweep")
++	}
++
++	// after a sweep with a critical + a high alert
++	h.set(alertfix.Report{
++		Total:       2,
++		HasCritical: true,
++		BySeverity:  map[alertfix.Severity]int{alertfix.SevCritical: 1, alertfix.SevHigh: 1},
++	})
++	buf.Reset()
++	if err := promexport.Render(&buf, collectYaguraMetrics(mcp.New("", nil), hr, h)); err != nil {
++		t.Fatal(err)
++	}
++	out := buf.String()
++	if !strings.Contains(out, "yagura_portfolio_alerts") {
++		t.Fatalf("portfolio gauge missing after sweep:\n%s", out)
++	}
++	if !strings.Contains(out, `severity="critical"} 1`) {
++		t.Errorf("expected critical=1 gauge:\n%s", out)
++	}
++	if !strings.Contains(out, `severity="high"} 1`) {
++		t.Errorf("expected high=1 gauge:\n%s", out)
++	}
++	if !strings.Contains(out, `severity="medium"} 0`) {
++		t.Errorf("expected medium=0 gauge:\n%s", out)
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/pkgcount_test.go b/yagura-v0.35.0/cmd/yagura/pkgcount_test.go
