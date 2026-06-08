@@ -126,7 +126,7 @@ index 47411e5..9739b1c 100644
      labels:
        - dependencies
 diff --git a/yagura-v0.35.0/.github/workflows/ci.yml b/yagura-v0.35.0/.github/workflows/ci.yml
-index 63e57d5..d938de1 100644
+index 63e57d5..2e6a7a6 100644
 --- a/yagura-v0.35.0/.github/workflows/ci.yml
 +++ b/yagura-v0.35.0/.github/workflows/ci.yml
 @@ -27,10 +27,10 @@ jobs:
@@ -177,7 +177,7 @@ index 63e57d5..d938de1 100644
          with:
            go-version-file: go.mod
            cache: true
-@@ -107,3 +107,40 @@ jobs:
+@@ -107,3 +107,41 @@ jobs:
  
        - name: Fuzz aiverify.Scan
          run: go test -fuzz=FuzzScan -fuzztime=10s ./internal/aiverify/
@@ -199,11 +199,12 @@ index 63e57d5..d938de1 100644
 +
 +      # Pre-publish leak gate: no home paths / internal hosts / private IPs / emails
 +      # in the artifacts we publish. --strict makes a finding fail the job.
-+      - name: Publicity scan (.claude, docs, README)
++      - name: Publicity scan (.claude, docs, README, CHANGELOG)
 +        run: |
 +          ./yagura publicity-scan --strict --dir .claude
 +          ./yagura publicity-scan --strict --dir docs
 +          ./yagura publicity-scan --strict README.md
++          ./yagura publicity-scan --strict CHANGELOG.md
 +
 +      # Dogfood the .claude/ artifact audits on yagura's own config — as real
 +      # gates (--min-score): a regression that drops a score fails the job.
@@ -319,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..422e63a 100644
+index 9b29eec..0a146e0 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,688 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,699 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -514,7 +515,7 @@ index 9b29eec..422e63a 100644
 +  (file/dir、既定 `.claude`、`--json`)。新 package `internal/publicityscan`、
 +  CLI 側に置くので MCP tool 数(48)不変、stdlib `regexp` のみ(ADR-0001)。
 +  ドッグフード: `.claude`(4 files)は 0 件でクリーン。一方 README/windsurf.md の
-+  example に残っていた実 home パス(`/home/m/...`)を検出 → placeholder
++  example に残っていた実 home パス(OS ユーザ名を含む絶対パス)を検出 → placeholder
 +  (`/home/you/...`)へ修正(scanner 自身の suggestion を適用)。回帰テスト 10 本。
 +- **監査ファミリを MCP サーフェスでも提供(self-review の改善点 #2)**
 +  (`internal/mcp/tools_audit.go`)。これまで `workflow-audit` / `settings-audit` /
@@ -993,6 +994,17 @@ index 9b29eec..422e63a 100644
 +  rate が描画、未知 slug は空状態。外部依存ゼロ、新規 tool/package なし(tool 62 / package
 +  50 不変)、ADR-0001 維持。テスト追加(detail 描画/列リンク化/未知 slug 空状態/provider
 +  無し、`Server.RecordedSummary` の集計・未知 slug・receiver 無し)。
++- **publish-gate: CHANGELOG も publicity-scan の対象に(leak gate の穴を塞ぐ)**
++  (`.github/workflows/ci.yml` / `CHANGELOG.md`)。自己診断で `yagura publicity-scan` を
++  shipped tree 全体に当てたところ、CI の publish-gate は `.claude` / `docs` / `README.md`
++  しか `--strict` で見ておらず、同じく公開・tarball 同梱される `CHANGELOG.md` が gate の
++  穴になっていた。実際 CHANGELOG に OS ユーザ名を含む絶対 home パスが 2 箇所残存(HIGH)。
++  (1) 当該 2 箇所を placeholder へ修正(scanner 自身の suggestion を適用、過去の
++  README/windsurf 修正と同じ流儀)、(2) publish-gate に
++  `./yagura publicity-scan --strict CHANGELOG.md` を追加して再発を CI で物理的に防ぐ。
++  これで shipped doc セット(`.claude`/`docs`/`README`/`CHANGELOG`)が publicity-scan
++  0 件でクリーン。gha-audit は不変(release.yml の SLSA generator は仕様上 semver タグ
++  必須=唯一の意図的例外で据置)。コード変更なし(tool 62 / package 50 不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1011,6 +1023,15 @@ index 9b29eec..422e63a 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
+@@ -7684,7 +8377,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+ 
+ Wired into `cmd/yagura/main.go` at daemon startup:
+ ```
+-workspace auto-detected from .git → /home/m/yagura     (when started inside repo)
++workspace auto-detected from .git → /home/you/yagura   (when started inside repo)
+ workspace auto-detect: using state_dir...              (fallback when no .git)
+ ```
+ 
 diff --git a/yagura-v0.35.0/CLAUDE.md b/yagura-v0.35.0/CLAUDE.md
 index bc406e1..dad7c59 100644
 --- a/yagura-v0.35.0/CLAUDE.md
