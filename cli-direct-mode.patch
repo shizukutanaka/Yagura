@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..5cb3263 100644
+index 9b29eec..0b815f9 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,855 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,864 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1161,6 +1161,15 @@ index 9b29eec..5cb3263 100644
 +  あわせて scanner の `AfterScan` が ctx キャンセル(=shutdown)時に skip される挙動を Config
 +  コメントに明記。`go vet` clean、`go test ./...` green(touch packages は `-race`)。外部依存ゼロ、
 +  新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。
++- **Dashboard alerts: snooze 期間の選択(1d / 7d / 30d)**
++  (`internal/dashboard`)。前回追加した snooze ボタンは 7 日固定だった。各行に小さな
++  `<select>`(1d / 7d / 30d、既定 7d)を足し、Snooze ボタンが選択値を `yagura_alert_resolve`
++  の `snooze_days` として `/mcp` に送るようにした(同じ audited path)。action 実行中は
++  ボタンと select を無効化。client-side のみ(template + JS)で backend 変更なし、
++  read-mostly / trust base 不変。live dogfood: alerts ページに 1d/7d(selected)/30d が出て、
++  30d snooze で `snooze_until` が 30 日後に設定されることを確認。テスト更新(snooze selector +
++  各 option + 既定 selected の markup 検証)。外部依存ゼロ、新規 tool/package なし
++  (tool 62 / package 50 不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1179,7 +1188,7 @@ index 9b29eec..5cb3263 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8533,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8542,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -8238,7 +8247,7 @@ index 0000000..3d047fc
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/dashboard/dashboard.go b/yagura-v0.35.0/internal/dashboard/dashboard.go
-index 6981102..550c1ff 100644
+index 6981102..cd64dee 100644
 --- a/yagura-v0.35.0/internal/dashboard/dashboard.go
 +++ b/yagura-v0.35.0/internal/dashboard/dashboard.go
 @@ -2,7 +2,11 @@
@@ -8518,7 +8527,7 @@ index 6981102..550c1ff 100644
  	// v0.14.0: agent panel data
  	if h.quota != nil {
  		statuses := h.quota.AllStatuses()
-@@ -400,12 +601,178 @@ func scorecardTitle(s float64) string {
+@@ -400,12 +601,190 @@ func scorecardTitle(s float64) string {
  	}
  }
  
@@ -8620,6 +8629,8 @@ index 6981102..550c1ff 100644
 +code{background:#161b22;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:12px}
 +.act{display:flex;gap:6px}
 +.act button{height:28px;padding:0 10px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:12px;cursor:pointer}
++.act .snz{height:28px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:12px}
++.act .snz:disabled{opacity:.5}
 +.act button:hover{border-color:#58a6ff}
 +.act button.resolve:hover{border-color:#3fb950;color:#3fb950}
 +.act button:disabled{opacity:.5;cursor:default}
@@ -8647,7 +8658,12 @@ index 6981102..550c1ff 100644
 +      <td class="muted">{{.Recommendation}}</td>
 +      <td><div class="act">
 +        <button class="resolve" data-act="resolve" title="Mark resolved (persisted, audited)">Resolve</button>
-+        <button data-act="snooze" title="Snooze for 7 days">Snooze 7d</button>
++        <select class="snz" aria-label="Snooze duration" title="Snooze duration">
++          <option value="1">1d</option>
++          <option value="7" selected>7d</option>
++          <option value="30">30d</option>
++        </select>
++        <button data-act="snooze" title="Snooze for the selected duration">Snooze</button>
 +      </div></td>
 +    </tr>
 +  {{end}}
@@ -8658,16 +8674,21 @@ index 6981102..550c1ff 100644
 +  var msg=document.getElementById('amsg');
 +  function call(id,action,btn){
 +    var args={alert_id:id,action:action};
-+    if(action==='snooze')args.snooze_days=7;
++    var days=7;
++    if(action==='snooze'){
++      var sel=btn.parentNode.querySelector('.snz');
++      days=(sel&&parseInt(sel.value,10))||7;
++      args.snooze_days=days;
++    }
 +    var row=btn.closest('tr');
-+    row.querySelectorAll('button').forEach(function(b){b.disabled=true;});
-+    msg.textContent=(action==='resolve'?'Resolving ':'Snoozing ')+id+'…';
++    row.querySelectorAll('button,select').forEach(function(b){b.disabled=true;});
++    msg.textContent=(action==='resolve'?'Resolving ':'Snoozing '+days+'d ')+id+'…';
 +    fetch('/mcp',{method:'POST',headers:{'Content-Type':'application/json'},
 +      body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'yagura_alert_resolve',arguments:args}})})
 +      .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
 +      .then(function(j){ if(j.error) throw new Error((j.error&&j.error.message)||'action failed');
-+        row.classList.add('done'); msg.textContent=id+' '+(action==='resolve'?'resolved':'snoozed 7d')+'. It will drop off after the next scan.'; })
-+      .catch(function(err){ row.querySelectorAll('button').forEach(function(b){b.disabled=false;});
++        row.classList.add('done'); msg.textContent=id+' '+(action==='resolve'?'resolved':'snoozed '+days+'d')+'. It will drop off after the next scan.'; })
++      .catch(function(err){ row.querySelectorAll('button,select').forEach(function(b){b.disabled=false;});
 +        msg.textContent='Could not '+action+': '+err.message+' — if this instance needs a token, use: yagura (CLI) or the MCP client.'; });
 +  }
 +  document.querySelectorAll('.act button').forEach(function(btn){
@@ -8697,7 +8718,7 @@ index 6981102..550c1ff 100644
  <style>
  * { box-sizing: border-box; margin: 0; padding: 0; }
  html { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
-@@ -423,6 +790,13 @@ h1 .meta { font-weight: 400; color: #8b949e; font-size: 12px; margin-left: 8px;
+@@ -423,6 +802,13 @@ h1 .meta { font-weight: 400; color: #8b949e; font-size: 12px; margin-left: 8px;
  .kpi.danger .val { color: #f85149; }
  .kpi.warn .val { color: #d29922; }
  .kpi.ok .val { color: #3fb950; }
@@ -8711,7 +8732,7 @@ index 6981102..550c1ff 100644
  table { width: 100%; border-collapse: collapse; background: #0d1117; }
  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #21262d; font-size: 13px; }
  th { color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; background: #161b22; }
-@@ -458,6 +832,17 @@ tr:hover td { background: #161b22; }
+@@ -458,6 +844,17 @@ tr:hover td { background: #161b22; }
  footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #30363d; color: #6e7681; font-size: 12px; text-align: center; }
  .empty { text-align: center; padding: 40px; color: #8b949e; }
  .empty code { background: #21262d; padding: 2px 8px; border-radius: 3px; }
@@ -8729,7 +8750,7 @@ index 6981102..550c1ff 100644
  .summary { color: #8b949e; font-size: 12px; margin-bottom: 12px; }
  
  /* ─── WCAG 2.1 AA accessibility ─────────────────────────── */
-@@ -560,10 +945,31 @@ a:focus-visible {
+@@ -560,10 +957,31 @@ a:focus-visible {
      <div class="kpi {{if gt .Stale 0}}warn{{else}}ok{{end}}" role="status"><div class="label">Stale ≥14d</div><div class="val">{{.Stale}}</div></div>
    </div>
  
@@ -8762,7 +8783,7 @@ index 6981102..550c1ff 100644
    </div>
    {{else}}
    <table aria-label="Registered projects">
-@@ -580,6 +986,7 @@ a:focus-visible {
+@@ -580,6 +998,7 @@ a:focus-visible {
          <th scope="col" abbr="Open pull requests">PR</th>
          <th scope="col" abbr="Open issues">Iss</th>
          <th scope="col">Last commit</th>
@@ -8770,7 +8791,7 @@ index 6981102..550c1ff 100644
          <th scope="col" title="OpenSSF Scorecard score (0-10) and vulnerability counts">Security</th>
          <th scope="col">Tags</th>
        </tr>
-@@ -597,6 +1004,7 @@ a:focus-visible {
+@@ -597,6 +1016,7 @@ a:focus-visible {
          <td>{{.OpenPRs}}</td>
          <td>{{.OpenIssues}}</td>
          <td class="{{staleClass .LatestActivity $.Now .Stage}}">{{daysSince .LatestActivity $.Now}}</td>
@@ -8778,7 +8799,7 @@ index 6981102..550c1ff 100644
          <td class="security">{{securityCell .}}</td>
          <td class="tags">{{range .Tags}}<span class="tag">{{.}}</span>{{end}}</td>
        </tr>
-@@ -653,7 +1061,29 @@ a:focus-visible {
+@@ -653,7 +1073,29 @@ a:focus-visible {
    {{end}}
    </main>
  
@@ -8811,10 +8832,10 @@ index 6981102..550c1ff 100644
  </html>`
 diff --git a/yagura-v0.35.0/internal/dashboard/health_test.go b/yagura-v0.35.0/internal/dashboard/health_test.go
 new file mode 100644
-index 0000000..9fbaca1
+index 0000000..d6f2530
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/dashboard/health_test.go
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,160 @@
 +package dashboard
 +
 +import (
@@ -8945,8 +8966,11 @@ index 0000000..9fbaca1
 +	for _, want := range []string{
 +		`data-alert-id="breeze:vulns:critical"`,   // row carries the id
 +		`data-act="resolve"`, `data-act="snooze"`, // both action buttons
-+		"yagura_alert_resolve", // JS posts the audited lifecycle tool
-+		"/mcp",                 // …to the MCP endpoint (same audited path as register)
++		"yagura_alert_resolve",    // JS posts the audited lifecycle tool
++		"/mcp",                    // …to the MCP endpoint (same audited path as register)
++		`class="snz"`,             // snooze-duration selector
++		`value="1"`, `value="30"`, // 1d / 30d options beyond the 7d default
++		`value="7" selected`, // 7d remains the default
 +	} {
 +		if !strings.Contains(html, want) {
 +			t.Errorf("alert actions missing %q", want)
