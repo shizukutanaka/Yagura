@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..e0b7772 100644
+index 9b29eec..55446be 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,874 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,890 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1180,6 +1180,22 @@ index 9b29eec..e0b7772 100644
 +  finding 検出 / summary_only が findings リストを省きつつ summary は残す)。MCP ラッパの
 +  入力検証・unavailable 分岐・summary_only 整形を回帰で守る。カバレッジ 54.1% → 56.6%。
 +  test のみ(tool 62 / package 50 不変)、ADR-0001 維持、`-race` green。
++- **Persistent result cache(Roadmap #3 — 長年の短所を解消)**
++  (`internal/dedupe` / `cmd/yagura/main.go`)。長所短所の洗い出しで最大の未解決短所だった
++  「dedupe cache は in-memory のみで daemon restart で消失」(既知 gotcha)に対応。
++  `dedupe.Cache` に optional な write-through disk 層を追加:`EnablePersistence(dir)` で
++  有効化すると Set 時に content-hash をファイル名にして disk へ crash-safe に書き
++  (`internal/atomicfile` を再利用)、memory miss 時に disk から lazy reload して memory へ
++  promote する。TTL は disk 上の createdAt 起点なので再起動をまたいでも期限が一貫。
++  best-effort(disk I/O 失敗は in-memory cache の正しさを壊さない)、key は SHA-256 hex
++  (filesystem-safe)、eviction は memory が LRU・disk は TTL 期限切れを read 時と起動時に
++  prune(自然に縮む)。daemon は `{StateDir}/cache` に有効化(mkdir 失敗時は in-memory
++  only に degrade)。未有効化なら完全に従来動作(後方互換)。これで重い sbom / ai_verify /
++  quality_check の結果が再起動後も再利用される。live dogfood: run1 で quality_check →
++  `{StateDir}/cache` に 1 entry、別プロセスの run2(同 StateDir)で同一 content が
++  `yagura_cache_hits_total 1`(disk 由来の hit)。テスト追加(restart 越え hit / TTL 越え
++  失効 + prune / 起動時 prune / Delete の disk 削除 / 未有効化は従来動作)。外部依存ゼロ、
++  新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持、`-race` green。
 +
 +### What's not yet
 +
@@ -1198,7 +1214,7 @@ index 9b29eec..e0b7772 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8552,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8568,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -1208,7 +1224,7 @@ index 9b29eec..e0b7772 100644
  ```
  
 diff --git a/yagura-v0.35.0/CLAUDE.md b/yagura-v0.35.0/CLAUDE.md
-index bc406e1..dad7c59 100644
+index bc406e1..710edfc 100644
 --- a/yagura-v0.35.0/CLAUDE.md
 +++ b/yagura-v0.35.0/CLAUDE.md
 @@ -21,19 +21,25 @@ cortex flywheel 4 段階すべてを単体で機械化:
@@ -1271,6 +1287,30 @@ index bc406e1..dad7c59 100644
  - `internal/dashboard` — HTML dashboard (薄め)
  - `internal/telemetry` — internal stats
  - `internal/metrics` — counter / gauge primitives
+@@ -139,8 +161,11 @@ cortex flywheel 4 段階すべてを単体で機械化:
+ ### compact mode は env opt-in
+ `YAGURA_MCP_COMPACT=1` で発火。他は完全に後方互換。
+ 
+-### dedupe cache は in-memory のみ
+-daemon restart で消失。重い計算結果は persistent cache(v0.29+ 候補)が必要。
++### dedupe cache は in-memory + optional disk(v0.35〜)
++`dedupe.Cache.EnablePersistence(dir)` で write-through disk 層を有効化でき、daemon は
++`{StateDir}/cache` に有効化する。memory miss は disk から lazy reload(TTL は disk 上の
++createdAt 起点)。未有効化(EnablePersistence 未呼出)なら従来どおり in-memory のみ。
++eviction は memory が LRU、disk は TTL 期限切れを read 時/起動時に prune。
+ 
+ ### audit log の write は best-effort
+ write エラーは ignore。critical path をブロックしない設計。
+@@ -159,7 +184,8 @@ trust base 保護のため意図的。alert_fix の live smoke で plan 以外
+ 優先度順:
+ 1. **tools.go の topic 別分割** (v0.29 候補, scope 大)
+ 2. **Scanner ↔ alert_fix periodic loop** (v0.29 候補)
+-3. **Persistent cache** (sbom / aiverify 結果を disk に)
++3. ~~**Persistent cache** (sbom / aiverify 結果を disk に)~~ ✅ v0.35 — `dedupe` に
++   optional write-through disk 層(`EnablePersistence`)。daemon は `{StateDir}/cache` に有効化。
+ 4. **Custom rule loading** (`.yagura/aiverify.yaml` 等)
+ 5. **Alert lifecycle** (last-seen / resolved / snooze)
+ 6. **AST analysis** (zero-dep 制約と相談)
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
 index 986f84e..e32b1ed 100644
 --- a/yagura-v0.35.0/README.md
@@ -4914,7 +4954,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..56e635f 100644
+index bd1fe39..9a572d3 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -5115,9 +5155,20 @@ index bd1fe39..56e635f 100644
  	})
  	scan.Start(ctx)
  	logger.Info("scanner started", "interval", cfg.ScanInterval)
-@@ -467,11 +523,8 @@ func run() error {
+@@ -466,12 +522,19 @@ func run() error {
+ 	mcpServer := mcp.New(cfg.MCPToken, logger)
  	mcpServer.SetAudit(auditLog)
  
++	// v0.35: persistent result cache (Roadmap #3) — write-through disk layer so
++	// heavy sbom / ai_verify / quality_check results survive a daemon restart.
++	// Best-effort: a mkdir failure just leaves the cache in-memory only.
++	if cfg.StateDir != "" {
++		if err := mcpServer.Cache().EnablePersistence(filepath.Join(cfg.StateDir, "cache")); err != nil {
++			logger.Warn("cache persistence disabled (continuing in-memory only)",
++				"path", filepath.Join(cfg.StateDir, "cache"), "err", err)
++		}
++	}
++
  	// v0.30.0: alert lifecycle store (resolved/snoozed の永続化)
 -	alertStatePath := filepath.Join(cfg.StateDir, "alert_state.jsonl")
 -	if alertStore, err := alertfix.NewStore(alertStatePath); err != nil {
@@ -5129,7 +5180,7 @@ index bd1fe39..56e635f 100644
  		mcpServer.SetAlertStore(alertStore)
  	}
  
-@@ -568,6 +621,14 @@ func run() error {
+@@ -568,6 +631,14 @@ func run() error {
  	// v0.14.0: agent handoff panel on dashboard
  	dash.SetAgentStatusProvider(quotaMon)
  
@@ -5144,7 +5195,7 @@ index bd1fe39..56e635f 100644
  	// 9. HTTP server
  	var ready atomic.Bool
  	ready.Store(true)
-@@ -591,7 +652,7 @@ func run() error {
+@@ -591,7 +662,7 @@ func run() error {
  		mreg.ServeHTTP(w, r)
  		// v0.31.0: ToolStats + AlertFix + HookReceiver の label 付き metric を追加
  		// 同一 endpoint で全 yagura metrics が揃う(Prometheus 慣行)
@@ -5153,7 +5204,7 @@ index bd1fe39..56e635f 100644
  		_ = promexport.Render(w, extras)
  	})
  	mux.Handle("/mcp", mcpServer)
-@@ -603,6 +664,10 @@ func run() error {
+@@ -603,6 +674,10 @@ func run() error {
  	// observation mode: 全 event を JSONL persist、空 response で agent 継続
  	if hookReceiver != nil {
  		mux.HandleFunc("/hooks/claude-code", hookReceiver.Handle)
@@ -5164,7 +5215,7 @@ index bd1fe39..56e635f 100644
  	}
  
  	// v0.31.0: MCP 2026 spec .well-known metadata endpoint
-@@ -610,15 +675,16 @@ func run() error {
+@@ -610,15 +685,16 @@ func run() error {
  	// 接続前に server capabilities を発見可能にする
  	mux.HandleFunc("/.well-known/mcp", func(w http.ResponseWriter, _ *http.Request) {
  		meta := map[string]any{
@@ -5187,7 +5238,7 @@ index bd1fe39..56e635f 100644
  			},
  			"capabilities": map[string]any{
  				"tools":               len(mcpServer.ToolNames()),
-@@ -637,18 +703,18 @@ func run() error {
+@@ -637,18 +713,18 @@ func run() error {
  	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
  	// v0.12.0: per-route rate limiting で DoS / PAT 枯渇を防止
  	sbomLimiter := httplimit.New(httplimit.Options{
@@ -5212,7 +5263,7 @@ index bd1fe39..56e635f 100644
  		KeyFn:           httplimit.TokenKey,
  	})
  	// 定期 GC で idle bucket を回収(メモリ leak 防止)
-@@ -761,8 +827,8 @@ type scannerMetricsAdapter struct {
+@@ -761,8 +837,8 @@ type scannerMetricsAdapter struct {
  	lastAt   *metrics.Gauge
  }
  
@@ -5223,7 +5274,7 @@ index bd1fe39..56e635f 100644
  func (a *scannerMetricsAdapter) SetLastScanDuration(d time.Duration) {
  	a.duration.Set(d.Milliseconds())
  }
-@@ -832,6 +898,171 @@ type registryLookup struct {
+@@ -832,6 +908,171 @@ type registryLookup struct {
  	reg *registry.Registry
  }
  
@@ -5395,7 +5446,7 @@ index bd1fe39..56e635f 100644
  func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  	if l == nil || l.reg == nil || cwd == "" {
  		return "", false
-@@ -850,7 +1081,7 @@ func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
+@@ -850,7 +1091,7 @@ func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  //
  // 既存 metrics.Registry が scan counters を担い、こちらが label 付き metrics
  // (per-tool, per-project) を担当する分担。
@@ -5404,7 +5455,7 @@ index bd1fe39..56e635f 100644
  	var out []promexport.Collection
  
  	// MCP tool stats (per-tool counters)
-@@ -878,6 +1109,25 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -878,6 +1119,25 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  			Samples: errs},
  	)
  
@@ -5430,7 +5481,7 @@ index bd1fe39..56e635f 100644
  	// Cache stats
  	if cs := srv.CacheStats(); cs.Hits+cs.Misses > 0 {
  		out = append(out,
-@@ -892,7 +1142,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -892,7 +1152,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  
  	// Hook receiver stats (per-project event counters)
  	if hr != nil {
@@ -5439,7 +5490,7 @@ index bd1fe39..56e635f 100644
  		for slug, st := range hr.AllStats() {
  			for event, count := range st.ByEvent {
  				hookCalls = append(hookCalls, promexport.Sample{
-@@ -900,6 +1150,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -900,6 +1160,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  					Value:  float64(count),
  				})
  			}
@@ -5454,7 +5505,7 @@ index bd1fe39..56e635f 100644
  			hookErrs = append(hookErrs, promexport.Sample{
  				Labels: map[string]string{"project": slug},
  				Value:  float64(st.ErrorCount),
-@@ -908,13 +1166,21 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -908,13 +1176,21 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  		if len(hookCalls) > 0 {
  			out = append(out,
  				promexport.Collection{Name: "yagura_hook_events_total",
@@ -9284,6 +9335,401 @@ index 0000000..d8d30ea
 +	// the inactive project should show a dash; ensure a dash cell exists
 +	if !strings.Contains(html, `class="activity"`) || !strings.Contains(html, "—") {
 +		t.Error("inactive project should render an em-dash in the activity cell")
++	}
++}
+diff --git a/yagura-v0.35.0/internal/dedupe/dedupe.go b/yagura-v0.35.0/internal/dedupe/dedupe.go
+index f9a48ec..7b1e9e4 100644
+--- a/yagura-v0.35.0/internal/dedupe/dedupe.go
++++ b/yagura-v0.35.0/internal/dedupe/dedupe.go
+@@ -1,13 +1,14 @@
+ // Package dedupe は content-addressed cache + tool result cache を提供する。
+ //
+ // 動機 (v0.23.0):
+-//   AI agent (Claude Code 等) が短期間に同じ tool を同じ引数で呼ぶ、
+-//   または同じ source content を scan する重複が観察される。
+-//   cortex (aircloset 2026/05) でも "AI が迷う頻度を構造的に減らす" として
+-//   Product Graph で同じ問いを 1 回で答える設計を採用している。
+ //
+-//   yagura はもう一歩踏み込んで、tool 呼出 + content scan の deterministic な
+-//   結果を content hash でキャッシュし、重複呼出を即時に応答する。
++//	AI agent (Claude Code 等) が短期間に同じ tool を同じ引数で呼ぶ、
++//	または同じ source content を scan する重複が観察される。
++//	cortex (aircloset 2026/05) でも "AI が迷う頻度を構造的に減らす" として
++//	Product Graph で同じ問いを 1 回で答える設計を採用している。
++//
++//	yagura はもう一歩踏み込んで、tool 呼出 + content scan の deterministic な
++//	結果を content hash でキャッシュし、重複呼出を即時に応答する。
+ //
+ // 設計判断 (ADR-0001 ゼロ依存準拠):
+ //   - sync.Map ではなく explicit lock の RWMutex map[string]*entry
+@@ -25,10 +26,15 @@ package dedupe
+ import (
+ 	"container/list"
+ 	"crypto/sha256"
++	"encoding/binary"
+ 	"encoding/hex"
++	"os"
++	"path/filepath"
+ 	"sync"
+ 	"sync/atomic"
+ 	"time"
++
++	"github.com/shizukutanaka/yagura/internal/atomicfile"
+ )
+ 
+ // DefaultMaxEntries は cache が保持する最大 entry 数。
+@@ -47,6 +53,10 @@ type Cache struct {
+ 	entries map[string]*list.Element // key → list element
+ 	lru     *list.List               // front = most recent
+ 
++	// dir, if non-empty, enables a write-through disk layer so heavy results
++	// survive a daemon restart (v0.35). Empty = in-memory only (unchanged).
++	dir string
++
+ 	// stats (atomic for lock-free read in Stats())
+ 	hits        uint64
+ 	misses      uint64
+@@ -117,46 +127,67 @@ func HashBytes(b []byte) string {
+ func (c *Cache) Get(key string) ([]byte, bool) {
+ 	c.mu.Lock()
+ 	defer c.mu.Unlock()
+-	elem, ok := c.entries[key]
+-	if !ok {
+-		atomic.AddUint64(&c.misses, 1)
+-		return nil, false
+-	}
+-	e := elem.Value.(*entry)
+-	if c.now().Sub(e.createdAt) > c.ttl {
+-		// expired
+-		c.lru.Remove(elem)
+-		delete(c.entries, key)
+-		atomic.AddUint64(&c.expirations, 1)
+-		atomic.AddUint64(&c.misses, 1)
+-		return nil, false
++	if elem, ok := c.entries[key]; ok {
++		e := elem.Value.(*entry)
++		if c.now().Sub(e.createdAt) > c.ttl {
++			// expired
++			c.lru.Remove(elem)
++			delete(c.entries, key)
++			c.deleteDiskLocked(key)
++			atomic.AddUint64(&c.expirations, 1)
++			atomic.AddUint64(&c.misses, 1)
++			return nil, false
++		}
++		// LRU 更新
++		c.lru.MoveToFront(elem)
++		atomic.AddUint64(&c.hits, 1)
++		atomic.AddUint64(&c.bytesSaved, uint64(len(e.value)))
++		return cloneBytes(e.value), true
+ 	}
+-	// LRU 更新
+-	c.lru.MoveToFront(elem)
+-	atomic.AddUint64(&c.hits, 1)
+-	atomic.AddUint64(&c.bytesSaved, uint64(len(e.value)))
+-	// caller が改変しないよう copy を返す
+-	out := make([]byte, len(e.value))
+-	copy(out, e.value)
+-	return out, true
++	// memory miss — fall back to the disk layer (durable across restart).
++	if c.dir != "" {
++		if val, createdAt, ok := c.readDiskLocked(key); ok {
++			if c.now().Sub(createdAt) > c.ttl {
++				c.deleteDiskLocked(key)
++				atomic.AddUint64(&c.expirations, 1)
++				atomic.AddUint64(&c.misses, 1)
++				return nil, false
++			}
++			c.insertMemLocked(key, val, createdAt) // promote to memory (may evict)
++			atomic.AddUint64(&c.hits, 1)
++			atomic.AddUint64(&c.bytesSaved, uint64(len(val)))
++			return cloneBytes(val), true
++		}
++	}
++	atomic.AddUint64(&c.misses, 1)
++	return nil, false
+ }
+ 
+ // Set は entry を追加または更新する。
+ //
+-// max を超えた場合は LRU の末尾を evict する。
++// max を超えた場合は LRU の末尾を evict する。dir が設定されていれば disk にも
++// write-through する(lock 外、best-effort)。
+ func (c *Cache) Set(key string, value []byte) {
+ 	c.mu.Lock()
+-	defer c.mu.Unlock()
+ 	now := c.now()
++	c.insertMemLocked(key, value, now)
++	dir := c.dir
++	c.mu.Unlock()
++	if dir != "" {
++		c.writeDisk(key, value, now) // best-effort, outside the lock
++	}
++}
++
++// insertMemLocked は memory map/LRU へ insert または update する(disk は触らない)。
++// 呼出側が c.mu を保持していること。
++func (c *Cache) insertMemLocked(key string, value []byte, createdAt time.Time) {
+ 	if elem, ok := c.entries[key]; ok {
+-		// 既存 entry を更新
+ 		e := elem.Value.(*entry)
+ 		e.value = append(e.value[:0], value...)
+-		e.createdAt = now
++		e.createdAt = createdAt
+ 		c.lru.MoveToFront(elem)
+ 		return
+ 	}
+-	// 容量超過なら evict
+ 	for c.lru.Len() >= c.max {
+ 		oldest := c.lru.Back()
+ 		if oldest == nil {
+@@ -167,12 +198,16 @@ func (c *Cache) Set(key string, value []byte) {
+ 		delete(c.entries, oldEntry.key)
+ 		atomic.AddUint64(&c.evictions, 1)
+ 	}
+-	// 追加
+ 	val := make([]byte, len(value))
+ 	copy(val, value)
+-	e := &entry{key: key, value: val, createdAt: now}
+-	elem := c.lru.PushFront(e)
+-	c.entries[key] = elem
++	e := &entry{key: key, value: val, createdAt: createdAt}
++	c.entries[key] = c.lru.PushFront(e)
++}
++
++func cloneBytes(b []byte) []byte {
++	out := make([]byte, len(b))
++	copy(out, b)
++	return out
+ }
+ 
+ // Delete は key を削除する。存在しない場合は no-op。
+@@ -183,6 +218,91 @@ func (c *Cache) Delete(key string) {
+ 		c.lru.Remove(elem)
+ 		delete(c.entries, key)
+ 	}
++	c.deleteDiskLocked(key)
++}
++
++// ─── v0.35: optional write-through disk layer (persistent cache) ─────────
++//
++// 動機(Roadmap #3 / 既知 gotcha): dedupe は in-memory のみで、daemon restart で
++// 全結果が消えていた。重い sbom / ai_verify / quality_check の結果が再起動のたびに
++// 再計算される。dir を設定すると、Set 時に content-hash をファイル名にして disk へ
++// 書き(crash-safe: internal/atomicfile)、memory miss 時に disk から lazy reload する。
++// TTL は disk 上の createdAt から測るので再起動をまたいでも期限が一貫する。
++//
++// best-effort: disk I/O 失敗は Get/Set を壊さない(in-memory cache が常に正)。keys は
++// SHA-256 hex(filesystem-safe)。eviction は memory のみ LRU、disk は TTL 期限切れを
++// read 時と EnablePersistence 時に prune(=自然に縮む。active な size cap は持たない)。
++
++// EnablePersistence は dir に write-through disk 層を有効化する。dir を作成し、
++// 既存の期限切れファイルを prune する。mkdir 失敗時のみ error を返す。
++func (c *Cache) EnablePersistence(dir string) error {
++	if dir == "" {
++		return nil
++	}
++	if err := os.MkdirAll(dir, 0o755); err != nil {
++		return err
++	}
++	c.mu.Lock()
++	c.dir = dir
++	c.mu.Unlock()
++	c.pruneExpiredDisk()
++	return nil
++}
++
++func (c *Cache) diskPath(key string) string { return filepath.Join(c.dir, key) }
++
++// writeDisk は createdAt(8byte big-endian unix-nano)+ value を atomic に書く。
++// best-effort(error は無視)。lock 外から呼ぶ。
++func (c *Cache) writeDisk(key string, value []byte, createdAt time.Time) {
++	buf := make([]byte, 8+len(value))
++	binary.BigEndian.PutUint64(buf[:8], uint64(createdAt.UnixNano()))
++	copy(buf[8:], value)
++	_ = atomicfile.Write(c.diskPath(key), buf, 0o644)
++}
++
++// readDiskLocked は disk entry を読む。戻り value は呼出側が copy 前提(insertMemLocked
++// が copy する)。c.mu 保持前提(c.dir 読み取りのため)。
++func (c *Cache) readDiskLocked(key string) ([]byte, time.Time, bool) {
++	b, err := os.ReadFile(c.diskPath(key))
++	if err != nil || len(b) < 8 {
++		return nil, time.Time{}, false
++	}
++	ts := int64(binary.BigEndian.Uint64(b[:8]))
++	return b[8:], time.Unix(0, ts), true
++}
++
++func (c *Cache) deleteDiskLocked(key string) {
++	if c.dir != "" {
++		_ = os.Remove(c.diskPath(key))
++	}
++}
++
++// pruneExpiredDisk は dir 内の TTL 超過ファイルを削除する(起動時 + EnablePersistence)。
++func (c *Cache) pruneExpiredDisk() {
++	c.mu.Lock()
++	dir, ttl, now := c.dir, c.ttl, c.now()
++	c.mu.Unlock()
++	if dir == "" {
++		return
++	}
++	ents, err := os.ReadDir(dir)
++	if err != nil {
++		return
++	}
++	for _, de := range ents {
++		if de.IsDir() {
++			continue
++		}
++		p := filepath.Join(dir, de.Name())
++		b, err := os.ReadFile(p)
++		if err != nil || len(b) < 8 {
++			continue
++		}
++		ts := int64(binary.BigEndian.Uint64(b[:8]))
++		if now.Sub(time.Unix(0, ts)) > ttl {
++			_ = os.Remove(p)
++		}
++	}
+ }
+ 
+ // Len は現在の entry 数を返す。
+@@ -198,8 +318,8 @@ type Stats struct {
+ 	Misses      uint64  `json:"misses"`
+ 	Evictions   uint64  `json:"evictions"`
+ 	Expirations uint64  `json:"expirations"`
+-	BytesSaved  uint64  `json:"bytes_saved"`  // hit で返した cumulative bytes(節約推定)
+-	HitRate     float64 `json:"hit_rate"`     // hits / (hits + misses)
++	BytesSaved  uint64  `json:"bytes_saved"` // hit で返した cumulative bytes(節約推定)
++	HitRate     float64 `json:"hit_rate"`    // hits / (hits + misses)
+ 	CurrentSize int     `json:"current_size"`
+ 	MaxSize     int     `json:"max_size"`
+ 	TTLSeconds  int64   `json:"ttl_seconds"`
+diff --git a/yagura-v0.35.0/internal/dedupe/dedupe_test.go b/yagura-v0.35.0/internal/dedupe/dedupe_test.go
+index 706e5a5..5913414 100644
+--- a/yagura-v0.35.0/internal/dedupe/dedupe_test.go
++++ b/yagura-v0.35.0/internal/dedupe/dedupe_test.go
+@@ -2,6 +2,7 @@ package dedupe
+ 
+ import (
+ 	"fmt"
++	"os"
+ 	"sync"
+ 	"testing"
+ 	"time"
+@@ -74,7 +75,7 @@ func TestCache_LRURecentlyUsedSurvives(t *testing.T) {
+ 	c.Set("b", []byte("2"))
+ 	c.Set("c", []byte("3"))
+ 
+-	_, _ = c.Get("a") // a を front に移動
++	_, _ = c.Get("a")       // a を front に移動
+ 	c.Set("d", []byte("4")) // b が evict されるはず(LRU)
+ 
+ 	if _, ok := c.Get("a"); !ok {
+@@ -246,3 +247,103 @@ func TestNew_DefaultsApplied(t *testing.T) {
+ 		t.Errorf("defaults not applied: max=%d ttl=%v", c.max, c.ttl)
+ 	}
+ }
++
++// ─── v0.35: persistent (write-through disk) layer ───────────
++
++func TestCache_Persistence_SurvivesRestart(t *testing.T) {
++	dir := t.TempDir()
++	key := Key("quality_check", HashBytes([]byte("source")))
++
++	c1 := New(10, time.Hour)
++	if err := c1.EnablePersistence(dir); err != nil {
++		t.Fatal(err)
++	}
++	c1.Set(key, []byte("RESULT"))
++
++	// "restart": a brand-new cache (empty memory) pointed at the same dir.
++	c2 := New(10, time.Hour)
++	if err := c2.EnablePersistence(dir); err != nil {
++		t.Fatal(err)
++	}
++	got, ok := c2.Get(key)
++	if !ok || string(got) != "RESULT" {
++		t.Fatalf("expected disk-backed hit after restart, got %q ok=%v", got, ok)
++	}
++	// the disk hit promoted into memory
++	if c2.Len() != 1 {
++		t.Errorf("disk hit should promote to memory, Len=%d", c2.Len())
++	}
++}
++
++func TestCache_Persistence_TTLAcrossRestart(t *testing.T) {
++	dir := t.TempDir()
++	key := Key("k")
++	base := time.Now()
++
++	c1 := New(10, time.Hour)
++	c1.NowFn = func() time.Time { return base }
++	if err := c1.EnablePersistence(dir); err != nil {
++		t.Fatal(err)
++	}
++	c1.Set(key, []byte("v"))
++
++	// restart 2h later — the on-disk createdAt makes it expired.
++	c2 := New(10, time.Hour)
++	c2.NowFn = func() time.Time { return base.Add(2 * time.Hour) }
++	if err := c2.EnablePersistence(dir); err != nil { // prunes expired on enable
++		t.Fatal(err)
++	}
++	if _, ok := c2.Get(key); ok {
++		t.Error("entry should be expired across restart (TTL measured from disk createdAt)")
++	}
++}
++
++func TestCache_Persistence_PrunesExpiredOnEnable(t *testing.T) {
++	dir := t.TempDir()
++	base := time.Now()
++	c1 := New(10, time.Hour)
++	c1.NowFn = func() time.Time { return base }
++	if err := c1.EnablePersistence(dir); err != nil {
++		t.Fatal(err)
++	}
++	c1.Set(Key("old"), []byte("x"))
++
++	files, _ := os.ReadDir(dir)
++	if len(files) != 1 {
++		t.Fatalf("expected 1 file on disk, got %d", len(files))
++	}
++	// a fresh cache enabling persistence 2h later prunes the expired file.
++	c2 := New(10, time.Hour)
++	c2.NowFn = func() time.Time { return base.Add(2 * time.Hour) }
++	if err := c2.EnablePersistence(dir); err != nil {
++		t.Fatal(err)
++	}
++	files, _ = os.ReadDir(dir)
++	if len(files) != 0 {
++		t.Errorf("expired disk file should be pruned on EnablePersistence, %d remain", len(files))
++	}
++}
++
++func TestCache_Persistence_DeleteRemovesDiskFile(t *testing.T) {
++	dir := t.TempDir()
++	c := New(10, time.Hour)
++	if err := c.EnablePersistence(dir); err != nil {
++		t.Fatal(err)
++	}
++	key := Key("d")
++	c.Set(key, []byte("v"))
++	c.Delete(key)
++	if files, _ := os.ReadDir(dir); len(files) != 0 {
++		t.Errorf("Delete should remove the disk file, %d remain", len(files))
++	}
++}
++
++func TestCache_NoPersistenceByDefault(t *testing.T) {
++	// without EnablePersistence, behaviour is unchanged (in-memory only).
++	c := New(10, time.Hour)
++	c.Set(Key("x"), []byte("v"))
++	c2 := New(10, time.Hour)
++	if _, ok := c2.Get(Key("x")); ok {
++		t.Error("a separate in-memory cache must not see another's entries")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/harness/agentconfig_audit.go b/yagura-v0.35.0/internal/harness/agentconfig_audit.go
