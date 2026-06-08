@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..aa58434 100644
+index 9b29eec..d570854 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,729 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,738 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1035,6 +1035,15 @@ index 9b29eec..aa58434 100644
 +  app が出る」「lib の変更が app に impact する」「depth の default=2 / 上限 clamp=10」
 +  「slug 必須」で検証。これで alert ライフサイクルとグラフ walk の API 契約が回帰で守られる。
 +  カバレッジ 51.4% → 53.8%。test 追加のみ(tool 62 / package 50 不変)、ADR-0001 維持。
++- **package 数の doc drift を修正 + 物理的に防ぐ guard(tool 数 guard に続く第2弾)**
++  (`README.md` / `cmd/yagura/pkgcount_test.go`)。SKILL.md の tool 数 drift と同じ検査を
++  package 数にも広げたところ、README の project-layout ツリー図が「internal/ # **38**
++  packages」と古いまま(実際は 50。README 冒頭の status 行と CLAUDE.md は 50 で正)
++  だった。38 → 50 へ修正。さらに、README status 行 / README ツリー図 / CLAUDE.md の
++  3 箇所の「N internal packages」主張を、`internal/` 配下の buildable package 実数
++  (非 test の .go を含むディレクトリ数)と突き合わせる guard test を追加。package 追加時に
++  doc 更新漏れが CI で fail する。guard 自身も数値を 38 に戻して fail することを確認。
++  test/doc のみの変更(tool 62 / package 50 不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1053,7 +1062,7 @@ index 9b29eec..aa58434 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8407,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8416,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -1127,7 +1136,7 @@ index bc406e1..dad7c59 100644
  - `internal/telemetry` — internal stats
  - `internal/metrics` — counter / gauge primitives
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..9ce3f2e 100644
+index 986f84e..1e4cc46 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -1242,6 +1251,15 @@ index 986f84e..9ce3f2e 100644
  
  Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
  
+@@ -220,7 +266,7 @@ sha256sum -c SHA256SUMS
+ ```
+ .
+ ├── cmd/yagura/              # Entry point (single binary)
+-├── internal/                # 38 packages, none exported
++├── internal/                # 50 packages, none exported
+ │   ├── mcp/                 # MCP server, tool registration
+ │   ├── registry/            # Project registry (JSON file per project)
+ │   ├── scanner/             # Background sensor loop (24 h)
 @@ -239,6 +285,8 @@ sha256sum -c SHA256SUMS
  │   ├── MCP_TOOLS.md
  │   ├── WINDOWS.md
@@ -5047,6 +5065,79 @@ index 0000000..fccaa9c
 +	// both agents counted under the same tool → value 2
 +	if !strings.Contains(out, `tool="Bash"} 2`) {
 +		t.Errorf("expected 2 Bash calls across agents:\n%s", out)
++	}
++}
+diff --git a/yagura-v0.35.0/cmd/yagura/pkgcount_test.go b/yagura-v0.35.0/cmd/yagura/pkgcount_test.go
+new file mode 100644
+index 0000000..5c961c5
+--- /dev/null
++++ b/yagura-v0.35.0/cmd/yagura/pkgcount_test.go
+@@ -0,0 +1,67 @@
++// pkgcount_test.go: the README status line, the README project-layout tree, and
++// CLAUDE.md all advertise a fixed "N internal packages" count. Like the tool
++// count (skilldoc_test.go), that prose drifts as packages are added — README
++// once said 38 while there were 50. This guard ties every such claim to the
++// actual number of buildable internal packages so a mismatch fails CI.
++package main
++
++import (
++	"io/fs"
++	"os"
++	"path/filepath"
++	"regexp"
++	"strconv"
++	"strings"
++	"testing"
++)
++
++// countInternalPackages counts directories under internal/ that hold at least
++// one non-test .go file (i.e. a buildable package) — the same notion the docs use.
++func countInternalPackages(t *testing.T) int {
++	t.Helper()
++	const root = "../../internal"
++	pkgs := map[string]bool{}
++	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
++		if err != nil {
++			return err
++		}
++		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
++			return nil
++		}
++		pkgs[filepath.Dir(path)] = true
++		return nil
++	})
++	if err != nil {
++		t.Fatalf("walk %s: %v", root, err)
++	}
++	return len(pkgs)
++}
++
++func TestDocs_InternalPackageCountMatches(t *testing.T) {
++	want := countInternalPackages(t)
++
++	checks := []struct {
++		file string
++		re   string
++	}{
++		{"../../README.md", `(\d+) internal packages`},
++		{"../../README.md", `(\d+) packages, none exported`},
++		{"../../CLAUDE.md", `(\d+) internal packages`},
++	}
++	for _, c := range checks {
++		b, err := os.ReadFile(c.file)
++		if err != nil {
++			t.Fatalf("read %s: %v", c.file, err)
++		}
++		m := regexp.MustCompile(c.re).FindSubmatch(b)
++		if m == nil {
++			t.Errorf("%s: no claim matching %q to verify", c.file, c.re)
++			continue
++		}
++		got, _ := strconv.Atoi(string(m[1]))
++		if got != want {
++			t.Errorf("%s claims %d packages (%q) but %d internal packages exist — update the doc",
++				c.file, got, c.re, want)
++		}
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/skilldoc_test.go b/yagura-v0.35.0/cmd/yagura/skilldoc_test.go
