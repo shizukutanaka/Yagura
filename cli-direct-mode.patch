@@ -319,10 +319,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..cd02bf9 100644
+index 9b29eec..f8bfbad 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,638 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,653 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -944,6 +944,21 @@ index 9b29eec..cd02bf9 100644
 +  Claude Code + Gemini イベントを記録 → dashboard の breeze 行 Activity セルが「2 1⚠ Bash」。
 +  docs/desktop.md 更新。
 +
++- **`/metrics` に per-tool エージェント活動を追加(OTel gen_ai.tool.name → Prometheus)**。
++  これまで Prometheus には hook events を `{project, event}`(PreToolUse 等)で出していたが、
++  **どの tool を使ったか**(hook stats の `ByTool`)が出ておらず、Grafana で「project 横断で agent が
++  どの tool を使っているか」を可視化できなかった。新メトリクス `yagura_hook_tool_calls_total{project,
++  tool}` を追加(既存の by-event 出力をそのまま tool 軸で mirror)。`/hooks/agent` で取り込んだ任意
++  エージェント(Claude Code / Gemini CLI / Codex …)の tool 使用が同じ tool ラベルで集計される
++  (OTel の `gen_ai.tool.name` を Yagura の `tool` ラベルへ写像、help text に明記)。既存
++  `yagura_hook_events_total` / `yagura_hook_errors_total` の help を「any agent」に更新。これで
++  OTel/Prometheus 対応の任意の監視基盤が Yagura のエージェント活動を scrape できる。診断で品質ゲートを
++  確認(`go vet` クリーン、`go test -race ./...` 全 green、本物の TODO/DEBT 無し)した上での value-add。
++  外部依存ゼロ、新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。テスト追加
++  (`collectYaguraMetrics` が Claude Code + Gemini の Bash を tool="Bash"} 2 に集計、project/tool ラベル
++  検証)。live dogfood: `/metrics` に `yagura_hook_tool_calls_total{project="breeze",tool="Bash"} 1` /
++  `tool="Read"} 1`。
++
 +### What's not yet
 +
 +- `vulns` / `scorecard` の CLG 化(現状 sensor で scanner 専用)。
@@ -1026,7 +1041,7 @@ index bc406e1..dad7c59 100644
  - `internal/telemetry` — internal stats
  - `internal/metrics` — counter / gauge primitives
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..a4e7181 100644
+index 986f84e..9ce3f2e 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -1100,7 +1115,7 @@ index 986f84e..a4e7181 100644
        "language":"javascript"
      }
    }}'
-@@ -151,7 +179,19 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
+@@ -151,7 +179,21 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
  
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
  
@@ -1115,13 +1130,15 @@ index 986f84e..a4e7181 100644
 +(`gen_ai.operation.name`, `gen_ai.tool.name`, …) — so `yagura_hook_stats` and
 +`yagura_hook_timeline` work for that agent with the same vocabulary as Claude
 +Code. The `yagura_agent_event` and `yagura_session_summary` tools expose the same
-+normalization for programmatic use.
++normalization for programmatic use, and `/metrics` exports per-project, per-tool
++agent activity (`yagura_hook_tool_calls_total{project,tool}`, aligned to the
++OTel `gen_ai.tool.name` convention) for Prometheus/Grafana.
 +
 +## MCP tools (62 total)
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
-@@ -159,6 +199,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -159,6 +201,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  |---|---|---|
  | Inventory | `list`, `get`, `search`, `today`, `stats`, `register`, `unregister`, `update` | Manage the portfolio |
  | Security `[S]` | `vulns`, `scorecard`, `secretscan`, `sbom`, `gha_audit`, `pin_drift`, `ai_verify`, `test_audit`, `quality_check` | Computational sensors |
@@ -1130,7 +1147,7 @@ index 986f84e..a4e7181 100644
  | Harness `[G]` | `agents_md`, `feature_list`, `progress_file`, `init_sh`, `harness_recommend` | Generate handoff artifacts |
  | Self-audit `[G]` | `harness_coverage` | Fowler matrix self-check |
  | Alerts | `alert_fix`, `alert_resolve` | Lifecycle: active / resolved / snoozed |
-@@ -166,6 +208,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -166,6 +210,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  | Handoff | 8 tools | Plan / Run / Handoff for cross-session work |
  | Observability | `hook_timeline`, `hook_stats`, `agent_status`, `quota_report` | Claude Code activity |
  | Graph | 3 tools | Cross-project dependencies |
@@ -1139,7 +1156,7 @@ index 986f84e..a4e7181 100644
  
  Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
  
-@@ -239,6 +283,8 @@ sha256sum -c SHA256SUMS
+@@ -239,6 +285,8 @@ sha256sum -c SHA256SUMS
  │   ├── MCP_TOOLS.md
  │   ├── WINDOWS.md
  │   ├── security-spec.md
@@ -4397,7 +4414,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..cedacd5 100644
+index bd1fe39..eeb4c4e 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -4672,6 +4689,46 @@ index bd1fe39..cedacd5 100644
  func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  	if l == nil || l.reg == nil || cwd == "" {
  		return "", false
+@@ -892,7 +957,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+ 
+ 	// Hook receiver stats (per-project event counters)
+ 	if hr != nil {
+-		var hookCalls, hookErrs []promexport.Sample
++		var hookCalls, hookErrs, hookTools []promexport.Sample
+ 		for slug, st := range hr.AllStats() {
+ 			for event, count := range st.ByEvent {
+ 				hookCalls = append(hookCalls, promexport.Sample{
+@@ -900,6 +965,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+ 					Value:  float64(count),
+ 				})
+ 			}
++			// per-tool agent activity (any agent, via /hooks/agent). Maps to OTel
++			// gen_ai.tool.name; exported as the `tool` label for Yagura consistency.
++			for tool, count := range st.ByTool {
++				hookTools = append(hookTools, promexport.Sample{
++					Labels: map[string]string{"project": slug, "tool": tool},
++					Value:  float64(count),
++				})
++			}
+ 			hookErrs = append(hookErrs, promexport.Sample{
+ 				Labels: map[string]string{"project": slug},
+ 				Value:  float64(st.ErrorCount),
+@@ -908,10 +981,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+ 		if len(hookCalls) > 0 {
+ 			out = append(out,
+ 				promexport.Collection{Name: "yagura_hook_events_total",
+-					Type: "counter", Help: "Claude Code hook events received per project per event type",
++					Type: "counter", Help: "Agent hook events received per project per event type (any agent)",
+ 					Samples: hookCalls},
++				promexport.Collection{Name: "yagura_hook_tool_calls_total",
++					Type: "counter", Help: "Agent tool calls observed via hooks per project per tool (OTel gen_ai.tool.name)",
++					Samples: hookTools},
+ 				promexport.Collection{Name: "yagura_hook_errors_total",
+-					Type: "counter", Help: "Claude Code tool errors observed via hooks per project",
++					Type: "counter", Help: "Agent tool errors observed via hooks per project (any agent)",
+ 					Samples: hookErrs},
+ 			)
+ 		}
 diff --git a/yagura-v0.35.0/cmd/yagura/main_test.go b/yagura-v0.35.0/cmd/yagura/main_test.go
 index f923a14..5cdb82b 100644
 --- a/yagura-v0.35.0/cmd/yagura/main_test.go
@@ -4685,6 +4742,75 @@ index f923a14..5cdb82b 100644
  		t.Errorf("expected version in stdout, got: %q", out.String())
  	}
  	if !strings.Contains(out.String(), "go") {
+diff --git a/yagura-v0.35.0/cmd/yagura/metrics_test.go b/yagura-v0.35.0/cmd/yagura/metrics_test.go
+new file mode 100644
+index 0000000..fccaa9c
+--- /dev/null
++++ b/yagura-v0.35.0/cmd/yagura/metrics_test.go
+@@ -0,0 +1,63 @@
++package main
++
++import (
++	"bytes"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/hookreceiver"
++	"github.com/shizukutanaka/yagura/internal/mcp"
++	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/promexport"
++	"github.com/shizukutanaka/yagura/internal/registry"
++)
++
++func TestCollectYaguraMetrics_HookToolCalls(t *testing.T) {
++	dir := t.TempDir()
++	reg, err := registry.New(filepath.Join(dir, "projects"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	proj := filepath.Join(dir, "breeze")
++	if err := os.MkdirAll(proj, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := reg.Add(&project.Project{
++		Slug: "breeze", DisplayName: "Breeze", Repository: "o/breeze",
++		LocalPath: proj, Stage: project.StageActive,
++	}); err != nil {
++		t.Fatal(err)
++	}
++	hr, err := hookreceiver.NewReceiver(filepath.Join(dir, "hooks.jsonl"), &registryLookup{reg: reg}, 100)
++	if err != nil {
++		t.Fatal(err)
++	}
++	// a Claude Code tool event and a foreign-agent (Gemini) one, both in the project cwd
++	for _, payload := range []string{
++		`{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"` + proj + `"}`,
++		`{"agent":"gemini_cli","event":"beforeToolCall","tool":"Bash","cwd":"` + proj + `"}`,
++	} {
++		req := httptest.NewRequest("POST", "/hooks/agent", strings.NewReader(payload))
++		hr.Handle(httptest.NewRecorder(), req)
++	}
++
++	cols := collectYaguraMetrics(mcp.New("", nil), hr)
++	var buf bytes.Buffer
++	if err := promexport.Render(&buf, cols); err != nil {
++		t.Fatal(err)
++	}
++	out := buf.String()
++	if !strings.Contains(out, "yagura_hook_tool_calls_total") {
++		t.Fatalf("per-tool hook metric missing:\n%s", out)
++	}
++	if !strings.Contains(out, `project="breeze"`) || !strings.Contains(out, `tool="Bash"`) {
++		t.Errorf("expected project/tool labels:\n%s", out)
++	}
++	// both agents counted under the same tool → value 2
++	if !strings.Contains(out, `tool="Bash"} 2`) {
++		t.Errorf("expected 2 Bash calls across agents:\n%s", out)
++	}
++}
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
 index 689c182..7fee93f 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
