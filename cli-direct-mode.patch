@@ -319,10 +319,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..5091964 100644
+index 9b29eec..437b550 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,539 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,558 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -845,6 +845,25 @@ index 9b29eec..5091964 100644
 +  「Bash failing (3/3)」。`MCP_TOOLS.md` 再生成。Sources: Hermes Desktop(hermes-agent.nousresearch.com
 +  /docs/user-guide/desktop, GIGAZINE/PC Watch/TechnoEdge 2026-06)/ Nous Research hermes-agent。
 +
++- **デスクトップアプリ化(dashboard を PWA インストール可能に + launcher の app-window 起動)**。
++  「CLI に馴染みのない人も扱えるよう Yagura のデスクトップアプリを、根幹は崩さずに」: GUI
++  フレームワーク(Electron/Tauri/Qt 等)は全て外部依存で ADR-0001 に反するため使わず、**Web 標準
++  のみ**で実現。dashboard を**インストール可能な PWA** にした — `internal/dashboard/pwa.go` が
++  `/dashboard/manifest.webmanifest`(W3C Web App Manifest、`display:standalone`)/ `/dashboard/sw.js`
++  (最小 network-first service worker = インストール可能化 + オフライン耐性)/ `/dashboard/icon.svg`
++  (maskable な櫓アイコン)を配信し、dashboard HTML の `<head>` に manifest link / theme-color /
++  apple-mobile-web-app メタ / SW 登録を注入。Chrome/Edge の「インストール」で Yagura が独立ウィンドウ
++  のデスクトップアプリになる。`cmd/yagura-tray` の browser 起動を `openApp` 化: Chromium 系があれば
++  `--app=URL` で chromeless ウィンドウ起動、無ければ既定ブラウザに fallback(クロスプラットフォーム、
++  os/exec のみ)。**根幹は不変・additive only**: 新ルートは既存 `dashboard.Handler.ServeHTTP` 内の
++  path 分岐のみ(main.go ルーティング / daemon / MCP / 既存 HTML 描画は無変更)、外部依存ゼロ、
++  MCP tool 数 62・package 数 50 不変。既存 dashboard テストは全て pass(additive を確認)。
++  テスト: manifest が必須 PWA フィールドを持つ valid JSON / sw に fetch handler / icon が SVG /
++  dashboard HTML が manifest+SW 参照 / 未知 subpath は通常 HTML に fallback / launcher の
++  `appArgs`・`chromiumCandidates`。live dogfood: manifest(application/manifest+json)/ sw.js /
++  icon.svg を 200 配信、head に PWA タグ確認。ガイド `docs/desktop.md` 追加(非 CLI ユーザー向け)。
++  Sources: W3C Web App Manifest / MDN PWA installability / Chromium `--app` フラグ。
++
 +### What's not yet
 +
 +- `vulns` / `scorecard` の CLG 化(現状 sensor で scanner 専用)。
@@ -927,7 +946,7 @@ index bc406e1..dad7c59 100644
  - `internal/telemetry` — internal stats
  - `internal/metrics` — counter / gauge primitives
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..72f3ddc 100644
+index 986f84e..10ae549 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -948,7 +967,25 @@ index 986f84e..72f3ddc 100644
  │  │  - HTTP hook receiver                          │  │
  │  │  - Prometheus /metrics                         │  │
  │  │  - .well-known/mcp (2026 spec)                 │  │
-@@ -96,6 +96,21 @@ Requires Go 1.22+. No other build tools.
+@@ -60,6 +60,17 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
+ - **Append-only audit.** Every MCP call recorded in JSONL with hash chain for tamper detection.
+ - **MCP-first.** Designed to be invoked by an AI agent, not clicked on. The HTML dashboard at `/dashboard` is read-only.
+ 
++## Desktop app (no terminal required)
++
++Prefer not to use the command line? The dashboard is an **installable web app
++(PWA)**: open it in Chrome/Edge and click **Install** to get a Yagura desktop
++icon that opens in its own window, like a native app. On Windows, double-click
++`yagura-tray.exe` to start the daemon, get a tray icon, and open the dashboard
++as an app window; on macOS/Linux, run `yagura-tray` for the same one-click
++launch. This adds nothing to the core — the daemon and the 62 MCP tools are
++unchanged; the desktop app is just the dashboard made installable via web
++standards. See [docs/desktop.md](docs/desktop.md).
++
+ ## Install
+ 
+ ### Pre-built binary (recommended)
+@@ -96,6 +107,21 @@ Requires Go 1.22+. No other build tools.
  make build-all          # → bin/yagura-{linux,darwin,windows}-{amd64,arm64}{.exe}
  ```
  
@@ -970,7 +1007,7 @@ index 986f84e..72f3ddc 100644
  ## Quickstart
  
  ```bash
-@@ -114,7 +129,7 @@ curl -sS -X POST http://127.0.0.1:8090/mcp -H 'Content-Type: application/json' -
+@@ -114,7 +140,7 @@ curl -sS -X POST http://127.0.0.1:8090/mcp -H 'Content-Type: application/json' -
      "arguments":{
        "slug":"breeze",
        "repository":"shizukutanaka/breeze",
@@ -979,7 +1016,7 @@ index 986f84e..72f3ddc 100644
        "language":"javascript"
      }
    }}'
-@@ -151,7 +166,17 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
+@@ -151,7 +177,17 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
  
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
  
@@ -998,7 +1035,7 @@ index 986f84e..72f3ddc 100644
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
-@@ -159,6 +184,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -159,6 +195,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  |---|---|---|
  | Inventory | `list`, `get`, `search`, `today`, `stats`, `register`, `unregister`, `update` | Manage the portfolio |
  | Security `[S]` | `vulns`, `scorecard`, `secretscan`, `sbom`, `gha_audit`, `pin_drift`, `ai_verify`, `test_audit`, `quality_check` | Computational sensors |
@@ -1007,7 +1044,7 @@ index 986f84e..72f3ddc 100644
  | Harness `[G]` | `agents_md`, `feature_list`, `progress_file`, `init_sh`, `harness_recommend` | Generate handoff artifacts |
  | Self-audit `[G]` | `harness_coverage` | Fowler matrix self-check |
  | Alerts | `alert_fix`, `alert_resolve` | Lifecycle: active / resolved / snoozed |
-@@ -166,6 +193,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -166,6 +204,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  | Handoff | 8 tools | Plan / Run / Handoff for cross-session work |
  | Observability | `hook_timeline`, `hook_stats`, `agent_status`, `quota_report` | Claude Code activity |
  | Graph | 3 tools | Cross-project dependencies |
@@ -1016,7 +1053,7 @@ index 986f84e..72f3ddc 100644
  
  Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
  
-@@ -239,6 +268,8 @@ sha256sum -c SHA256SUMS
+@@ -239,6 +279,8 @@ sha256sum -c SHA256SUMS
  │   ├── MCP_TOOLS.md
  │   ├── WINDOWS.md
  │   ├── security-spec.md
@@ -1025,6 +1062,149 @@ index 986f84e..72f3ddc 100644
  │   └── vex/                 # VEX statements for transitive deps
  ├── deploy/                  # Dockerfile, systemd unit, container manifests
  ├── .github/workflows/       # ci / codeql / release / scorecard
+diff --git a/yagura-v0.35.0/cmd/yagura-tray/main.go b/yagura-v0.35.0/cmd/yagura-tray/main.go
+index 4e2c791..d52480b 100644
+--- a/yagura-v0.35.0/cmd/yagura-tray/main.go
++++ b/yagura-v0.35.0/cmd/yagura-tray/main.go
+@@ -1,16 +1,17 @@
+ // yagura-tray: 1-click Windows tray launcher for yagura.
+ //
+ // What it does:
+-//   1. Embeds the yagura daemon binary (or finds it next to itself).
+-//   2. Starts the daemon as a child process.
+-//   3. Opens the dashboard in the default browser.
+-//   4. Adds a system tray icon with right-click menu (Open/Stop/Quit).
++//  1. Embeds the yagura daemon binary (or finds it next to itself).
++//  2. Starts the daemon as a child process.
++//  3. Opens the dashboard in the default browser.
++//  4. Adds a system tray icon with right-click menu (Open/Stop/Quit).
+ //
+ // Why a separate binary:
+-//   The daemon (cmd/yagura) is a pure HTTP server with no GUI. yagura-tray
+-//   is a thin wrapper that adds Windows-specific UX (tray icon, browser
+-//   launch). This keeps the daemon portable and reproducible while the
+-//   tray binary handles GUI concerns.
++//
++//	The daemon (cmd/yagura) is a pure HTTP server with no GUI. yagura-tray
++//	is a thin wrapper that adds Windows-specific UX (tray icon, browser
++//	launch). This keeps the daemon portable and reproducible while the
++//	tray binary handles GUI concerns.
+ //
+ // Zero deps (ADR-0001):
+ //   - Tray UI uses syscall + user32.dll/shell32.dll directly (Windows).
+@@ -98,7 +99,7 @@ func main() {
+ 	if waitForReady(*addr, 5*time.Second) {
+ 		fmt.Printf("yagura daemon ready on http://%s\n", *addr)
+ 		if !*noBrowser {
+-			openBrowser("http://" + *addr + "/dashboard")
++			openApp("http://" + *addr + "/dashboard")
+ 		}
+ 	} else {
+ 		fmt.Fprintf(os.Stderr, "WARN: daemon not ready after 5s; continuing anyway.\n")
+@@ -165,9 +166,9 @@ func (d *daemon) Stop() {
+ // resolveDaemonPath finds the yagura daemon binary.
+ //
+ // Search order:
+-//   1. -daemon flag
+-//   2. Same directory as the tray executable (most common)
+-//   3. PATH lookup
++//  1. -daemon flag
++//  2. Same directory as the tray executable (most common)
++//  3. PATH lookup
+ func resolveDaemonPath(flagVal string) string {
+ 	if flagVal != "" {
+ 		return flagVal
+@@ -238,6 +239,60 @@ func waitForReady(addr string, timeout time.Duration) bool {
+ 	return false
+ }
+ 
++// openApp opens the dashboard as a chromeless "app window" via a Chromium-based
++// browser (--app=URL) so it looks like a native desktop app to non-CLI users.
++// Falls back to the default browser when no Chromium browser is found.
++//
++// Zero deps (ADR-0001): just os/exec. The PWA manifest the dashboard serves
++// also lets users "Install" it as a standalone desktop app from any browser.
++func openApp(url string) {
++	if bin := findChromium(); bin != "" {
++		cmd := exec.Command(bin, appArgs(url)...)
++		if err := cmd.Start(); err == nil {
++			return
++		}
++	}
++	openBrowser(url)
++}
++
++// appArgs are the flags that open URL as a standalone chromeless window.
++func appArgs(url string) []string {
++	return []string{"--app=" + url, "--window-size=1200,840", "--no-first-run", "--no-default-browser-check"}
++}
++
++// chromiumCandidates lists Chromium-based browser executables to try, per OS.
++func chromiumCandidates() []string {
++	switch runtime.GOOS {
++	case "windows":
++		return []string{"chrome", "msedge", "brave", "chromium"}
++	case "darwin":
++		return []string{
++			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
++			"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
++			"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
++			"/Applications/Chromium.app/Contents/MacOS/Chromium",
++		}
++	default:
++		return []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge", "brave-browser"}
++	}
++}
++
++// findChromium returns the first available Chromium-based browser, or "".
++func findChromium() string {
++	for _, c := range chromiumCandidates() {
++		if filepath.IsAbs(c) {
++			if _, err := os.Stat(c); err == nil {
++				return c
++			}
++			continue
++		}
++		if p, err := exec.LookPath(c); err == nil {
++			return p
++		}
++	}
++	return ""
++}
++
+ // openBrowser launches the default browser at url.
+ //
+ // Best-effort: failure is logged but doesn't abort the tray launch.
+diff --git a/yagura-v0.35.0/cmd/yagura-tray/main_test.go b/yagura-v0.35.0/cmd/yagura-tray/main_test.go
+index a0c60ea..c1e77f8 100644
+--- a/yagura-v0.35.0/cmd/yagura-tray/main_test.go
++++ b/yagura-v0.35.0/cmd/yagura-tray/main_test.go
+@@ -106,3 +106,25 @@ func TestDaemon_StartStop(t *testing.T) {
+ 		t.Errorf("process %d still alive after Stop", pid)
+ 	}
+ }
++
++func TestAppArgs(t *testing.T) {
++	args := appArgs("http://127.0.0.1:8090/dashboard")
++	if len(args) == 0 || args[0] != "--app=http://127.0.0.1:8090/dashboard" {
++		t.Errorf("appArgs first should be --app=URL, got %v", args)
++	}
++	var hasNoFirstRun bool
++	for _, a := range args {
++		if a == "--no-first-run" {
++			hasNoFirstRun = true
++		}
++	}
++	if !hasNoFirstRun {
++		t.Error("expected --no-first-run for an unobtrusive app window")
++	}
++}
++
++func TestChromiumCandidates_NonEmpty(t *testing.T) {
++	if len(chromiumCandidates()) == 0 {
++		t.Error("expected at least one chromium candidate for this OS")
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura/cli.go b/yagura-v0.35.0/cmd/yagura/cli.go
 new file mode 100644
 index 0000000..9db41b9
@@ -4593,6 +4773,65 @@ index 62e02cd..3142700 100644
  - [WINDOWS.md](WINDOWS.md) — Task Scheduler / NSSM / Windows service setup.
  - [ARCHITECTURE.md](../ARCHITECTURE.md) — internals and design rationale.
  - [security-spec.md](security-spec.md) — threat model.
+diff --git a/yagura-v0.35.0/docs/desktop.md b/yagura-v0.35.0/docs/desktop.md
+new file mode 100644
+index 0000000..692b291
+--- /dev/null
++++ b/yagura-v0.35.0/docs/desktop.md
+@@ -0,0 +1,53 @@
++# Yagura as a desktop app (no terminal required)
++
++Yagura's core is a single local daemon, but you don't need the command line to
++use it. The dashboard is an **installable web app (PWA)** — install it once and
++it opens in its own desktop window with a Yagura icon, like a native app.
++
++This adds nothing to the core: the daemon, the 62 MCP tools, and the
++zero-dependency build are unchanged. The "desktop app" is just the dashboard
++the daemon already serves, made installable via web standards.
++
++## 1. Start Yagura without typing commands
++
++- **Windows** — download `yagura-tray.exe` and `yagura.exe`, put them in the
++  same folder, and double-click `yagura-tray.exe`. It starts the daemon, shows a
++  tray icon (Open / Stop / Quit), and opens the dashboard in an app window.
++- **macOS / Linux** — download `yagura-tray` and `yagura`, put them side by side,
++  and run `yagura-tray`. It starts the daemon and opens the dashboard as an app
++  window (a chromeless Chromium window if one is installed, otherwise your
++  default browser). Leave it running; press Ctrl-C to stop.
++
++The launcher needs no GitHub token for the dashboard; scans that hit GitHub need
++`YAGURA_GITHUB_TOKEN`, but browsing your portfolio works without it.
++
++## 2. Install the dashboard as a desktop app
++
++With the dashboard open in Chrome, Edge, or any Chromium browser:
++
++1. Look for the **Install** icon in the address bar (or menu → *Install Yagura*).
++2. Click it. Yagura now has a desktop/Start-menu icon and opens in its own
++   window — no browser tabs, no URL bar.
++
++Behind the scenes the dashboard serves a
++[web app manifest](https://developer.mozilla.org/docs/Web/Manifest) at
++`/dashboard/manifest.webmanifest` and a small service worker at
++`/dashboard/sw.js`, which is what makes it installable and resilient to brief
++network blips.
++
++## 3. What you can see
++
++The dashboard is a read-only overview: every project, its stage, CI status,
++security signals, staleness, and (if configured) agent quota. It refreshes on
++reload. Actions still go through the MCP server by design — the browser never
++mutates state directly.
++
++## Notes
++
++- The app window points at `http://127.0.0.1:8090/dashboard` (or whatever
++  `YAGURA_ADDR` you set). If the daemon is stopped, the window will be blank —
++  start it again with the tray/launcher.
++- Everything here is local: the dashboard binds to loopback by default and never
++  sends your data anywhere.
++- Power users keep using the CLI (`yagura list`, `yagura register`, …) and the
++  MCP tools; the desktop app is purely additive.
 diff --git a/yagura-v0.35.0/docs/harness-mandate.md b/yagura-v0.35.0/docs/harness-mandate.md
 new file mode 100644
 index 0000000..657f4e4
@@ -6345,18 +6584,279 @@ index af23d66..6b601a7 100644
  
  // envInt は環境変数を int として読む。未設定 or parse 失敗時は def を返す。
 diff --git a/yagura-v0.35.0/internal/dashboard/dashboard.go b/yagura-v0.35.0/internal/dashboard/dashboard.go
-index 6981102..8711b5c 100644
+index 6981102..53166de 100644
 --- a/yagura-v0.35.0/internal/dashboard/dashboard.go
 +++ b/yagura-v0.35.0/internal/dashboard/dashboard.go
-@@ -653,7 +653,7 @@ a:focus-visible {
+@@ -55,14 +55,14 @@ func New(reg *registry.Registry, logger *slog.Logger) (*Handler, error) {
+ 		logger = slog.Default()
+ 	}
+ 	tmpl, err := template.New("dashboard").Funcs(template.FuncMap{
+-		"stageColor":      stageColor,
+-		"ciColor":         ciColor,
+-		"staleClass":      staleClassByTime,
+-		"priorityClass":   priorityClass,
+-		"daysSince":       daysSince,
+-		"truncate":        truncate,
+-		"fmtTime":         fmtTime,
+-		"securityCell":    securityCell,
++		"stageColor":    stageColor,
++		"ciColor":       ciColor,
++		"staleClass":    staleClassByTime,
++		"priorityClass": priorityClass,
++		"daysSince":     daysSince,
++		"truncate":      truncate,
++		"fmtTime":       fmtTime,
++		"securityCell":  securityCell,
+ 	}).Parse(htmlTemplate)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("parse template: %w", err)
+@@ -87,6 +87,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 		return
+ 	}
+ 
++	// PWA 静的アセット(manifest / service worker / icon)。dashboard を
++	// インストール可能なデスクトップアプリにするためのルート。既存の HTML 描画には
++	// 触れず、既知 path のときだけ早期 return する(additive)。
++	if serveAsset(w, r.URL.Path) {
++		return
++	}
++
+ 	now := h.now()
+ 	projects := h.registry.List()
+ 	sort.SliceStable(projects, func(i, j int) bool {
+@@ -406,6 +413,13 @@ const htmlTemplate = `<!DOCTYPE html>
+ <meta charset="UTF-8">
+ <title>Yagura Portfolio Dashboard</title>
+ <meta name="viewport" content="width=device-width, initial-scale=1.0">
++<meta name="theme-color" content="#0d1117">
++<link rel="manifest" href="/dashboard/manifest.webmanifest">
++<link rel="icon" type="image/svg+xml" href="/dashboard/icon.svg">
++<link rel="apple-touch-icon" href="/dashboard/icon.svg">
++<meta name="apple-mobile-web-app-capable" content="yes">
++<meta name="mobile-web-app-capable" content="yes">
++<meta name="apple-mobile-web-app-title" content="Yagura">
+ <style>
+ * { box-sizing: border-box; margin: 0; padding: 0; }
+ html { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+@@ -653,7 +667,8 @@ a:focus-visible {
    {{end}}
    </main>
  
 -  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.34.1</footer>
 +  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.35.0</footer>
  </div>
++<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/dashboard/sw.js',{scope:'/dashboard'}).catch(function(){});}</script>
  </body>
  </html>`
+diff --git a/yagura-v0.35.0/internal/dashboard/pwa.go b/yagura-v0.35.0/internal/dashboard/pwa.go
+new file mode 100644
+index 0000000..3c7487c
+--- /dev/null
++++ b/yagura-v0.35.0/internal/dashboard/pwa.go
+@@ -0,0 +1,84 @@
++// pwa.go: dashboard を「インストール可能なデスクトップアプリ」にする PWA レイヤー。
++//
++// 動機: CLI に馴染みのない人でも Yagura を扱えるよう、ブラウザの「インストール」から
++// スタンドアロンのデスクトップウィンドウ(アプリ枠)として起動できるようにする。
++//
++// 根幹は崩さない(additive only):
++//   - 新規ルート(/dashboard/manifest.webmanifest, /dashboard/sw.js, /dashboard/icon.svg)は
++//     既存 dashboard.Handler の ServeHTTP 内で path 分岐するだけ。main.go のルーティング、
++//     daemon、MCP は一切触らない。
++//   - 外部依存ゼロ(ADR-0001): manifest / service worker / icon は静的文字列、Go の
++//     net/http stdlib で配信。GUI フレームワークは使わない(Web 標準のみ)。
++//   - 既存 /dashboard の HTML レンダリングは不変(head にタグを足すのみ)。
++package dashboard
++
++import "net/http"
++
++// 注: PWA の <head> メタと service-worker 登録スクリプトは dashboard.go の HTML
++// テンプレートに直書きしている(単一ソース)。本ファイルは配信アセット側を担う。
++
++// webManifest は PWA インストール用の manifest(W3C Web App Manifest)。
++const webManifest = `{
++  "name": "Yagura Portfolio Dashboard",
++  "short_name": "Yagura",
++  "description": "Zero-dependency local orchestrator for your project portfolio.",
++  "start_url": "/dashboard",
++  "scope": "/dashboard",
++  "display": "standalone",
++  "orientation": "any",
++  "background_color": "#0d1117",
++  "theme_color": "#0d1117",
++  "lang": "ja",
++  "icons": [
++    { "src": "/dashboard/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
++  ]
++}`
++
++// serviceWorker は最小の network-first SW(オフライン耐性 + インストール可能化)。
++const serviceWorker = `const C = 'yagura-shell-v1';
++self.addEventListener('install', function(e){ self.skipWaiting(); });
++self.addEventListener('activate', function(e){ self.clients.claim(); });
++self.addEventListener('fetch', function(e){
++  if (e.request.method !== 'GET') return;
++  e.respondWith(
++    fetch(e.request).then(function(r){
++      var c = r.clone();
++      caches.open(C).then(function(cache){ cache.put(e.request, c); }).catch(function(){});
++      return r;
++    }).catch(function(){ return caches.match(e.request); })
++  );
++});`
++
++// appIcon は maskable な watchtower(櫓)アイコン(SVG, 依存なし)。
++const appIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Yagura">
++<rect width="512" height="512" rx="96" fill="#0d1117"/>
++<g fill="none" stroke="#58a6ff" stroke-width="20" stroke-linejoin="round" stroke-linecap="round">
++<path d="M256 96 L150 184 L362 184 Z"/>
++<path d="M176 184 L176 416 M336 184 L336 416 M150 416 L362 416"/>
++<path d="M176 260 L336 260 M176 336 L336 336"/>
++<path d="M226 184 L256 416 L286 184"/>
++</g>
++</svg>`
++
++// serveAsset は PWA 静的アセットを配信する。dashboard 配下の既知 path のみ true を返す。
++// 未知 path は false を返し、呼び出し側(ServeHTTP)が通常の HTML を描画する。
++func serveAsset(w http.ResponseWriter, path string) bool {
++	switch path {
++	case "/dashboard/manifest.webmanifest":
++		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
++		w.Header().Set("Cache-Control", "public, max-age=3600")
++		_, _ = w.Write([]byte(webManifest))
++	case "/dashboard/sw.js":
++		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
++		w.Header().Set("Cache-Control", "no-cache")
++		w.Header().Set("Service-Worker-Allowed", "/dashboard")
++		_, _ = w.Write([]byte(serviceWorker))
++	case "/dashboard/icon.svg":
++		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
++		w.Header().Set("Cache-Control", "public, max-age=86400")
++		_, _ = w.Write([]byte(appIcon))
++	default:
++		return false
++	}
++	return true
++}
+diff --git a/yagura-v0.35.0/internal/dashboard/pwa_test.go b/yagura-v0.35.0/internal/dashboard/pwa_test.go
+new file mode 100644
+index 0000000..3c94a81
+--- /dev/null
++++ b/yagura-v0.35.0/internal/dashboard/pwa_test.go
+@@ -0,0 +1,113 @@
++package dashboard
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/registry"
++)
++
++func newPWAHandler(t *testing.T) *Handler {
++	t.Helper()
++	reg, err := registry.New(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	h, err := New(reg, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return h
++}
++
++func get(t *testing.T, h *Handler, path string) *httptest.ResponseRecorder {
++	t.Helper()
++	w := httptest.NewRecorder()
++	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
++	return w
++}
++
++func TestPWA_Manifest(t *testing.T) {
++	w := get(t, newPWAHandler(t), "/dashboard/manifest.webmanifest")
++	if w.Code != 200 {
++		t.Fatalf("code = %d", w.Code)
++	}
++	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "manifest") {
++		t.Errorf("content-type = %q", ct)
++	}
++	var m struct {
++		Name       string `json:"name"`
++		StartURL   string `json:"start_url"`
++		Display    string `json:"display"`
++		ThemeColor string `json:"theme_color"`
++		Icons      []struct {
++			Src string `json:"src"`
++		} `json:"icons"`
++	}
++	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
++		t.Fatalf("manifest not valid JSON: %v", err)
++	}
++	if m.StartURL != "/dashboard" || m.Display != "standalone" || len(m.Icons) == 0 {
++		t.Errorf("manifest missing required PWA fields: %+v", m)
++	}
++	if m.Icons[0].Src != "/dashboard/icon.svg" {
++		t.Errorf("icon src = %q", m.Icons[0].Src)
++	}
++}
++
++func TestPWA_ServiceWorker(t *testing.T) {
++	w := get(t, newPWAHandler(t), "/dashboard/sw.js")
++	if w.Code != 200 {
++		t.Fatalf("code = %d", w.Code)
++	}
++	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
++		t.Errorf("content-type = %q", ct)
++	}
++	body := w.Body.String()
++	if !strings.Contains(body, "addEventListener('fetch'") {
++		t.Error("service worker must have a fetch handler to be installable")
++	}
++}
++
++func TestPWA_Icon(t *testing.T) {
++	w := get(t, newPWAHandler(t), "/dashboard/icon.svg")
++	if w.Code != 200 {
++		t.Fatalf("code = %d", w.Code)
++	}
++	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "svg") {
++		t.Errorf("content-type = %q", ct)
++	}
++	if !strings.HasPrefix(strings.TrimSpace(w.Body.String()), "<svg") {
++		t.Error("icon is not an SVG")
++	}
++}
++
++func TestPWA_DashboardHeadHasManifest(t *testing.T) {
++	// the main dashboard HTML must reference the manifest + register the SW
++	w := get(t, newPWAHandler(t), "/dashboard")
++	if w.Code != 200 {
++		t.Fatalf("code = %d", w.Code)
++	}
++	html := w.Body.String()
++	for _, want := range []string{
++		`rel="manifest"`,
++		"/dashboard/manifest.webmanifest",
++		`name="theme-color"`,
++		"serviceWorker",
++	} {
++		if !strings.Contains(html, want) {
++			t.Errorf("dashboard HTML missing %q", want)
++		}
++	}
++}
++
++func TestPWA_UnknownSubPathStillRendersDashboard(t *testing.T) {
++	// an unknown /dashboard/... path must fall through to the normal HTML (additive, non-breaking)
++	w := get(t, newPWAHandler(t), "/dashboard/")
++	if w.Code != 200 || !strings.Contains(w.Body.String(), "Yagura") {
++		t.Errorf("unknown subpath should render dashboard: code=%d", w.Code)
++	}
++}
 diff --git a/yagura-v0.35.0/internal/harness/agentconfig_audit.go b/yagura-v0.35.0/internal/harness/agentconfig_audit.go
 new file mode 100644
 index 0000000..76510e6
