@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..397f0fc 100644
+index 9b29eec..bf2110e 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,710 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,719 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1016,6 +1016,15 @@ index 9b29eec..397f0fc 100644
 +  skill doc の更新漏れが CI で fail する(「逸脱を物理的に潰す」を doc に適用)。guard 自身も
 +  数値を 99 に壊して fail することを確認。コード変更は test 追加のみ(tool 62 / package 50
 +  不変)、ADR-0001 維持。publicity-scan(.claude)は引き続き 0 件。
++- **desktop launcher(`yagura-tray`)のブラウザ起動経路をテストで固める**
++  (`cmd/yagura-tray/browser_test.go`)。カバレッジ計測で最弱だった `cmd/yagura-tray`
++  (33%)を、非 CLI ユーザの肝である「dashboard を chromeless app window で開く」経路を
++  中心に補強。`findChromium`(PATH 上の Chromium 系を探索)を PATH 空時に "" を返す/
++  PATH 上の候補を見つける2ケースで検証し、`openApp` は fake browser を PATH に置いて
++  実際に `--app=<url>` 付きで起動されること(app window 経路を取ること)を argv 記録で
++  end-to-end 確認。これで desktop app の「ネイティブっぽく開く」挙動が回帰で守られる。
++  カバレッジ 33.1% → 40.3%(残りは `main()` / Windows 専用 tray コード=linux では
++  非 compile)。test 追加のみ(tool 62 / package 50 不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1034,7 +1043,7 @@ index 9b29eec..397f0fc 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8388,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8397,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -1232,6 +1241,106 @@ index 986f84e..9ce3f2e 100644
  │   └── vex/                 # VEX statements for transitive deps
  ├── deploy/                  # Dockerfile, systemd unit, container manifests
  ├── .github/workflows/       # ci / codeql / release / scorecard
+diff --git a/yagura-v0.35.0/cmd/yagura-tray/browser_test.go b/yagura-v0.35.0/cmd/yagura-tray/browser_test.go
+new file mode 100644
+index 0000000..484094d
+--- /dev/null
++++ b/yagura-v0.35.0/cmd/yagura-tray/browser_test.go
+@@ -0,0 +1,94 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"testing"
++	"time"
++)
++
++// firstRelativeCandidate returns the first PATH-resolvable (non-absolute)
++// chromium candidate for this OS, or "" if all are absolute (e.g. darwin).
++func firstRelativeCandidate() string {
++	for _, c := range chromiumCandidates() {
++		if !filepath.IsAbs(c) {
++			return c
++		}
++	}
++	return ""
++}
++
++func TestFindChromium_NoneWhenPathEmpty(t *testing.T) {
++	if firstRelativeCandidate() == "" {
++		t.Skip("this OS uses absolute candidate paths; PATH manipulation is moot")
++	}
++	// With an empty PATH, no PATH-relative candidate resolves. (On platforms whose
++	// candidates are all relative names, this guarantees "".)
++	t.Setenv("PATH", t.TempDir())
++	if got := findChromium(); got != "" {
++		t.Errorf("expected no chromium with an empty PATH, got %q", got)
++	}
++}
++
++func TestFindChromium_FindsOnPath(t *testing.T) {
++	name := firstRelativeCandidate()
++	if name == "" {
++		t.Skip("no PATH-relative candidate on this OS")
++	}
++	dir := t.TempDir()
++	bin := filepath.Join(dir, name)
++	if runtime.GOOS == "windows" {
++		bin += ".exe"
++	}
++	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
++		t.Fatalf("write fake browser: %v", err)
++	}
++	t.Setenv("PATH", dir)
++	got := findChromium()
++	if got != bin {
++		t.Errorf("findChromium = %q, want %q", got, bin)
++	}
++}
++
++// openApp should launch the discovered chromium with the --app window flags.
++// The fake browser records its argv so we can assert the app-window path was taken.
++func TestOpenApp_LaunchesChromiumWithAppArg(t *testing.T) {
++	if runtime.GOOS == "windows" {
++		t.Skip("fake browser is a POSIX shell script")
++	}
++	name := firstRelativeCandidate()
++	if name == "" {
++		t.Skip("no PATH-relative candidate on this OS")
++	}
++	dir := t.TempDir()
++	argsFile := filepath.Join(dir, "argv.txt")
++	// The fake browser writes its arguments, then exits 0 (so cmd.Start succeeds).
++	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\n"
++	bin := filepath.Join(dir, name)
++	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
++		t.Fatalf("write fake browser: %v", err)
++	}
++	t.Setenv("PATH", dir)
++
++	openApp("http://127.0.0.1:8090/dashboard")
++
++	// openApp uses Start (async); poll briefly for the fake browser to write argv.
++	var data []byte
++	deadline := time.Now().Add(2 * time.Second)
++	for time.Now().Before(deadline) {
++		if b, err := os.ReadFile(argsFile); err == nil && len(b) > 0 {
++			data = b
++			break
++		}
++		time.Sleep(20 * time.Millisecond)
++	}
++	if len(data) == 0 {
++		t.Fatal("fake chromium was not launched (no argv recorded)")
++	}
++	got := string(data)
++	if !strings.Contains(got, "--app=http://127.0.0.1:8090/dashboard") {
++		t.Errorf("expected --app=URL in launch args, got:\n%s", got)
++	}
++}
 diff --git a/yagura-v0.35.0/cmd/yagura-tray/main.go b/yagura-v0.35.0/cmd/yagura-tray/main.go
 index 4e2c791..d52480b 100644
 --- a/yagura-v0.35.0/cmd/yagura-tray/main.go
