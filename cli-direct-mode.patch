@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..0b815f9 100644
+index 9b29eec..e0b7772 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,864 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,874 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1170,6 +1170,16 @@ index 9b29eec..0b815f9 100644
 +  30d snooze で `snooze_until` が 30 日後に設定されることを確認。テスト更新(snooze selector +
 +  各 option + 既定 selected の markup 検証)。外部依存ゼロ、新規 tool/package なし
 +  (tool 62 / package 50 不変)、ADR-0001 維持。
++- **自己改善: Review flywheel tool ハンドラのテスト拡充(`internal/mcp` 54→57%)**
++  (`internal/mcp/tools_scans_test.go`)。selfimprove カーネルの提案 kind の一つ「coverage」を
++  自分自身に適用。最弱の core package(`internal/mcp` 54.1%)で、直接テストの無かった
++  cortex ② Review の scan ハンドラ 3 つを補強:`yagura_gha_audit`(auditor 未設定で
++  unavailable / bad JSON・空 files で invalid_input / 可変タグ action を unpinned-uses 検出 /
++  summary_only)、`yagura_sbom`(generator 未設定で unavailable / main module を含む doc 生成 /
++  summary_only)、`yagura_ai_verify`(files も text も無しで invalid_input / `md5(password)` を
++  finding 検出 / summary_only が findings リストを省きつつ summary は残す)。MCP ラッパの
++  入力検証・unavailable 分岐・summary_only 整形を回帰で守る。カバレッジ 54.1% → 56.6%。
++  test のみ(tool 62 / package 50 不変)、ADR-0001 維持、`-race` green。
 +
 +### What's not yet
 +
@@ -1188,7 +1198,7 @@ index 9b29eec..0b815f9 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8542,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8552,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -14257,6 +14267,147 @@ index 0000000..c0946c4
 +	})
 +	if _, err := tool.Handler(tCtx(), bad); err == nil {
 +		t.Error("expected error for invalid weights override")
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_scans_test.go b/yagura-v0.35.0/internal/mcp/tools_scans_test.go
+new file mode 100644
+index 0000000..9e1ae22
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_scans_test.go
+@@ -0,0 +1,135 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/ghaaudit"
++	"github.com/shizukutanaka/yagura/internal/sbom"
++)
++
++// ─── yagura_gha_audit ────────────────────────────────────────
++
++func TestGhaAudit_Unavailable(t *testing.T) {
++	tool := buildGhaAuditTool(newDeps(t)) // Ghaaudit nil
++	b, _ := json.Marshal(map[string]any{"files": map[string]string{"ci.yml": "x"}})
++	if _, err := tool.Handler(context.Background(), b); !IsCode(err, "unavailable") {
++		t.Errorf("expected unavailable when no auditor configured, got %v", err)
++	}
++}
++
++func TestGhaAudit_InvalidInputs(t *testing.T) {
++	d := newDeps(t)
++	d.Ghaaudit = ghaaudit.New()
++	tool := buildGhaAuditTool(d)
++	for name, args := range map[string]string{
++		"bad json":    `{`,
++		"empty files": `{"files":{}}`,
++	} {
++		t.Run(name, func(t *testing.T) {
++			if _, err := tool.Handler(context.Background(), json.RawMessage(args)); !IsCode(err, "invalid_input") {
++				t.Errorf("expected invalid_input, got %v", err)
++			}
++		})
++	}
++}
++
++func TestGhaAudit_FlagsUnpinnedAction(t *testing.T) {
++	d := newDeps(t)
++	d.Ghaaudit = ghaaudit.New()
++	tool := buildGhaAuditTool(d)
++	wf := "name: ci\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
++	r := mustCall(t, tool, map[string]any{"files": map[string]string{".github/workflows/ci.yml": wf}}).(map[string]any)
++	if r["results"] == nil || r["summary"] == nil {
++		t.Fatalf("expected results+summary, got %v", r)
++	}
++	// a mutable-tag action must be flagged as unpinned-uses
++	js, _ := json.Marshal(r)
++	if !strings.Contains(string(js), "unpinned-uses") {
++		t.Errorf("expected an unpinned-uses finding:\n%s", js)
++	}
++}
++
++func TestGhaAudit_SummaryOnly(t *testing.T) {
++	d := newDeps(t)
++	d.Ghaaudit = ghaaudit.New()
++	tool := buildGhaAuditTool(d)
++	wf := "name: ci\non: [push]\njobs:\n  b:\n    steps:\n      - uses: actions/checkout@v4\n"
++	out := mustCall(t, tool, map[string]any{"files": map[string]string{"w.yml": wf}, "summary_only": true})
++	// summary-only returns the Summarize() shape, not the {results,summary} map
++	if m, ok := out.(map[string]any); ok && m["results"] != nil {
++		t.Errorf("summary_only should not include the full results list: %v", m)
++	}
++}
++
++// ─── yagura_sbom ─────────────────────────────────────────────
++
++func TestSbom_Unavailable(t *testing.T) {
++	tool := buildSbomTool(newDeps(t)) // Sbom nil
++	if _, err := tool.Handler(context.Background(), json.RawMessage(`{}`)); !IsCode(err, "unavailable") {
++		t.Errorf("expected unavailable when no generator configured, got %v", err)
++	}
++}
++
++func TestSbom_GeneratesAndSummarizes(t *testing.T) {
++	d := newDeps(t)
++	d.Sbom = sbom.New()
++	d.MainModulePath = "github.com/shizukutanaka/yagura"
++	d.MainVersion = "0.35.0"
++	tool := buildSbomTool(d)
++
++	// full doc
++	full := mustCall(t, tool, map[string]any{})
++	js, _ := json.Marshal(full)
++	if !strings.Contains(string(js), "github.com/shizukutanaka/yagura") {
++		t.Errorf("sbom should reference the main module:\n%s", js)
++	}
++	// summary_only returns a compact summary (different shape, still non-nil)
++	if s := mustCall(t, tool, map[string]any{"summary_only": true}); s == nil {
++		t.Error("summary_only returned nil")
++	}
++}
++
++// ─── yagura_ai_verify ────────────────────────────────────────
++
++func TestAIVerify_InvalidInputs(t *testing.T) {
++	tool := buildAIVerifyTool(newDeps(t), nil)
++	for name, args := range map[string]string{
++		"bad json":         `{`,
++		"no files or text": `{}`,
++	} {
++		t.Run(name, func(t *testing.T) {
++			if _, err := tool.Handler(context.Background(), json.RawMessage(args)); !IsCode(err, "invalid_input") {
++				t.Errorf("expected invalid_input, got %v", err)
++			}
++		})
++	}
++}
++
++func TestAIVerify_FlagsRiskPattern(t *testing.T) {
++	tool := buildAIVerifyTool(newDeps(t), nil)
++	r := mustCall(t, tool, map[string]any{
++		"text": "hash := md5(password)\n",
++		"path": "auth.go",
++	}).(map[string]any)
++	if fc, _ := r["finding_count"].(int); fc < 1 {
++		t.Errorf("expected >=1 finding for md5(password), got %v (%v)", r["finding_count"], r)
++	}
++	if r["by_severity"] == nil || r["summary"] == nil {
++		t.Errorf("expected by_severity+summary in result: %v", r)
++	}
++}
++
++func TestAIVerify_SummaryOnly(t *testing.T) {
++	tool := buildAIVerifyTool(newDeps(t), nil)
++	r := mustCall(t, tool, map[string]any{"text": "x := 1\n", "summary_only": true}).(map[string]any)
++	// summary_only omits the per-finding list but keeps the aggregate fields
++	if _, hasFindings := r["findings"]; hasFindings {
++		t.Errorf("summary_only should omit findings list: %v", r)
++	}
++	if r["summary"] == nil {
++		t.Error("summary_only should still include the summary")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_selfimprove.go b/yagura-v0.35.0/internal/mcp/tools_selfimprove.go
