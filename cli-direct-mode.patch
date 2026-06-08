@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..4e5ace0 100644
+index 9b29eec..239cc59 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,767 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,782 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1073,6 +1073,21 @@ index 9b29eec..4e5ace0 100644
 +  1 critical」を確認。テスト追加(banner: alert 有り表示/0 件非表示/provider 無し非表示/
 +  初回前非表示、healthState: 最新 sweep を反映・sweep 前は ok=false)。外部依存ゼロ、
 +  新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。
++- **Dashboard: health banner から alert 一覧へのドリルダウン(`/dashboard/alerts`)**
++  (`internal/dashboard` / `cmd/yagura/main.go`)。前 slice の health banner は
++  「run alert_fix for detail」と促すだけで dashboard 内に詳細が無く行き止まりだった。
++  banner を `/dashboard/alerts` へのリンクにし、直近 sweep の個別 alert を severity 降順の
++  表(severity / project / source / title / recommendation)で read-only 表示する
++  detail ページを追加(Activity ドリルダウンと同じ流儀)。`PortfolioHealthProvider` を
++  `PortfolioAlerts()` で拡張し、`healthState` が `alertfix.Report.Alerts`(EvaluateAll で
++  既に severity ランク済み)を dashboard ローカルの `AlertItem` view へ写像する(dashboard は
++  alertfix を import しない疎結合を維持)。provider 未設定 / sweep 前 / alert 0 件はいずれも
++  404 ではなく案内文 + dashboard への戻りリンク。additive な read-only ルートで trust base
++  不変。live dogfood: vuln_critical=2 のプロジェクトで banner が `/dashboard/alerts` へリンクし、
++  detail ページに breeze / vulns / critical の alert が描画。テスト追加(banner→detail リンク、
++  detail の alert 描画 / provider 無し空状態 / sweep 前空状態、`healthState.PortfolioAlerts` の
++  写像と sweep 前 ok=false)。外部依存ゼロ、新規 tool/package なし(tool 62 / package 50
++  不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1091,7 +1106,7 @@ index 9b29eec..4e5ace0 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8445,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8460,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -4528,10 +4543,10 @@ index 0000000..dc7fbf7
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/healthsweep_test.go b/yagura-v0.35.0/cmd/yagura/healthsweep_test.go
 new file mode 100644
-index 0000000..b9517d5
+index 0000000..c1e4b5a
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/healthsweep_test.go
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,104 @@
 +package main
 +
 +import (
@@ -4593,6 +4608,29 @@ index 0000000..b9517d5
 +	}
 +	if hs.At.IsZero() {
 +		t.Error("expected a sweep timestamp")
++	}
++}
++
++func TestHealthState_PortfolioAlertsMapsReport(t *testing.T) {
++	h := &healthState{}
++	if _, _, ok := h.PortfolioAlerts(); ok {
++		t.Error("PortfolioAlerts should be ok=false before the first sweep")
++	}
++	h.set(alertfix.Report{
++		Total: 1,
++		Alerts: []alertfix.Alert{{
++			Project: "breeze", Source: alertfix.SourceVuln, Severity: alertfix.SevCritical,
++			Title: "critical CVE", Recommendation: "patch",
++		}},
++		BySeverity: map[alertfix.Severity]int{alertfix.SevCritical: 1},
++	})
++	alerts, _, ok := h.PortfolioAlerts()
++	if !ok || len(alerts) != 1 {
++		t.Fatalf("expected 1 alert after sweep, got ok=%v len=%d", ok, len(alerts))
++	}
++	a := alerts[0]
++	if a.Project != "breeze" || a.Source != "vulns" || a.Severity != "critical" || a.Title != "critical CVE" {
++		t.Errorf("alert mapping mismatch: %+v", a)
 +	}
 +}
 +
@@ -4734,7 +4772,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..076652c 100644
+index bd1fe39..287d79e 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -5008,7 +5046,7 @@ index bd1fe39..076652c 100644
  func (a *scannerMetricsAdapter) SetLastScanDuration(d time.Duration) {
  	a.duration.Set(d.Milliseconds())
  }
-@@ -832,6 +889,141 @@ type registryLookup struct {
+@@ -832,6 +889,162 @@ type registryLookup struct {
  	reg *registry.Registry
  }
  
@@ -5063,6 +5101,27 @@ index bd1fe39..076652c 100644
 +		HasCritical: r.HasCritical,
 +		At:          h.at,
 +	}, true
++}
++
++// PortfolioAlerts implements dashboard.PortfolioHealthProvider for the alert
++// drill-down. Alerts are already severity-ranked by alertfix.EvaluateAll.
++func (h *healthState) PortfolioAlerts() ([]dashboard.AlertItem, time.Time, bool) {
++	h.mu.RLock()
++	defer h.mu.RUnlock()
++	if !h.set_ {
++		return nil, time.Time{}, false
++	}
++	out := make([]dashboard.AlertItem, 0, len(h.report.Alerts))
++	for _, a := range h.report.Alerts {
++		out = append(out, dashboard.AlertItem{
++			Project:        a.Project,
++			Source:         string(a.Source),
++			Severity:       string(a.Severity),
++			Title:          a.Title,
++			Recommendation: a.Recommendation,
++		})
++	}
++	return out, h.at, true
 +}
 +
 +// hookActivityAdapter adapts the hook receiver's per-project stats to the
@@ -5150,7 +5209,7 @@ index bd1fe39..076652c 100644
  func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  	if l == nil || l.reg == nil || cwd == "" {
  		return "", false
-@@ -892,7 +1084,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -892,7 +1105,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  
  	// Hook receiver stats (per-project event counters)
  	if hr != nil {
@@ -5159,7 +5218,7 @@ index bd1fe39..076652c 100644
  		for slug, st := range hr.AllStats() {
  			for event, count := range st.ByEvent {
  				hookCalls = append(hookCalls, promexport.Sample{
-@@ -900,6 +1092,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -900,6 +1113,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  					Value:  float64(count),
  				})
  			}
@@ -5174,7 +5233,7 @@ index bd1fe39..076652c 100644
  			hookErrs = append(hookErrs, promexport.Sample{
  				Labels: map[string]string{"project": slug},
  				Value:  float64(st.ErrorCount),
-@@ -908,10 +1108,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -908,10 +1129,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  		if len(hookCalls) > 0 {
  			out = append(out,
  				promexport.Collection{Name: "yagura_hook_events_total",
@@ -7673,7 +7732,7 @@ index 0000000..3d047fc
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/dashboard/dashboard.go b/yagura-v0.35.0/internal/dashboard/dashboard.go
-index 6981102..76e13e6 100644
+index 6981102..34f4794 100644
 --- a/yagura-v0.35.0/internal/dashboard/dashboard.go
 +++ b/yagura-v0.35.0/internal/dashboard/dashboard.go
 @@ -2,7 +2,11 @@
@@ -7689,7 +7748,7 @@ index 6981102..76e13e6 100644
  //   - 単一ページ: 全プロジェクトをテーブルで一覧表示
  //   - スタイル: インライン CSS(外部リソース読込なし)
  //   - 200ms 以内のレスポンスを目標(in-memory データなので余裕)
-@@ -27,12 +31,83 @@ import (
+@@ -27,12 +31,98 @@ import (
  
  // Handler は /dashboard HTTP ハンドラを生成する。
  type Handler struct {
@@ -7701,6 +7760,7 @@ index 6981102..76e13e6 100644
 +	logger       *slog.Logger
 +	tmpl         *template.Template
 +	activityTmpl *template.Template
++	alertsTmpl   *template.Template
 +	now          func() time.Time
  	// v0.14.0: optional agent status provider (Claude Code ↔ Windsurf handoff)
  	quota AgentStatusProvider
@@ -7770,14 +7830,28 @@ index 6981102..76e13e6 100644
 +	At          time.Time
 +}
 +
++// AlertItem は health sweep が出した 1 件の alert(read-only 表示用)。dashboard を
++// 薄く保つため alertfix を import せず、adapter 側で写像する(HealthSummary と同じ流儀)。
++type AlertItem struct {
++	Project        string
++	Source         string
++	Severity       string
++	Title          string
++	Recommendation string
++}
++
 +// PortfolioHealthProvider は直近の health sweep 結果を返す。実装は cmd/yagura の
 +// scanner AfterScan が更新する holder。nil / ok=false なら banner を出さない。
++//
++// PortfolioAlerts は banner のドリルダウン(/dashboard/alerts)用に個別 alert を
++// severity 降順で返す。sweep 前は ok=false。
 +type PortfolioHealthProvider interface {
 +	PortfolioHealth() (HealthSummary, bool)
++	PortfolioAlerts() (alerts []AlertItem, at time.Time, ok bool)
  }
  
  // AgentStatusProvider は agent quota の最小 view interface。
-@@ -55,19 +130,54 @@ func New(reg *registry.Registry, logger *slog.Logger) (*Handler, error) {
+@@ -55,19 +145,78 @@ func New(reg *registry.Registry, logger *slog.Logger) (*Handler, error) {
  		logger = slog.Default()
  	}
  	tmpl, err := template.New("dashboard").Funcs(template.FuncMap{
@@ -7808,7 +7882,31 @@ index 6981102..76e13e6 100644
 +	if err != nil {
 +		return nil, fmt.Errorf("parse activity template: %w", err)
 +	}
-+	return &Handler{registry: reg, logger: logger, tmpl: tmpl, activityTmpl: atmpl, now: time.Now}, nil
++	altmpl, err := template.New("alerts").Funcs(template.FuncMap{
++		"fmtTime": fmtTime,
++	}).Parse(alertsHTMLTemplate)
++	if err != nil {
++		return nil, fmt.Errorf("parse alerts template: %w", err)
++	}
++	return &Handler{registry: reg, logger: logger, tmpl: tmpl, activityTmpl: atmpl, alertsTmpl: altmpl, now: time.Now}, nil
++}
++
++// serveAlertDetail は /dashboard/alerts を捌く(health banner のドリルダウン、read-only)。
++// provider 未設定 / sweep 前 / alert 0 件のいずれでも 404 ではなく案内文 + 戻りリンクを返す。
++func (h *Handler) serveAlertDetail(w http.ResponseWriter, r *http.Request) {
++	data := map[string]any{}
++	if h.health != nil {
++		if alerts, at, ok := h.health.PortfolioAlerts(); ok {
++			data["Found"] = true
++			data["Alerts"] = alerts
++			data["At"] = at
++			data["Total"] = len(alerts)
++		}
++	}
++	w.Header().Set("Content-Type", "text/html; charset=utf-8")
++	if err := h.alertsTmpl.Execute(w, data); err != nil {
++		h.logger.Error("render alert detail", "err", err)
++	}
 +}
 +
 +// serveActivityDetail は /dashboard/activity?slug=… を捌く(read-only ドリルダウン)。
@@ -7841,7 +7939,7 @@ index 6981102..76e13e6 100644
  }
  
  // SetNowFunc lets tests pin the current time (used for stale calculations).
-@@ -79,6 +189,18 @@ func (h *Handler) SetAgentStatusProvider(p AgentStatusProvider) {
+@@ -79,6 +228,18 @@ func (h *Handler) SetAgentStatusProvider(p AgentStatusProvider) {
  	h.quota = p
  }
  
@@ -7860,7 +7958,7 @@ index 6981102..76e13e6 100644
  // ServeHTTP は GET /dashboard を捌く。
  func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-@@ -87,6 +209,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+@@ -87,6 +248,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -7878,10 +7976,16 @@ index 6981102..76e13e6 100644
 +		return
 +	}
 +
++	// v0.35: portfolio alert drill-down from the health banner (read-only).
++	if r.URL.Path == "/dashboard/alerts" {
++		h.serveAlertDetail(w, r)
++		return
++	}
++
  	now := h.now()
  	projects := h.registry.List()
  	sort.SliceStable(projects, func(i, j int) bool {
-@@ -130,6 +266,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+@@ -130,6 +311,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  		"Projects":    projects,
  	}
  
@@ -7907,7 +8011,7 @@ index 6981102..76e13e6 100644
  	// v0.14.0: agent panel data
  	if h.quota != nil {
  		statuses := h.quota.AllStatuses()
-@@ -400,12 +555,88 @@ func scorecardTitle(s float64) string {
+@@ -400,12 +600,142 @@ func scorecardTitle(s float64) string {
  	}
  }
  
@@ -7980,6 +8084,60 @@ index 6981102..76e13e6 100644
 +</body>
 +</html>`
 +
++// alertsHTMLTemplate は health banner ドリルダウン(/dashboard/alerts)の
++// ポートフォリオ alert 一覧ページ。read-only。dashboard 本体と同じダークテーマ。
++const alertsHTMLTemplate = `<!DOCTYPE html>
++<html lang="ja">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>Alerts — Yagura</title>
++<link rel="manifest" href="/dashboard/manifest.webmanifest">
++<link rel="icon" type="image/svg+xml" href="/dashboard/icon.svg">
++<style>
++:root{color-scheme:dark}
++body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#c9d1d9;margin:0;padding:24px;line-height:1.5}
++a{color:#58a6ff;text-decoration:none}a:hover{text-decoration:underline}
++h1{font-size:20px;margin:0 0 4px}
++.muted{color:#8b949e;font-size:13px}
++.back{display:inline-block;margin-bottom:16px}
++table{border-collapse:collapse;width:100%;max-width:900px;margin-top:12px}
++th,td{text-align:left;padding:8px 12px;border-bottom:1px solid #21262d;font-size:13px;vertical-align:top}
++th{color:#8b949e;font-weight:500;text-transform:uppercase;letter-spacing:.04em;font-size:11px}
++.sev{font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.04em}
++.sev-critical{color:#f85149}
++.sev-high{color:#d29922}
++.sev-medium{color:#58a6ff}
++.sev-low{color:#8b949e}
++.empty{color:#6e7681;font-style:italic;margin-top:24px}
++code{background:#161b22;border:1px solid #30363d;border-radius:4px;padding:1px 6px;font-size:12px}
++</style>
++</head>
++<body>
++<a class="back" href="/dashboard">&larr; Portfolio dashboard</a>
++<h1>Portfolio alerts</h1>
++{{if not .Found}}
++<p class="empty">No alerts as of the latest health sweep — the portfolio is clean (or no sweep has run yet).</p>
++{{else}}
++<div class="muted">{{.Total}} alert{{if ne .Total 1}}s{{end}} from the latest alert_fix sweep · swept {{fmtTime .At}}</div>
++<table>
++  <thead><tr><th>Severity</th><th>Project</th><th>Source</th><th>Title</th><th>Recommendation</th></tr></thead>
++  <tbody>
++  {{range .Alerts}}
++    <tr>
++      <td class="sev sev-{{.Severity}}">{{.Severity}}</td>
++      <td>{{.Project}}</td>
++      <td class="muted">{{.Source}}</td>
++      <td>{{.Title}}</td>
++      <td class="muted">{{.Recommendation}}</td>
++    </tr>
++  {{end}}
++  </tbody>
++</table>
++{{end}}
++</body>
++</html>`
++
  const htmlTemplate = `<!DOCTYPE html>
  <html lang="ja">
  <head>
@@ -7996,7 +8154,7 @@ index 6981102..76e13e6 100644
  <style>
  * { box-sizing: border-box; margin: 0; padding: 0; }
  html { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
-@@ -423,6 +654,13 @@ h1 .meta { font-weight: 400; color: #8b949e; font-size: 12px; margin-left: 8px;
+@@ -423,6 +753,13 @@ h1 .meta { font-weight: 400; color: #8b949e; font-size: 12px; margin-left: 8px;
  .kpi.danger .val { color: #f85149; }
  .kpi.warn .val { color: #d29922; }
  .kpi.ok .val { color: #3fb950; }
@@ -8010,7 +8168,7 @@ index 6981102..76e13e6 100644
  table { width: 100%; border-collapse: collapse; background: #0d1117; }
  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #21262d; font-size: 13px; }
  th { color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; background: #161b22; }
-@@ -458,6 +696,17 @@ tr:hover td { background: #161b22; }
+@@ -458,6 +795,17 @@ tr:hover td { background: #161b22; }
  footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #30363d; color: #6e7681; font-size: 12px; text-align: center; }
  .empty { text-align: center; padding: 40px; color: #8b949e; }
  .empty code { background: #21262d; padding: 2px 8px; border-radius: 3px; }
@@ -8028,7 +8186,7 @@ index 6981102..76e13e6 100644
  .summary { color: #8b949e; font-size: 12px; margin-bottom: 12px; }
  
  /* ─── WCAG 2.1 AA accessibility ─────────────────────────── */
-@@ -560,10 +809,31 @@ a:focus-visible {
+@@ -560,10 +908,31 @@ a:focus-visible {
      <div class="kpi {{if gt .Stale 0}}warn{{else}}ok{{end}}" role="status"><div class="label">Stale ≥14d</div><div class="val">{{.Stale}}</div></div>
    </div>
  
@@ -8037,7 +8195,7 @@ index 6981102..76e13e6 100644
 +    <strong>{{if .HasCritical}}⛔{{else}}⚠{{end}} Portfolio health:</strong>
 +    {{.Total}} alert{{if ne .Total 1}}s{{end}}
 +    <span class="hb-breakdown">{{if gt .Critical 0}}<span class="hb-crit">{{.Critical}} critical</span>{{end}}{{if gt .High 0}}{{if gt .Critical 0}} · {{end}}<span class="hb-high">{{.High}} high</span>{{end}}{{if gt .Medium 0}} · {{.Medium}} medium{{end}}{{if gt .Low 0}} · {{.Low}} low{{end}}</span>
-+    <small class="hb-meta">run <code>alert_fix</code> for detail · swept {{fmtTime .At}}</small>
++    <small class="hb-meta"><a href="/dashboard/alerts">view alerts</a> · swept {{fmtTime .At}}</small>
 +  </div>
 +  {{end}}
 +
@@ -8061,7 +8219,7 @@ index 6981102..76e13e6 100644
    </div>
    {{else}}
    <table aria-label="Registered projects">
-@@ -580,6 +850,7 @@ a:focus-visible {
+@@ -580,6 +949,7 @@ a:focus-visible {
          <th scope="col" abbr="Open pull requests">PR</th>
          <th scope="col" abbr="Open issues">Iss</th>
          <th scope="col">Last commit</th>
@@ -8069,7 +8227,7 @@ index 6981102..76e13e6 100644
          <th scope="col" title="OpenSSF Scorecard score (0-10) and vulnerability counts">Security</th>
          <th scope="col">Tags</th>
        </tr>
-@@ -597,6 +868,7 @@ a:focus-visible {
+@@ -597,6 +967,7 @@ a:focus-visible {
          <td>{{.OpenPRs}}</td>
          <td>{{.OpenIssues}}</td>
          <td class="{{staleClass .LatestActivity $.Now .Stage}}">{{daysSince .LatestActivity $.Now}}</td>
@@ -8077,7 +8235,7 @@ index 6981102..76e13e6 100644
          <td class="security">{{securityCell .}}</td>
          <td class="tags">{{range .Tags}}<span class="tag">{{.}}</span>{{end}}</td>
        </tr>
-@@ -653,7 +925,29 @@ a:focus-visible {
+@@ -653,7 +1024,29 @@ a:focus-visible {
    {{end}}
    </main>
  
@@ -8110,10 +8268,10 @@ index 6981102..76e13e6 100644
  </html>`
 diff --git a/yagura-v0.35.0/internal/dashboard/health_test.go b/yagura-v0.35.0/internal/dashboard/health_test.go
 new file mode 100644
-index 0000000..d4c8633
+index 0000000..3e146e0
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/dashboard/health_test.go
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,123 @@
 +package dashboard
 +
 +import (
@@ -8126,11 +8284,16 @@ index 0000000..d4c8633
 +)
 +
 +type fakeHealth struct {
-+	hs HealthSummary
-+	ok bool
++	hs     HealthSummary
++	ok     bool
++	alerts []AlertItem
 +}
 +
 +func (f fakeHealth) PortfolioHealth() (HealthSummary, bool) { return f.hs, f.ok }
++
++func (f fakeHealth) PortfolioAlerts() ([]AlertItem, time.Time, bool) {
++	return f.alerts, time.Now(), f.ok
++}
 +
 +func healthDash(t *testing.T) *Handler {
 +	t.Helper()
@@ -8185,6 +8348,51 @@ index 0000000..d4c8633
 +	h.SetPortfolioHealthProvider(fakeHealth{ok: false}) // no sweep yet
 +	if strings.Contains(get(t, h, "/dashboard").Body.String(), "Portfolio health:") {
 +		t.Error("no banner should show before the first sweep (ok=false)")
++	}
++}
++
++func TestHealthBanner_LinksToAlertDetail(t *testing.T) {
++	h := healthDash(t)
++	h.SetPortfolioHealthProvider(fakeHealth{ok: true, hs: HealthSummary{Total: 1, Critical: 1, HasCritical: true}})
++	if !strings.Contains(get(t, h, "/dashboard").Body.String(), `href="/dashboard/alerts"`) {
++		t.Error("banner should link to the alert drill-down")
++	}
++}
++
++func TestAlertDetail_RendersAlerts(t *testing.T) {
++	h := healthDash(t)
++	h.SetPortfolioHealthProvider(fakeHealth{ok: true, alerts: []AlertItem{
++		{Project: "breeze", Source: "vulns", Severity: "critical", Title: "3 critical CVEs", Recommendation: "patch now"},
++		{Project: "tessera", Source: "ci", Severity: "high", Title: "CI failing", Recommendation: "fix the build"},
++	}})
++	w := get(t, h, "/dashboard/alerts")
++	if w.Code != 200 {
++		t.Fatalf("code = %d", w.Code)
++	}
++	html := w.Body.String()
++	for _, want := range []string{"Portfolio alerts", "breeze", "3 critical CVEs", "patch now", "tessera", "CI failing", `href="/dashboard"`} {
++		if !strings.Contains(html, want) {
++			t.Errorf("alert page missing %q", want)
++		}
++	}
++}
++
++func TestAlertDetail_EmptyStateNoProvider(t *testing.T) {
++	h := healthDash(t)
++	w := get(t, h, "/dashboard/alerts")
++	if w.Code != 200 {
++		t.Fatalf("code = %d, want 200 (no dead-ends)", w.Code)
++	}
++	if !strings.Contains(w.Body.String(), "No alerts") {
++		t.Error("expected empty-state copy without a provider")
++	}
++}
++
++func TestAlertDetail_EmptyStateBeforeSweep(t *testing.T) {
++	h := healthDash(t)
++	h.SetPortfolioHealthProvider(fakeHealth{ok: false})
++	if !strings.Contains(get(t, h, "/dashboard/alerts").Body.String(), "No alerts") {
++		t.Error("expected empty-state before the first sweep")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/dashboard/pwa.go b/yagura-v0.35.0/internal/dashboard/pwa.go
