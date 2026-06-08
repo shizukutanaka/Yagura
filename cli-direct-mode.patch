@@ -319,10 +319,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..788caba 100644
+index 9b29eec..5091964 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,520 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,539 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -826,6 +826,25 @@ index 9b29eec..788caba 100644
 +  semconv 1.40.0(gen-ai-agent-spans / gen-ai-spans)/ AGENTS.md(agents.md, AAIF)/
 +  Gemini CLI hooks docs / 各エージェント hook 比較(lilting.ch)。
 +
++- **`session_summary`: エージェントセッションの構造化 tool-call サマリ(Hermes Desktop 参照・
++  新 package `internal/sessionsummary`・MCP tool #62)**。「HelmesAgent(= Hermes Agent / Nous
++  Research)のデスクトップ版を参考に改善点を洗い出す」: Hermes Desktop(2026-06-03)の目玉 UX は
++  「ライブ tool activity と構造化 tool-call サマリ」。Hermes は brain(使うほど育つ LLM agent)で、
++  Yagura は kernel(決定論的)で**相補的**。永続メモリ/skill 自動生成/マルチチャネル gateway/
++  NL スケジュールは brain 側 or ADR-0001 違反で範囲外と判断し、目玉の「構造化サマリ」を **kernel 側
++  deterministic 版**として実装。`Summarize([]agentevent.Event)` が正規化イベント列を集約: tool 別
++  呼出数 / operation・phase 内訳 / tool 実行順 / エラー一覧 + error_rate / 異常検知(**連続エラー**
++  ≥3、**ループ疑い**=同一 tool 連続≥5、**失敗多発 tool**=呼出≥3 かつ失敗率≥50%)。呼出数は start
++  イベントがあれば start、無ければ end/error で数える(post-only agent 対応)。連続エラーは成功 end で
++  reset、start は中立。`agent_event` と組で Claude Code/Gemini CLI/Codex/OTel いずれのセッションでも
++  同じサマリ(エージェント非依存)。MCP tool `yagura_session_summary`(`{events:[raw...]}` → 各を
++  agent_event で正規化 → Summarize)。LLM 不使用。新 package(49→50)、tool 数 61 → **62**、stdlib
++  のみ(ADR-0001)。テスト: basic / post-only 集計 / 連続エラー+失敗 tool / ループ / 空 / 決定論
++  (`internal/sessionsummary` 97.4%)+ tool テスト。live dogfood: 失敗する Bash ループの混在
++  セッション → 4 calls / 75% error / sequence Read→Bash×3 / 異常「3 consecutive errors」+
++  「Bash failing (3/3)」。`MCP_TOOLS.md` 再生成。Sources: Hermes Desktop(hermes-agent.nousresearch.com
++  /docs/user-guide/desktop, GIGAZINE/PC Watch/TechnoEdge 2026-06)/ Nous Research hermes-agent。
++
 +### What's not yet
 +
 +- `vulns` / `scorecard` の CLG 化(現状 sensor で scanner 専用)。
@@ -844,7 +863,7 @@ index 9b29eec..788caba 100644
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
 diff --git a/yagura-v0.35.0/CLAUDE.md b/yagura-v0.35.0/CLAUDE.md
-index bc406e1..48db9f9 100644
+index bc406e1..dad7c59 100644
 --- a/yagura-v0.35.0/CLAUDE.md
 +++ b/yagura-v0.35.0/CLAUDE.md
 @@ -21,19 +21,25 @@ cortex flywheel 4 段階すべてを単体で機械化:
@@ -852,13 +871,13 @@ index bc406e1..48db9f9 100644
  - code generation tool(yagura は audit/orchestrate のみ)
  
 -## Map — 31 internal packages
-+## Map — 49 internal packages
++## Map — 50 internal packages
  
  ### Core orchestration
  - `internal/registry` — 23+ projects の inventory CRUD
  - `internal/project` — Project struct + validation
 -- `internal/mcp` — MCP server + 38 tool definitions
-+- `internal/mcp` — MCP server + 61 tool definitions
++- `internal/mcp` — MCP server + 62 tool definitions
  - `internal/audit` — JSONL audit log + replay
  - `internal/config` — env / flag 設定
  
@@ -895,18 +914,20 @@ index bc406e1..48db9f9 100644
  
  ### Graph / dependencies
  - `internal/projectgraph` — depends_on graph(neighbors / impact / stats)
-@@ -60,6 +77,9 @@ cortex flywheel 4 段階すべてを単体で機械化:
+@@ -60,6 +77,11 @@ cortex flywheel 4 段階すべてを単体で機械化:
  - `internal/alertfix` — health signal aggregator + rule-based recommendation ★ v0.27
  
  ### Observation / meta
 +- `internal/agentevent` — 任意エージェント(Claude Code/Gemini CLI/Codex/OTel/汎用)の
 +  lifecycle イベントを OpenTelemetry GenAI semconv 整合の canonical event へ正規化
 +  (observability を Claude Code 専用でなく汎用に。MCP `yagura_agent_event`)★ v0.35
++- `internal/sessionsummary` — 正規化イベント列をセッションの構造化 tool-call サマリへ集約
++  (tool 別件数/順序/エラー/異常検知。Hermes Desktop 参照。MCP `yagura_session_summary`)★ v0.35
  - `internal/dashboard` — HTML dashboard (薄め)
  - `internal/telemetry` — internal stats
  - `internal/metrics` — counter / gauge primitives
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..1c39917 100644
+index 986f84e..72f3ddc 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -914,7 +935,7 @@ index 986f84e..1c39917 100644
  **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
  
 -Status: **v0.34.1** — 46 MCP tools, 38 internal packages, 29 consecutive reproducible releases.
-+Status: **v0.35.0** — 61 MCP tools, 49 internal packages, CLI direct mode, 30 consecutive reproducible releases.
++Status: **v0.35.0** — 62 MCP tools, 50 internal packages, CLI direct mode, 30 consecutive reproducible releases.
  
  ---
  
@@ -923,7 +944,7 @@ index 986f84e..1c39917 100644
  │  ┌────────────────────────────────────────────────┐  │
  │  │  yagura daemon (single binary, ~9 MB)          │  │
 -│  │  - 46 MCP tools                                │  │
-+│  │  - 61 MCP tools                                │  │
++│  │  - 62 MCP tools                                │  │
  │  │  - HTTP hook receiver                          │  │
  │  │  - Prometheus /metrics                         │  │
  │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -965,7 +986,7 @@ index 986f84e..1c39917 100644
 -## MCP tools (46 total)
 +### Other agents (Gemini CLI, Codex, custom)
 +
-+Yagura is agent-agnostic. Its 61 MCP tools work with **any** MCP client, and
++Yagura is agent-agnostic. Its 62 MCP tools work with **any** MCP client, and
 +`yagura_agent_event` normalizes any agent's lifecycle event — Claude Code,
 +Gemini CLI, Codex, raw OpenTelemetry, or a generic shape — into a vendor-neutral
 +canonical event aligned to the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
@@ -973,7 +994,7 @@ index 986f84e..1c39917 100644
 +thin forwarder that calls `yagura_agent_event`, and the same observability and
 +governance tools apply regardless of which agent you run.
 +
-+## MCP tools (61 total)
++## MCP tools (62 total)
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -3990,10 +4011,10 @@ index 0000000..dc7fbf7
 +	}
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
-index cfb6e51..9ac229a 100644
+index cfb6e51..9503a34 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
 +++ b/yagura-v0.35.0/cmd/yagura/integration_test.go
-@@ -164,6 +164,25 @@ func TestIntegration_MCPToolsList(t *testing.T) {
+@@ -164,6 +164,27 @@ func TestIntegration_MCPToolsList(t *testing.T) {
  		// v0.27 — cortex flywheel ④ Alert-Fix
  		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
  		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",
@@ -4016,6 +4037,8 @@ index cfb6e51..9ac229a 100644
 +		"yagura_inject_scan",
 +		// v0.35 — 任意エージェントの event 正規化(OTel GenAI semconv)
 +		"yagura_agent_event",
++		// v0.35 — エージェントセッションの構造化サマリ
++		"yagura_session_summary",
  	}
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
@@ -4246,14 +4269,14 @@ index f923a14..5cdb82b 100644
  	}
  	if !strings.Contains(out.String(), "go") {
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..15c324a 100644
+index 689c182..c9a475b 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
  # MCP tools reference
  
 -Generated from a live yagura — **46 tools**.
-+Generated from a live yagura — **61 tools**.
++Generated from a live yagura — **62 tools**.
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
@@ -4262,7 +4285,7 @@ index 689c182..15c324a 100644
  - [Harness (guides)](#harness-guides) (8)
  - [Inventory](#inventory) (8)
 -- [Misc](#misc) (8)
-+- [Misc](#misc) (23)
++- [Misc](#misc) (24)
  - [Observability](#observability) (4)
  - [Plan tracking](#plan-tracking) (2)
  - [Security (sensors)](#security-sensors) (10)
@@ -4483,10 +4506,22 @@ index 689c182..15c324a 100644
  ### `yagura_session_load`
  
  [S] Load handoff context. Null if none.
-@@ -366,6 +537,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -366,6 +537,30 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
++### `yagura_session_summary`
++
++[S] Structured tool-call summary of an agent session (any agent): counts/sequence/errors/anomalies.
++
++**Arguments:**
++
++| Name | Required | Description |
++|---|---|---|
++| `events` (array) | ★ | chronological raw lifecycle events from any agent (each normalized via agent_event). |
++
++---
++
 +### `yagura_settings_audit`
 +
 +[G] .claude/settings.json audit: permissions deny, unrestricted allow, hooks.
@@ -4502,7 +4537,7 @@ index 689c182..15c324a 100644
  ### `yagura_token_stats`
  
  [S] Per-tool byte counts since daemon start.
-@@ -397,6 +580,33 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -397,6 +592,33 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ---
  
@@ -4536,7 +4571,7 @@ index 689c182..15c324a 100644
  ## Observability
  
  ### `yagura_agent_status`
-@@ -576,7 +786,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -576,7 +798,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -4546,7 +4581,7 @@ index 689c182..15c324a 100644
  **Arguments:**
  
 diff --git a/yagura-v0.35.0/docs/QUICKSTART.md b/yagura-v0.35.0/docs/QUICKSTART.md
-index 62e02cd..53f8278 100644
+index 62e02cd..3142700 100644
 --- a/yagura-v0.35.0/docs/QUICKSTART.md
 +++ b/yagura-v0.35.0/docs/QUICKSTART.md
 @@ -177,7 +177,7 @@ The process drains for 5 seconds (`/readyz` returns 503) then shuts down gracefu
@@ -4554,7 +4589,7 @@ index 62e02cd..53f8278 100644
  ## What next?
  
 -- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 46 tools.
-+- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 61 tools.
++- [MCP_TOOLS.md](MCP_TOOLS.md) — full reference for all 62 tools.
  - [WINDOWS.md](WINDOWS.md) — Task Scheduler / NSSM / Windows service setup.
  - [ARCHITECTURE.md](../ARCHITECTURE.md) — internals and design rationale.
  - [security-spec.md](security-spec.md) — threat model.
@@ -8650,7 +8685,7 @@ index 0000000..0750148
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..d59e759 100644
+index 939a67e..2fdd384 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
 @@ -11,25 +11,20 @@ import (
@@ -8711,7 +8746,7 @@ index 939a67e..d59e759 100644
  }
  
  // QuotaMonitor は両 agent の quota 状態を管理する interface。
-@@ -188,21 +188,48 @@ func RegisterDefaultTools(s *Server, d Deps) {
+@@ -188,21 +188,50 @@ func RegisterDefaultTools(s *Server, d Deps) {
  	s.Register(buildHookStatsTool(s))
  	s.Register(buildProgressFileTool(d, s))
  	s.Register(buildInitShTool(d))
@@ -8742,6 +8777,8 @@ index 939a67e..d59e759 100644
 +	s.Register(buildInjectScanTool(d))
 +	// [v0.35.0] 任意エージェントの lifecycle イベントを OTel GenAI semconv へ正規化(汎用化)
 +	s.Register(buildAgentEventTool(d))
++	// [v0.35.0] エージェントセッションの構造化 tool-call サマリ(Hermes Desktop 参照)
++	s.Register(buildSessionSummaryTool(d))
  }
  
  // ─── yagura_list ─────────────────────────────────────────────
@@ -8770,7 +8807,7 @@ index 939a67e..d59e759 100644
  }
  
  // ─── yagura_get ──────────────────────────────────────────────
-@@ -212,14 +239,14 @@ type listOut struct {
+@@ -212,14 +241,14 @@ type listOut struct {
  // ─── yagura_today ────────────────────────────────────────────
  
  type todayItem struct {
@@ -8793,7 +8830,7 @@ index 939a67e..d59e759 100644
  }
  
  // ─── yagura_register ─────────────────────────────────────────
-@@ -244,16 +271,16 @@ type todayItem struct {
+@@ -244,16 +273,16 @@ type todayItem struct {
  
  func buildSecretScanTool(d Deps) *Tool {
  	return &Tool{
@@ -8814,7 +8851,7 @@ index 939a67e..d59e759 100644
  				},
  			},
  		},
-@@ -394,13 +421,13 @@ type SbomGenerator interface {
+@@ -394,13 +423,13 @@ type SbomGenerator interface {
  
  func buildSbomTool(d Deps) *Tool {
  	return &Tool{
@@ -8830,7 +8867,7 @@ index 939a67e..d59e759 100644
  				},
  			},
  		},
-@@ -442,16 +469,16 @@ type GhaAuditor interface {
+@@ -442,16 +471,16 @@ type GhaAuditor interface {
  
  func buildGhaAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -8850,7 +8887,7 @@ index 939a67e..d59e759 100644
  				},
  			},
  			"required": []string{"files"},
-@@ -496,19 +523,19 @@ type PinDriftChecker interface {
+@@ -496,19 +525,19 @@ type PinDriftChecker interface {
  
  func buildPinDriftTool(d Deps) *Tool {
  	return &Tool{
@@ -8874,7 +8911,7 @@ index 939a67e..d59e759 100644
  				},
  			},
  			"required": []string{"files"},
-@@ -611,7 +638,7 @@ func buildPinDriftTool(d Deps) *Tool {
+@@ -611,7 +640,7 @@ func buildPinDriftTool(d Deps) *Tool {
  // 外から注入する設計にする。
  func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
  	return &Tool{
@@ -8883,7 +8920,7 @@ index 939a67e..d59e759 100644
  		Description: "[S] Per-tool byte counts since daemon start.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -645,7 +672,7 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
+@@ -645,7 +674,7 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
  }
  
  // ─── yagura_graph_neighbors / impact / stats (v0.18.0) ───────
@@ -8892,7 +8929,7 @@ index 939a67e..d59e759 100644
  // Inspired by cortex (aircloset, 辻 2026/05) "Product Graph" 構想:
  // portfolio の depends_on を semantic graph として AI から探索可能にする。
  
-@@ -658,14 +685,14 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
+@@ -658,14 +687,14 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
  
  func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
  	return &Tool{
@@ -8911,7 +8948,7 @@ index 939a67e..d59e759 100644
  				"summary_only": map[string]any{"type": "boolean"},
  			},
  		},
-@@ -709,13 +736,13 @@ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
+@@ -709,13 +738,13 @@ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
  // formatQualityResult is MCP-friendly output formatter.
  func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
  	out := map[string]any{
@@ -8932,7 +8969,7 @@ index 939a67e..d59e759 100644
  	}
  	if !summaryOnly {
  		out["findings"] = res.Findings
-@@ -730,7 +757,7 @@ func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
+@@ -730,7 +759,7 @@ func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
  
  func buildHarnessRecommendTool(d Deps) *Tool {
  	return &Tool{
@@ -8941,7 +8978,7 @@ index 939a67e..d59e759 100644
  		Description: "[G] Claude Code .claude/ scaffold by slug or language.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -765,8 +792,8 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+@@ -765,8 +794,8 @@ func buildHarnessRecommendTool(d Deps) *Tool {
  
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -8952,7 +8989,7 @@ index 939a67e..d59e759 100644
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
-@@ -791,7 +818,7 @@ func buildSkillAuditTool(d Deps) *Tool {
+@@ -791,7 +820,7 @@ func buildSkillAuditTool(d Deps) *Tool {
  
  func buildSubagentAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -8961,7 +8998,7 @@ index 939a67e..d59e759 100644
  		Description: "[G] Subagent .md audit: prompt style, tools, description.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -822,7 +849,7 @@ func buildSubagentAuditTool(d Deps) *Tool {
+@@ -822,7 +851,7 @@ func buildSubagentAuditTool(d Deps) *Tool {
  
  func buildToolsCatalogTool(s *Server) *Tool {
  	return &Tool{
@@ -8970,7 +9007,7 @@ index 939a67e..d59e759 100644
  		Description: "[G] Full tool details lookup. Use when compact mode hides info you need.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -885,7 +912,7 @@ func buildToolsCatalogTool(s *Server) *Tool {
+@@ -885,7 +914,7 @@ func buildToolsCatalogTool(s *Server) *Tool {
  
  func buildDedupeStatsTool(s *Server) *Tool {
  	return &Tool{
@@ -8979,7 +9016,7 @@ index 939a67e..d59e759 100644
  		Description: "[S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -905,7 +932,7 @@ func buildDedupeStatsTool(s *Server) *Tool {
+@@ -905,7 +934,7 @@ func buildDedupeStatsTool(s *Server) *Tool {
  
  func buildPlanStatusTool(d Deps, cache plantracker.CacheLike) *Tool {
  	return &Tool{
@@ -8988,7 +9025,7 @@ index 939a67e..d59e759 100644
  		Description: "[G] Plan.md progress for project. Parses checkboxes + required sections (目的/スコープ/フェーズ/DoD).",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -968,7 +995,7 @@ func loadPlanMd(localPath string) (string, string, error) {
+@@ -968,7 +997,7 @@ func loadPlanMd(localPath string) (string, string, error) {
  
  func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
  	return &Tool{
@@ -8997,7 +9034,7 @@ index 939a67e..d59e759 100644
  		Description: "[S] Cross-project release readiness ranking. Aggregates Plan/CI/issues/quality/AI-risk.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1123,7 +1150,7 @@ func pickReason(plan plantracker.PlanState, ciStatus string, openCrit int,
+@@ -1123,7 +1152,7 @@ func pickReason(plan plantracker.PlanState, ciStatus string, openCrit int,
  
  func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
  	return &Tool{
@@ -9006,7 +9043,7 @@ index 939a67e..d59e759 100644
  		Description: "[G] AI code risk audit. 6 categories: auth/billing/data/external/crypto/secret. 2x multiplier inside AI-marker zones.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1222,7 +1249,7 @@ func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
+@@ -1222,7 +1251,7 @@ func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
  
  func buildTestAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -9015,7 +9052,7 @@ index 939a67e..d59e759 100644
  		Description: "[G] Source-test coverage detection. Go/TS/JS/Python/Rust/Java filename + Rust inline #[cfg(test)] + Python doctest.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1267,7 +1294,7 @@ func buildTestAuditTool(d Deps) *Tool {
+@@ -1267,7 +1296,7 @@ func buildTestAuditTool(d Deps) *Tool {
  
  func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Store) *Tool {
  	return &Tool{
@@ -9024,7 +9061,7 @@ index 939a67e..d59e759 100644
  		Description: "[S] Aggregate health signals across portfolio. Returns actionable alerts with suggested_tool + args.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1425,15 +1452,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
+@@ -1425,15 +1454,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
  
  func buildAlertResolveTool(store *alertfix.Store) *Tool {
  	return &Tool{
@@ -9045,7 +9082,7 @@ index 939a67e..d59e759 100644
  			},
  			"required": []string{"alert_id", "action"},
  		},
-@@ -1475,9 +1502,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+@@ -1475,9 +1504,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
  			}
  			st, _ := store.Get(in.AlertID)
  			return map[string]any{
@@ -9058,7 +9095,7 @@ index 939a67e..d59e759 100644
  				"lifecycle_stats": store.Stats(),
  			}, nil
  		},
-@@ -1492,14 +1519,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+@@ -1492,14 +1521,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
  
  func buildAgentsMdTool(d Deps) *Tool {
  	return &Tool{
@@ -9076,7 +9113,7 @@ index 939a67e..d59e759 100644
  			},
  			"required": []string{"slug"},
  		},
-@@ -1578,7 +1605,7 @@ func buildAgentsMdTool(d Deps) *Tool {
+@@ -1578,7 +1607,7 @@ func buildAgentsMdTool(d Deps) *Tool {
  
  func buildFeatureListTool(d Deps) *Tool {
  	return &Tool{
@@ -9085,7 +9122,7 @@ index 939a67e..d59e759 100644
  		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1643,7 +1670,7 @@ func buildFeatureListTool(d Deps) *Tool {
+@@ -1643,7 +1672,7 @@ func buildFeatureListTool(d Deps) *Tool {
  
  func buildHarnessCoverageTool(d Deps) *Tool {
  	return &Tool{
@@ -9094,7 +9131,7 @@ index 939a67e..d59e759 100644
  		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -1687,11 +1714,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
+@@ -1687,11 +1716,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
  				}
  			}
  			return map[string]any{
@@ -10930,6 +10967,129 @@ index 0000000..b1cf56b
 +	}
 +	if out.(map[string]any)["recorded"] != false {
 +		t.Error("recorded should be false when no sink is configured")
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_sessionsummary.go b/yagura-v0.35.0/internal/mcp/tools_sessionsummary.go
+new file mode 100644
+index 0000000..c36b860
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_sessionsummary.go
+@@ -0,0 +1,51 @@
++// tools_sessionsummary.go: yagura_session_summary — エージェントのイベント列を
++// セッション活動の構造化サマリへ集約する(internal/sessionsummary)。
++//
++// 着想(Hermes Desktop 参照): Hermes Desktop の目玉「ライブ tool activity と構造化 tool-call
++// サマリ」の kernel 側 deterministic 版。raw イベント列を agentevent.Normalize で正規化してから
++// Summarize するので、Claude Code / Gemini CLI / Codex / OTel いずれのセッションでも同じサマリが
++// 得られる。UI(Hermes 風でも Yagura dashboard でも)はこれを render するだけ。LLM 不使用。
++
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++
++	"github.com/shizukutanaka/yagura/internal/agentevent"
++	"github.com/shizukutanaka/yagura/internal/sessionsummary"
++)
++
++func buildSessionSummaryTool(d Deps) *Tool {
++	return &Tool{
++		Name:        "yagura_session_summary",
++		Description: "[S] Structured tool-call summary of an agent session (any agent): counts/sequence/errors/anomalies.",
++		InputSchema: map[string]any{
++			"type": "object",
++			"properties": map[string]any{
++				"events": map[string]any{
++					"type":        "array",
++					"description": "chronological raw lifecycle events from any agent (each normalized via agent_event).",
++					"items":       map[string]any{"type": "object"},
++				},
++			},
++			"required": []string{"events"},
++		},
++		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
++			var in struct {
++				Events []map[string]any `json:"events"`
++			}
++			if err := json.Unmarshal(args, &in); err != nil {
++				return nil, &ToolError{Code: "invalid_input", Cause: err}
++			}
++			if len(in.Events) == 0 {
++				return nil, &ToolError{Code: "invalid_input", Message: "events must list at least one event"}
++			}
++			norm := make([]agentevent.Event, 0, len(in.Events))
++			for _, raw := range in.Events {
++				norm = append(norm, agentevent.Normalize(raw))
++			}
++			return sessionsummary.Summarize(norm), nil
++		},
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_sessionsummary_test.go b/yagura-v0.35.0/internal/mcp/tools_sessionsummary_test.go
+new file mode 100644
+index 0000000..7584224
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_sessionsummary_test.go
+@@ -0,0 +1,60 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++)
++
++func TestSessionSummaryTool(t *testing.T) {
++	tool := buildSessionSummaryTool(Deps{})
++	// raw events from mixed agents (Claude Code hook + generic), normalized then summarized
++	out, err := tool.Handler(context.Background(), json.RawMessage(`{"events":[
++		{"hook_event_name":"PreToolUse","tool_name":"Bash","session_id":"s"},
++		{"hook_event_name":"PostToolUse","tool_name":"Bash","session_id":"s"},
++		{"agent":"gemini_cli","event":"beforeToolCall","tool":"Read"},
++		{"agent":"gemini_cli","event":"toolError","tool":"Read","error":{"type":"timeout"}}
++	]}`))
++	if err != nil {
++		t.Fatalf("handler error: %v", err)
++	}
++	b, _ := json.Marshal(out)
++	var r struct {
++		Events          int            `json:"events"`
++		ToolInvocations int            `json:"tool_invocations"`
++		ByTool          map[string]int `json:"by_tool"`
++		Errors          []struct {
++			Tool string `json:"tool"`
++		} `json:"errors"`
++		Agents []string `json:"agents"`
++	}
++	if err := json.Unmarshal(b, &r); err != nil {
++		t.Fatal(err)
++	}
++	if r.Events != 4 || r.ToolInvocations != 2 {
++		t.Errorf("events/invocations: %d/%d (%s)", r.Events, r.ToolInvocations, b)
++	}
++	if r.ByTool["Bash"] != 1 || r.ByTool["Read"] != 1 {
++		t.Errorf("by_tool: %+v", r.ByTool)
++	}
++	if len(r.Errors) != 1 || r.Errors[0].Tool != "Read" {
++		t.Errorf("errors: %+v", r.Errors)
++	}
++	if len(r.Agents) != 2 {
++		t.Errorf("expected 2 agents, got %+v", r.Agents)
++	}
++}
++
++func TestSessionSummaryTool_EmptyEvents(t *testing.T) {
++	tool := buildSessionSummaryTool(Deps{})
++	if _, err := tool.Handler(context.Background(), json.RawMessage(`{"events":[]}`)); err == nil {
++		t.Error("expected error for empty events")
++	}
++}
++
++func TestSessionSummaryTool_BadInput(t *testing.T) {
++	tool := buildSessionSummaryTool(Deps{})
++	if _, err := tool.Handler(context.Background(), json.RawMessage(`{`)); err == nil {
++		t.Error("expected error for malformed JSON")
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_test.go b/yagura-v0.35.0/internal/mcp/tools_test.go
@@ -13790,6 +13950,328 @@ index 0000000..24b7a90
 +	if r1.Proposals[len(r1.Proposals)-1].Kind != "retire" {
 +		t.Errorf("retire (low) should be last, got %s", r1.Proposals[len(r1.Proposals)-1].Kind)
 +	}
++}
+diff --git a/yagura-v0.35.0/internal/sessionsummary/sessionsummary.go b/yagura-v0.35.0/internal/sessionsummary/sessionsummary.go
+new file mode 100644
+index 0000000..4d750cc
+--- /dev/null
++++ b/yagura-v0.35.0/internal/sessionsummary/sessionsummary.go
+@@ -0,0 +1,186 @@
++// Package sessionsummary は、正規化済みエージェントイベント列(internal/agentevent)を
++// セッション単位の構造化サマリへ決定論的に集約する。
++//
++// 着想(Hermes Desktop 参照): Hermes Desktop の目玉 UX は「ライブ tool activity と
++// 構造化された tool-call サマリ」。Yagura は brain ではないが、その **kernel 側 deterministic
++// 版**を提供できる — 任意エージェントの正規化イベント列から、tool 別呼出数・操作/位相内訳・
++// エラー・tool 実行順・異常(連続エラー / ループ / 失敗多発 tool)を計算する。UI(Hermes 風でも
++// Yagura dashboard でも)はこれを render するだけ。LLM は呼ばず、決定論的。
++//
++// agentevent.Normalize と組で、Claude Code / Gemini CLI / Codex / OTel いずれのセッションでも
++// 同じサマリが得られる(エージェント非依存)。
++package sessionsummary
++
++import (
++	"fmt"
++	"sort"
++
++	"github.com/shizukutanaka/yagura/internal/agentevent"
++)
++
++const (
++	maxSequence        = 50 // tool 実行順の出力上限
++	loopThreshold      = 5  // 同一 tool が連続 N 回でループ疑い
++	consecErrThreshold = 3  // 連続エラー N 回で異常
++	failingMinCalls    = 3  // 失敗多発判定の最小呼出数
++	failingRate        = 0.5
++)
++
++// ErrorItem は 1 件のエラー。
++type ErrorItem struct {
++	Tool      string `json:"tool,omitempty"`
++	ErrorType string `json:"error_type,omitempty"`
++	Agent     string `json:"agent,omitempty"`
++}
++
++// Summary はセッション活動の構造化サマリ。
++type Summary struct {
++	Events          int            `json:"events"`
++	ToolInvocations int            `json:"tool_invocations"`
++	DistinctTools   int            `json:"distinct_tools"`
++	ByTool          map[string]int `json:"by_tool"`
++	ByOperation     map[string]int `json:"by_operation"`
++	ByPhase         map[string]int `json:"by_phase"`
++	Agents          []string       `json:"agents"`
++	Errors          []ErrorItem    `json:"errors,omitempty"`
++	ErrorRate       float64        `json:"error_rate"`
++	ToolSequence    []string       `json:"tool_sequence,omitempty"`
++	SequenceTrunc   bool           `json:"sequence_truncated,omitempty"`
++	DurationMsTotal int64          `json:"duration_ms_total,omitempty"`
++	Anomalies       []string       `json:"anomalies,omitempty"`
++	Summary         string         `json:"summary"`
++}
++
++// Summarize はイベント列(時系列順)を構造化サマリへ集約する。決定論的。
++func Summarize(events []agentevent.Event) Summary {
++	s := Summary{
++		ByTool:      map[string]int{},
++		ByOperation: map[string]int{},
++		ByPhase:     map[string]int{},
++		Events:      len(events),
++	}
++	agentSet := map[string]bool{}
++	toolErrors := map[string]int{} // tool → error 数
++
++	// 呼出数の基準: start イベントがあれば start、無ければ end/error で数える。
++	var toolStarts int
++	for _, e := range events {
++		if e.Operation == agentevent.OpExecuteTool && e.Phase == agentevent.PhaseStart {
++			toolStarts++
++		}
++	}
++	countOnStart := toolStarts > 0
++
++	var seq []string
++	var errEvents int
++	var consecErr, maxConsecErr int
++
++	for _, e := range events {
++		s.ByOperation[e.Operation]++
++		s.ByPhase[e.Phase]++
++		if e.Agent != "" {
++			agentSet[e.Agent] = true
++		}
++		s.DurationMsTotal += e.DurationMs
++
++		if e.Phase == agentevent.PhaseError {
++			errEvents++
++			consecErr++
++			if consecErr > maxConsecErr {
++				maxConsecErr = consecErr
++			}
++			s.Errors = append(s.Errors, ErrorItem{Tool: e.Tool, ErrorType: e.ErrorType, Agent: e.Agent})
++			if e.Tool != "" {
++				toolErrors[e.Tool]++
++			}
++		} else if e.Phase == agentevent.PhaseEnd {
++			// 成功完了で連続エラー streak をリセット(start は中立で reset しない)。
++			consecErr = 0
++		}
++
++		if e.Operation != agentevent.OpExecuteTool {
++			continue
++		}
++		isInvocation := (countOnStart && e.Phase == agentevent.PhaseStart) ||
++			(!countOnStart && (e.Phase == agentevent.PhaseEnd || e.Phase == agentevent.PhaseError))
++		if isInvocation {
++			s.ToolInvocations++
++			tool := e.Tool
++			if tool == "" {
++				tool = "(unnamed)"
++			}
++			s.ByTool[tool]++
++			if len(seq) < maxSequence {
++				seq = append(seq, tool)
++			} else {
++				s.SequenceTrunc = true
++			}
++		}
++	}
++
++	s.DistinctTools = len(s.ByTool)
++	s.ToolSequence = seq
++	s.Agents = sortedKeys(agentSet)
++	if s.ToolInvocations > 0 {
++		s.ErrorRate = round2(float64(errEvents) / float64(s.ToolInvocations))
++	}
++
++	s.Anomalies = detectAnomalies(seq, toolErrors, s.ByTool, maxConsecErr)
++	s.Summary = fmt.Sprintf("%d events, %d tool calls across %d tools, %d error(s) (rate %.0f%%)",
++		s.Events, s.ToolInvocations, s.DistinctTools, errEvents, s.ErrorRate*100)
++	return s
++}
++
++func detectAnomalies(seq []string, toolErrors, byTool map[string]int, maxConsecErr int) []string {
++	var out []string
++	if maxConsecErr >= consecErrThreshold {
++		out = append(out, fmt.Sprintf("%d consecutive errors", maxConsecErr))
++	}
++	// 連続同一 tool(ループ疑い)。
++	if run, tool := longestRun(seq); run >= loopThreshold {
++		out = append(out, fmt.Sprintf("possible loop: %q called %d times consecutively", tool, run))
++	}
++	// 失敗多発 tool。決定論のため tool 名昇順。
++	var tools []string
++	for t := range byTool {
++		tools = append(tools, t)
++	}
++	sort.Strings(tools)
++	for _, t := range tools {
++		calls := byTool[t]
++		errs := toolErrors[t]
++		if calls >= failingMinCalls && float64(errs)/float64(calls) >= failingRate {
++			out = append(out, fmt.Sprintf("tool %q failing (%d/%d)", t, errs, calls))
++		}
++	}
++	return out
++}
++
++func longestRun(seq []string) (int, string) {
++	best, bestTool := 0, ""
++	cur, curTool := 0, ""
++	for _, t := range seq {
++		if t == curTool {
++			cur++
++		} else {
++			cur, curTool = 1, t
++		}
++		if cur > best {
++			best, bestTool = cur, curTool
++		}
++	}
++	return best, bestTool
++}
++
++func sortedKeys(m map[string]bool) []string {
++	out := make([]string, 0, len(m))
++	for k := range m {
++		out = append(out, k)
++	}
++	sort.Strings(out)
++	return out
++}
++
++func round2(f float64) float64 {
++	return float64(int(f*100+0.5)) / 100
++}
+diff --git a/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go b/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go
+new file mode 100644
+index 0000000..15c4acb
+--- /dev/null
++++ b/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go
+@@ -0,0 +1,124 @@
++package sessionsummary
++
++import (
++	"encoding/json"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/agentevent"
++)
++
++func ev(agent, op, phase, tool, errType string) agentevent.Event {
++	return agentevent.Event{Agent: agent, Operation: op, Phase: phase, Tool: tool, ErrorType: errType}
++}
++
++func TestSummarize_Basic(t *testing.T) {
++	events := []agentevent.Event{
++		ev("claude_code", agentevent.OpExecuteTool, agentevent.PhaseStart, "Bash", ""),
++		ev("claude_code", agentevent.OpExecuteTool, agentevent.PhaseEnd, "Bash", ""),
++		ev("claude_code", agentevent.OpExecuteTool, agentevent.PhaseStart, "Read", ""),
++		ev("claude_code", agentevent.OpExecuteTool, agentevent.PhaseError, "Read", "timeout"),
++		ev("claude_code", agentevent.OpInvokeAgent, agentevent.PhaseEnd, "", ""),
++	}
++	s := Summarize(events)
++	if s.Events != 5 {
++		t.Errorf("events = %d, want 5", s.Events)
++	}
++	// invocations counted on start (2 starts: Bash, Read)
++	if s.ToolInvocations != 2 || s.DistinctTools != 2 {
++		t.Errorf("invocations/distinct: %d/%d", s.ToolInvocations, s.DistinctTools)
++	}
++	if s.ByTool["Bash"] != 1 || s.ByTool["Read"] != 1 {
++		t.Errorf("by_tool: %+v", s.ByTool)
++	}
++	if len(s.Errors) != 1 || s.Errors[0].Tool != "Read" || s.Errors[0].ErrorType != "timeout" {
++		t.Errorf("errors: %+v", s.Errors)
++	}
++	if s.ErrorRate != 0.5 { // 1 error / 2 invocations
++		t.Errorf("error_rate = %v, want 0.5", s.ErrorRate)
++	}
++	if len(s.Agents) != 1 || s.Agents[0] != "claude_code" {
++		t.Errorf("agents: %+v", s.Agents)
++	}
++}
++
++func TestSummarize_CountOnEndWhenNoStarts(t *testing.T) {
++	// only end/error events (some agents emit only post-hooks)
++	events := []agentevent.Event{
++		ev("gemini_cli", agentevent.OpExecuteTool, agentevent.PhaseEnd, "write_file", ""),
++		ev("gemini_cli", agentevent.OpExecuteTool, agentevent.PhaseError, "shell", "exit1"),
++	}
++	s := Summarize(events)
++	if s.ToolInvocations != 2 {
++		t.Errorf("should count ends when no starts: %d", s.ToolInvocations)
++	}
++}
++
++func TestSummarize_ConsecutiveErrors(t *testing.T) {
++	var events []agentevent.Event
++	for i := 0; i < 3; i++ {
++		events = append(events, ev("a", agentevent.OpExecuteTool, agentevent.PhaseStart, "T", ""))
++		events = append(events, ev("a", agentevent.OpExecuteTool, agentevent.PhaseError, "T", "boom"))
++	}
++	s := Summarize(events)
++	if !hasAnomaly(s, "consecutive errors") {
++		t.Errorf("expected consecutive-errors anomaly: %+v", s.Anomalies)
++	}
++	if !hasAnomaly(s, "failing") {
++		t.Errorf("expected failing-tool anomaly: %+v", s.Anomalies)
++	}
++}
++
++func TestSummarize_LoopDetection(t *testing.T) {
++	var events []agentevent.Event
++	for i := 0; i < 6; i++ {
++		events = append(events, ev("a", agentevent.OpExecuteTool, agentevent.PhaseStart, "Glob", ""))
++		events = append(events, ev("a", agentevent.OpExecuteTool, agentevent.PhaseEnd, "Glob", ""))
++	}
++	s := Summarize(events)
++	if !hasAnomaly(s, "possible loop") {
++		t.Errorf("expected loop anomaly: %+v", s.Anomalies)
++	}
++}
++
++func TestSummarize_Empty(t *testing.T) {
++	s := Summarize(nil)
++	if s.Events != 0 || s.ToolInvocations != 0 || s.Summary == "" {
++		t.Errorf("empty summary: %+v", s)
++	}
++}
++
++func TestSummarize_Deterministic(t *testing.T) {
++	events := []agentevent.Event{
++		ev("z", agentevent.OpExecuteTool, agentevent.PhaseStart, "B", ""),
++		ev("a", agentevent.OpExecuteTool, agentevent.PhaseStart, "A", ""),
++	}
++	a := Summarize(events)
++	b := Summarize(events)
++	ba, _ := json.Marshal(a)
++	bb, _ := json.Marshal(b)
++	if string(ba) != string(bb) {
++		t.Error("Summarize must be deterministic")
++	}
++	// agents sorted
++	if a.Agents[0] != "a" || a.Agents[1] != "z" {
++		t.Errorf("agents not sorted: %+v", a.Agents)
++	}
++}
++
++func hasAnomaly(s Summary, sub string) bool {
++	for _, a := range s.Anomalies {
++		if contains(a, sub) {
++			return true
++		}
++	}
++	return false
++}
++
++func contains(s, sub string) bool {
++	for i := 0; i+len(sub) <= len(s); i++ {
++		if s[i:i+len(sub)] == sub {
++			return true
++		}
++	}
++	return false
 +}
 diff --git a/yagura-v0.35.0/internal/vex/vex.go b/yagura-v0.35.0/internal/vex/vex.go
 new file mode 100644
