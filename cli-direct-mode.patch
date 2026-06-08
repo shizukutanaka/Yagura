@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..47477a6 100644
+index 9b29eec..5cb3263 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,834 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,855 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1140,6 +1140,27 @@ index 9b29eec..47477a6 100644
 +  `yagura_started`/`yagura_stopped` は metric ではないので定義サイト限定の抽出で誤検出回避)。
 +  guard 自身も 1 metric を doc から消して fail することを確認。README の `/metrics` 行から
 +  リンク。doc/test のみ(tool 62 / package 50 不変)、ADR-0001 維持、publicity-scan clean。
++- **code-review 指摘の修正(concurrent map panic + cosmetic 2 件)**
++  (`internal/hookreceiver` / `internal/dashboard` / `cmd/yagura/main.go` / `internal/scanner`)。
++  recall 重視の self code-review で confirmed bug を 1 件検出・修正:
++  - **[crash] hook stats の concurrent map access**。`Receiver.ProjectStats` / `AllStats` は
++    `*st` の shallow copy を返しており、`ByEvent` / `ByTool` の map header が live map を指したまま
++    だった。呼出側(dashboard の Activity 列 = `ProjectActivity`、`/metrics` の per-tool 集計)は
++    lock 無しでこの map を range するため、`POST /hooks/agent` の write(lock 下で `ByTool[…]++`)と
++    並行すると `fatal: concurrent map iteration and map write` で daemon が落ち得た。両メソッドが
++    map を deep copy(`Stats.clone()`)してから返すよう修正し、呼出側は私有 map を安全に走査できる
++    ようにした。`-race` 回帰テスト追加(2000 write と並行 range、修正前は DATA RACE で fail、
++    修正後 green)。base から `ByEvent` で潜在していたが、v0.35 で `ByTool` の hot-path reader を
++    2 つ足したため顕在化した。
++  - **[cosmetic] health banner の orphan separator**。critical=0 / high=0 で medium・low のみのとき
++    「Portfolio health: 5 alerts  · 5 medium」と先頭に余分な `·` が出ていた。medium/low の区切りを
++    上位 severity の有無で gate して修正(回帰テスト追加)。
++  - **[cosmetic] 空の `yagura_hook_tool_calls_total` family**。非 tool イベントのみの project で
++    HELP/TYPE だけ出てサンプル 0 行になっていたのを、`len(hookTools) > 0` のときだけ emit するよう
++    分離。
++  あわせて scanner の `AfterScan` が ctx キャンセル(=shutdown)時に skip される挙動を Config
++  コメントに明記。`go vet` clean、`go test ./...` green(touch packages は `-race`)。外部依存ゼロ、
++  新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1158,7 +1179,7 @@ index 9b29eec..47477a6 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8512,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8533,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -4874,7 +4895,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..29ab2d4 100644
+index bd1fe39..56e635f 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -5414,22 +5435,30 @@ index bd1fe39..29ab2d4 100644
  			hookErrs = append(hookErrs, promexport.Sample{
  				Labels: map[string]string{"project": slug},
  				Value:  float64(st.ErrorCount),
-@@ -908,10 +1166,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -908,13 +1166,21 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  		if len(hookCalls) > 0 {
  			out = append(out,
  				promexport.Collection{Name: "yagura_hook_events_total",
 -					Type: "counter", Help: "Claude Code hook events received per project per event type",
 +					Type: "counter", Help: "Agent hook events received per project per event type (any agent)",
  					Samples: hookCalls},
-+				promexport.Collection{Name: "yagura_hook_tool_calls_total",
-+					Type: "counter", Help: "Agent tool calls observed via hooks per project per tool (OTel gen_ai.tool.name)",
-+					Samples: hookTools},
  				promexport.Collection{Name: "yagura_hook_errors_total",
 -					Type: "counter", Help: "Claude Code tool errors observed via hooks per project",
 +					Type: "counter", Help: "Agent tool errors observed via hooks per project (any agent)",
  					Samples: hookErrs},
  			)
  		}
++		// Tool-call family only when at least one tool call was observed — a project
++		// with only non-tool events (SessionStart/Stop) would otherwise emit an empty
++		// HELP/TYPE header with no samples.
++		if len(hookTools) > 0 {
++			out = append(out, promexport.Collection{Name: "yagura_hook_tool_calls_total",
++				Type: "counter", Help: "Agent tool calls observed via hooks per project per tool (OTel gen_ai.tool.name)",
++				Samples: hookTools})
++		}
+ 	}
+ 
+ 	// Alert lifecycle stats
 diff --git a/yagura-v0.35.0/cmd/yagura/main_test.go b/yagura-v0.35.0/cmd/yagura/main_test.go
 index f923a14..5cdb82b 100644
 --- a/yagura-v0.35.0/cmd/yagura/main_test.go
@@ -8209,7 +8238,7 @@ index 0000000..3d047fc
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/dashboard/dashboard.go b/yagura-v0.35.0/internal/dashboard/dashboard.go
-index 6981102..f254fd7 100644
+index 6981102..550c1ff 100644
 --- a/yagura-v0.35.0/internal/dashboard/dashboard.go
 +++ b/yagura-v0.35.0/internal/dashboard/dashboard.go
 @@ -2,7 +2,11 @@
@@ -8708,7 +8737,7 @@ index 6981102..f254fd7 100644
 +  <div class="health-banner {{if .HasCritical}}crit{{else}}warn{{end}}" role="status" aria-label="Portfolio health from the latest alert_fix sweep">
 +    <strong>{{if .HasCritical}}⛔{{else}}⚠{{end}} Portfolio health:</strong>
 +    {{.Total}} alert{{if ne .Total 1}}s{{end}}
-+    <span class="hb-breakdown">{{if gt .Critical 0}}<span class="hb-crit">{{.Critical}} critical</span>{{end}}{{if gt .High 0}}{{if gt .Critical 0}} · {{end}}<span class="hb-high">{{.High}} high</span>{{end}}{{if gt .Medium 0}} · {{.Medium}} medium{{end}}{{if gt .Low 0}} · {{.Low}} low{{end}}</span>
++    <span class="hb-breakdown">{{if gt .Critical 0}}<span class="hb-crit">{{.Critical}} critical</span>{{end}}{{if gt .High 0}}{{if gt .Critical 0}} · {{end}}<span class="hb-high">{{.High}} high</span>{{end}}{{if gt .Medium 0}}{{if or (gt .Critical 0) (gt .High 0)}} · {{end}}{{.Medium}} medium{{end}}{{if gt .Low 0}}{{if or (gt .Critical 0) (gt .High 0) (gt .Medium 0)}} · {{end}}{{.Low}} low{{end}}</span>
 +    <small class="hb-meta"><a href="/dashboard/alerts">view alerts</a> · swept {{fmtTime .At}}</small>
 +  </div>
 +  {{end}}
@@ -8782,10 +8811,10 @@ index 6981102..f254fd7 100644
  </html>`
 diff --git a/yagura-v0.35.0/internal/dashboard/health_test.go b/yagura-v0.35.0/internal/dashboard/health_test.go
 new file mode 100644
-index 0000000..6b7b516
+index 0000000..9fbaca1
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/dashboard/health_test.go
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,157 @@
 +package dashboard
 +
 +import (
@@ -8839,6 +8868,22 @@ index 0000000..6b7b516
 +	}
 +	if !strings.Contains(html, "crit") {
 +		t.Error("a critical sweep should use the crit banner style")
++	}
++}
++
++func TestHealthBanner_NoOrphanSeparator(t *testing.T) {
++	// medium-only (no critical/high) must not render a leading " · " separator.
++	h := healthDash(t)
++	h.SetPortfolioHealthProvider(fakeHealth{ok: true, hs: HealthSummary{
++		Total: 5, Medium: 5, At: time.Now(),
++	}})
++	html := get(t, h, "/dashboard").Body.String()
++	if !strings.Contains(html, "5 medium") {
++		t.Fatal("expected medium count in banner")
++	}
++	// the breakdown span should start straight into "5 medium", not " · 5 medium"
++	if strings.Contains(html, `<span class="hb-breakdown"> · `) {
++		t.Errorf("orphan leading separator in breakdown:\n%s", html)
 +	}
 +}
 +
@@ -11202,10 +11247,33 @@ index 0000000..ad2196b
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/hookreceiver/receiver.go b/yagura-v0.35.0/internal/hookreceiver/receiver.go
-index 6fbb35f..bf5f220 100644
+index 6fbb35f..95dda91 100644
 --- a/yagura-v0.35.0/internal/hookreceiver/receiver.go
 +++ b/yagura-v0.35.0/internal/hookreceiver/receiver.go
-@@ -38,6 +38,8 @@ import (
+@@ -1,14 +1,15 @@
+ // Package hookreceiver は Claude Code の HTTP hooks を受信する。
+ //
+ // Motivation (v0.31.0):
+-//   Claude Code は 2026-02 に HTTP hooks (`type: "http"`) を GA。
+-//   PreToolUse / PostToolUse / Stop / SubagentStop 等のイベントを
+-//   localhost:8080/hooks/* に POST する spec が確立した。が、それを受け取って
+-//   活用する deterministic local backend がエコシステムに不足している
+-//   (GitHub anthropics/claude-code#4995 で要望、未実装)。
+ //
+-//   yagura は既に local HTTP server + Bearer token auth + JSONL persist +
+-//   registry (cwd → project mapping) を持つので、最も自然な host。
++//	Claude Code は 2026-02 に HTTP hooks (`type: "http"`) を GA。
++//	PreToolUse / PostToolUse / Stop / SubagentStop 等のイベントを
++//	localhost:8080/hooks/* に POST する spec が確立した。が、それを受け取って
++//	活用する deterministic local backend がエコシステムに不足している
++//	(GitHub anthropics/claude-code#4995 で要望、未実装)。
++//
++//	yagura は既に local HTTP server + Bearer token auth + JSONL persist +
++//	registry (cwd → project mapping) を持つので、最も自然な host。
+ //
+ // 設計判断:
+ //   - 観察モード (v0.31): allow/deny は返さない、純粋に記録のみ。response は
+@@ -38,6 +39,8 @@ import (
  	"strings"
  	"sync"
  	"time"
@@ -11214,7 +11282,77 @@ index 6fbb35f..bf5f220 100644
  )
  
  // Event は Claude Code が送ってくる hook event の正規化形式。
-@@ -280,6 +282,38 @@ func (r *Receiver) parseEvent(raw map[string]json.RawMessage) Event {
+@@ -55,11 +58,11 @@ type Event struct {
+ 	Project string `json:"project,omitempty"` // cwd → registry lookup 結果
+ 
+ 	// tool 関連 (PreToolUse / PostToolUse / PostToolUseFailure)
+-	ToolName    string          `json:"tool_name,omitempty"`
+-	ToolUseID   string          `json:"tool_use_id,omitempty"`
+-	ToolInput   json.RawMessage `json:"tool_input,omitempty"`
++	ToolName     string          `json:"tool_name,omitempty"`
++	ToolUseID    string          `json:"tool_use_id,omitempty"`
++	ToolInput    json.RawMessage `json:"tool_input,omitempty"`
+ 	ToolResponse json.RawMessage `json:"tool_response,omitempty"`
+-	DurationMS  int64           `json:"duration_ms,omitempty"` // PostToolUse only
++	DurationMS   int64           `json:"duration_ms,omitempty"` // PostToolUse only
+ 
+ 	// subagent 関連
+ 	AgentID   string `json:"agent_id,omitempty"`
+@@ -81,12 +84,32 @@ type ProjectLookup interface {
+ 
+ // Stats は project 別の集計値。
+ type Stats struct {
+-	Total       int                  `json:"total"`
+-	ByEvent     map[string]int       `json:"by_event"`
+-	ByTool      map[string]int       `json:"by_tool"`
+-	ErrorCount  int                  `json:"error_count"`
+-	TotalMS     int64                `json:"total_ms"`
+-	LastEvent   time.Time            `json:"last_event"`
++	Total      int            `json:"total"`
++	ByEvent    map[string]int `json:"by_event"`
++	ByTool     map[string]int `json:"by_tool"`
++	ErrorCount int            `json:"error_count"`
++	TotalMS    int64          `json:"total_ms"`
++	LastEvent  time.Time      `json:"last_event"`
++}
++
++// clone は Stats の deep copy を返す(map を複製する)。
++//
++// ProjectStats / AllStats が返す値は、呼出側が lock なしで range する。一方 receiver は
++// 受信のたびに同じ map を mutate する。shallow copy(`*st`)だと map header が live map を
++// 指したままなので、「concurrent map iteration and map write」で fatal panic し得る。
++// 必ず clone してから返すことで、呼出側は私有 map を安全に走査できる。
++func (s Stats) clone() Stats {
++	byEvent := make(map[string]int, len(s.ByEvent))
++	for k, v := range s.ByEvent {
++		byEvent[k] = v
++	}
++	byTool := make(map[string]int, len(s.ByTool))
++	for k, v := range s.ByTool {
++		byTool[k] = v
++	}
++	s.ByEvent = byEvent
++	s.ByTool = byTool
++	return s
+ }
+ 
+ // Receiver は HTTP hook events を受け取って persist + 集計する。
+@@ -96,10 +119,10 @@ type Receiver struct {
+ 	path   string
+ 	lookup ProjectLookup
+ 
+-	mu      sync.RWMutex
+-	stats   map[string]*Stats // project slug → Stats
+-	recent  []Event           // ring buffer (most recent N)
+-	maxBuf  int
++	mu     sync.RWMutex
++	stats  map[string]*Stats // project slug → Stats
++	recent []Event           // ring buffer (most recent N)
++	maxBuf int
+ 
+ 	NowFn func() time.Time
+ }
+@@ -280,6 +303,38 @@ func (r *Receiver) parseEvent(raw map[string]json.RawMessage) Event {
  	if v, ok := raw["duration_ms"]; ok {
  		_ = json.Unmarshal(v, &e.DurationMS)
  	}
@@ -11253,7 +11391,7 @@ index 6fbb35f..bf5f220 100644
  	// error 判定: PostToolUseFailure or tool_response.is_error true
  	if e.HookEventName == "PostToolUseFailure" {
  		e.IsError = true
-@@ -293,6 +327,33 @@ func (r *Receiver) parseEvent(raw map[string]json.RawMessage) Event {
+@@ -293,6 +348,33 @@ func (r *Receiver) parseEvent(raw map[string]json.RawMessage) Event {
  	return e
  }
  
@@ -11287,11 +11425,39 @@ index 6fbb35f..bf5f220 100644
  // append は JSONL に 1 entry 追記する (atomic、O_APPEND)。
  func (r *Receiver) append(e Event) error {
  	f, err := os.OpenFile(r.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+@@ -342,7 +424,7 @@ func (r *Receiver) AllStats() map[string]Stats {
+ 	defer r.mu.RUnlock()
+ 	out := make(map[string]Stats, len(r.stats))
+ 	for k, v := range r.stats {
+-		out[k] = *v
++		out[k] = v.clone() // deep copy: caller ranges these maps without the lock
+ 	}
+ 	return out
+ }
+@@ -352,7 +434,7 @@ func (r *Receiver) ProjectStats(slug string) Stats {
+ 	r.mu.RLock()
+ 	defer r.mu.RUnlock()
+ 	if st, ok := r.stats[slug]; ok {
+-		return *st
++		return st.clone() // deep copy: caller ranges these maps without the lock
+ 	}
+ 	return Stats{ByEvent: map[string]int{}, ByTool: map[string]int{}}
+ }
 diff --git a/yagura-v0.35.0/internal/hookreceiver/receiver_test.go b/yagura-v0.35.0/internal/hookreceiver/receiver_test.go
-index b7aac6e..a98f68c 100644
+index b7aac6e..871f2a0 100644
 --- a/yagura-v0.35.0/internal/hookreceiver/receiver_test.go
 +++ b/yagura-v0.35.0/internal/hookreceiver/receiver_test.go
-@@ -292,3 +292,53 @@ func TestAllStats(t *testing.T) {
+@@ -1,8 +1,8 @@
+ package hookreceiver
+ 
+ import (
+-	"encoding/json"
+ 	"bytes"
++	"encoding/json"
+ 	"io"
+ 	"net/http"
+ 	"net/http/httptest"
+@@ -292,3 +292,87 @@ func TestAllStats(t *testing.T) {
  // helper imports
  var _ = io.EOF
  var _ = json.NewEncoder
@@ -11342,6 +11508,40 @@ index b7aac6e..a98f68c 100644
 +	for _, c := range cases {
 +		if got := hookNameFor(c.op, c.phase); got != c.want {
 +			t.Errorf("hookNameFor(%q,%q)=%q want %q", c.op, c.phase, got, c.want)
++		}
++	}
++}
++
++// TestProjectStats_NoRaceWithConcurrentWrites reproduces the v0.35 fix: callers
++// range the returned ByTool/ByEvent maps without holding the receiver lock, so
++// ProjectStats/AllStats must hand back deep copies — otherwise a concurrent hook
++// write triggers a fatal "concurrent map iteration and map write". Run with -race.
++func TestProjectStats_NoRaceWithConcurrentWrites(t *testing.T) {
++	r, err := NewReceiver("", &fakeLookup{m: map[string]string{"/p": "proj"}}, 1000)
++	if err != nil {
++		t.Fatal(err)
++	}
++	done := make(chan struct{})
++	// writer: a stream of tool events mutating proj's ByTool/ByEvent maps.
++	go func() {
++		for i := 0; i < 2000; i++ {
++			r.Handle(httptest.NewRecorder(), httptest.NewRequest("POST", "/hooks/agent",
++				strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/p"}`)))
++		}
++		close(done)
++	}()
++	// reader: range the returned maps the way the dashboard / metrics paths do.
++	for {
++		select {
++		case <-done:
++			return
++		default:
++		}
++		st := r.ProjectStats("proj")
++		for k := range st.ByTool {
++			_ = st.ByTool[k]
++		}
++		for range r.AllStats() {
 +		}
 +	}
 +}
@@ -17254,7 +17454,7 @@ index 0000000..c75d626
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/scanner/scanner.go b/yagura-v0.35.0/internal/scanner/scanner.go
-index e6969ac..685846d 100644
+index e6969ac..125f009 100644
 --- a/yagura-v0.35.0/internal/scanner/scanner.go
 +++ b/yagura-v0.35.0/internal/scanner/scanner.go
 @@ -44,6 +44,7 @@ type Scanner struct {
@@ -17265,18 +17465,20 @@ index e6969ac..685846d 100644
  
  	wg     sync.WaitGroup
  	stopCh chan struct{}
-@@ -57,6 +58,10 @@ type Config struct {
+@@ -57,6 +58,12 @@ type Config struct {
  	Metrics     Metrics
  	Interval    time.Duration
  	ScanTimeout time.Duration
-+	// AfterScan, if set, is invoked at the end of every ScanAll cycle (after
-+	// metrics are recorded). The daemon uses it for a periodic alert_fix health
-+	// sweep. Optional; nil disables it.
++	// AfterScan, if set, is invoked at the end of each ScanAll cycle that runs to
++	// completion (after metrics are recorded). It is skipped when the cycle returns
++	// early due to ctx cancellation — i.e. at shutdown — since there is no point
++	// refreshing derived state on the way out. The daemon uses it for a periodic
++	// alert_fix health sweep. Optional; nil disables it.
 +	AfterScan func(context.Context)
  }
  
  func New(c Config) *Scanner {
-@@ -79,6 +84,7 @@ func New(c Config) *Scanner {
+@@ -79,6 +86,7 @@ func New(c Config) *Scanner {
  		metrics:     c.Metrics,
  		interval:    c.Interval,
  		scanTimeout: c.ScanTimeout,
@@ -17284,7 +17486,7 @@ index e6969ac..685846d 100644
  		stopCh:      make(chan struct{}),
  	}
  }
-@@ -145,6 +151,13 @@ func (s *Scanner) ScanAll(ctx context.Context) {
+@@ -145,6 +153,13 @@ func (s *Scanner) ScanAll(ctx context.Context) {
  	s.logger.Info("scanner cycle done",
  		"scanned", scanned, "failed", failed,
  		"duration", time.Since(start).Round(time.Millisecond))
