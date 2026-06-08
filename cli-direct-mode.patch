@@ -319,10 +319,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..32451ad 100644
+index 9b29eec..0b755f5 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,590 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,607 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -896,6 +896,23 @@ index 9b29eec..32451ad 100644
 +  外部依存ゼロ・新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。full `go test ./...`
 +  green、`go vet ./...` クリーン。
 +
++- **hook 取り込みをエージェント非依存化(`agentevent` を live ingestion path へ配線・additive)**。
++  これまで `agent_event` / `session_summary` は「渡されたイベントを正規化する MCP tool」だったが、
++  daemon 自身の `/hooks/claude-code` 取り込みと `hook_stats` / `hook_timeline` は Claude Code 形式
++  専用のままで、汎用 observability が**半配線**だった。`internal/hookreceiver.parseEvent` に分岐を追加:
++  `hook_event_name` が無い payload(= Gemini CLI / Codex / OTel / 汎用エージェント)は
++  `agentevent.Normalize` で正規化し、`hookNameFor(operation, phase)` で Claude Code 相当の event 名
++  (execute_tool+start→PreToolUse、+error→PostToolUseFailure、invoke_agent+end→Stop 等)へ写して
++  ToolName / SessionID / AgentType / DurationMS / IsError を補完する。これで hook_stats の語彙が全
++  エージェントで揃い、`hook_stats` / `hook_timeline` がどのエージェントでも効く。**既存の Claude Code
++  payload(hook_event_name あり)は完全に不変**(additive)。新ルート `/hooks/agent` を別名追加
++  (`.well-known/mcp` にも `hooks_agent` を掲載)— 任意エージェントの hook をここに向ければよい。
++  外部依存ゼロ、新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。テスト:
++  foreign-agent(Gemini beforeToolCall→PreToolUse / Codex toolResult+failure→PostToolUseFailure)が
++  正規化されて stats に記録 / `hookNameFor` の写像 / 既存 Claude Code テスト全 pass。`go vet` クリーン。
++  live dogfood: `/hooks/agent` に Gemini/Codex イベント → `hook_stats` が
++  `{total:2, PreToolUse:1, PostToolUseFailure:1, Bash×2, error_count:1}`。
++
 +### What's not yet
 +
 +- `vulns` / `scorecard` の CLG 化(現状 sensor で scanner 専用)。
@@ -978,7 +995,7 @@ index bc406e1..dad7c59 100644
  - `internal/telemetry` — internal stats
  - `internal/metrics` — counter / gauge primitives
 diff --git a/yagura-v0.35.0/README.md b/yagura-v0.35.0/README.md
-index 986f84e..85ee18c 100644
+index 986f84e..a4e7181 100644
 --- a/yagura-v0.35.0/README.md
 +++ b/yagura-v0.35.0/README.md
 @@ -10,7 +10,7 @@
@@ -1052,26 +1069,28 @@ index 986f84e..85ee18c 100644
        "language":"javascript"
      }
    }}'
-@@ -151,7 +179,17 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
+@@ -151,7 +179,19 @@ Point Claude Code's HTTP hooks at the local yagura, so every tool call yagura se
  
  Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has been doing in each project.
  
 -## MCP tools (46 total)
 +### Other agents (Gemini CLI, Codex, custom)
 +
-+Yagura is agent-agnostic. Its 62 MCP tools work with **any** MCP client, and
-+`yagura_agent_event` normalizes any agent's lifecycle event — Claude Code,
-+Gemini CLI, Codex, raw OpenTelemetry, or a generic shape — into a vendor-neutral
-+canonical event aligned to the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
-+(`gen_ai.operation.name`, `gen_ai.tool.name`, …). Point your agent's hooks at a
-+thin forwarder that calls `yagura_agent_event`, and the same observability and
-+governance tools apply regardless of which agent you run.
++Yagura is agent-agnostic. Its 62 MCP tools work with **any** MCP client, and the
++daemon's hook ingestion is agent-neutral too: **point any agent's lifecycle
++hooks at `/hooks/agent`** (Gemini CLI, Codex, raw OpenTelemetry, or a generic
++shape) and the receiver normalizes them via `internal/agentevent` — aligned to
++the [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/)
++(`gen_ai.operation.name`, `gen_ai.tool.name`, …) — so `yagura_hook_stats` and
++`yagura_hook_timeline` work for that agent with the same vocabulary as Claude
++Code. The `yagura_agent_event` and `yagura_session_summary` tools expose the same
++normalization for programmatic use.
 +
 +## MCP tools (62 total)
  
  Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
  
-@@ -159,6 +197,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -159,6 +199,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  |---|---|---|
  | Inventory | `list`, `get`, `search`, `today`, `stats`, `register`, `unregister`, `update` | Manage the portfolio |
  | Security `[S]` | `vulns`, `scorecard`, `secretscan`, `sbom`, `gha_audit`, `pin_drift`, `ai_verify`, `test_audit`, `quality_check` | Computational sensors |
@@ -1080,7 +1099,7 @@ index 986f84e..85ee18c 100644
  | Harness `[G]` | `agents_md`, `feature_list`, `progress_file`, `init_sh`, `harness_recommend` | Generate handoff artifacts |
  | Self-audit `[G]` | `harness_coverage` | Fowler matrix self-check |
  | Alerts | `alert_fix`, `alert_resolve` | Lifecycle: active / resolved / snoozed |
-@@ -166,6 +206,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
+@@ -166,6 +208,8 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
  | Handoff | 8 tools | Plan / Run / Handoff for cross-session work |
  | Observability | `hook_timeline`, `hook_stats`, `agent_status`, `quota_report` | Claude Code activity |
  | Graph | 3 tools | Cross-project dependencies |
@@ -1089,7 +1108,7 @@ index 986f84e..85ee18c 100644
  
  Full reference: [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md).
  
-@@ -239,6 +281,8 @@ sha256sum -c SHA256SUMS
+@@ -239,6 +283,8 @@ sha256sum -c SHA256SUMS
  │   ├── MCP_TOOLS.md
  │   ├── WINDOWS.md
  │   ├── security-spec.md
@@ -4347,7 +4366,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..9b202c7 100644
+index bd1fe39..ade74b2 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -4501,7 +4520,18 @@ index bd1fe39..9b202c7 100644
  	results, err := audit.Verify(auditDir)
  	if err != nil {
  		return fmt.Errorf("verify: %w", err)
-@@ -610,15 +633,15 @@ func run() error {
+@@ -603,6 +626,10 @@ func run() error {
+ 	// observation mode: 全 event を JSONL persist、空 response で agent 継続
+ 	if hookReceiver != nil {
+ 		mux.HandleFunc("/hooks/claude-code", hookReceiver.Handle)
++		// v0.35: agent-agnostic alias. Any agent (Gemini CLI / Codex / OTel /
++		// generic) can POST its lifecycle events here; the receiver normalizes
++		// non-Claude-Code payloads via internal/agentevent.
++		mux.HandleFunc("/hooks/agent", hookReceiver.Handle)
+ 	}
+ 
+ 	// v0.31.0: MCP 2026 spec .well-known metadata endpoint
+@@ -610,15 +637,16 @@ func run() error {
  	// 接続前に server capabilities を発見可能にする
  	mux.HandleFunc("/.well-known/mcp", func(w http.ResponseWriter, _ *http.Request) {
  		meta := map[string]any{
@@ -4518,12 +4548,13 @@ index bd1fe39..9b202c7 100644
  				"hooks_claude_code": "/hooks/claude-code",
 -				"metrics":          "/metrics",
 -				"dashboard":        "/dashboard",
++				"hooks_agent":       "/hooks/agent",
 +				"metrics":           "/metrics",
 +				"dashboard":         "/dashboard",
  			},
  			"capabilities": map[string]any{
  				"tools":               len(mcpServer.ToolNames()),
-@@ -637,18 +660,18 @@ func run() error {
+@@ -637,18 +665,18 @@ func run() error {
  	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
  	// v0.12.0: per-route rate limiting で DoS / PAT 枯渇を防止
  	sbomLimiter := httplimit.New(httplimit.Options{
@@ -4548,7 +4579,7 @@ index bd1fe39..9b202c7 100644
  		KeyFn:           httplimit.TokenKey,
  	})
  	// 定期 GC で idle bucket を回収(メモリ leak 防止)
-@@ -761,8 +784,8 @@ type scannerMetricsAdapter struct {
+@@ -761,8 +789,8 @@ type scannerMetricsAdapter struct {
  	lastAt   *metrics.Gauge
  }
  
@@ -9094,6 +9125,150 @@ index 0000000..ad2196b
 +	}
 +	if r.SortsByAbsoluteScore || hasIssueContaining(r.Issues, "comparative judgment") {
 +		t.Errorf("'under_score' must not trigger absolute-score-sort: %v", r.Issues)
++	}
++}
+diff --git a/yagura-v0.35.0/internal/hookreceiver/receiver.go b/yagura-v0.35.0/internal/hookreceiver/receiver.go
+index 6fbb35f..bf5f220 100644
+--- a/yagura-v0.35.0/internal/hookreceiver/receiver.go
++++ b/yagura-v0.35.0/internal/hookreceiver/receiver.go
+@@ -38,6 +38,8 @@ import (
+ 	"strings"
+ 	"sync"
+ 	"time"
++
++	"github.com/shizukutanaka/yagura/internal/agentevent"
+ )
+ 
+ // Event は Claude Code が送ってくる hook event の正規化形式。
+@@ -280,6 +282,38 @@ func (r *Receiver) parseEvent(raw map[string]json.RawMessage) Event {
+ 	if v, ok := raw["duration_ms"]; ok {
+ 		_ = json.Unmarshal(v, &e.DurationMS)
+ 	}
++
++	// 非 Claude Code 形式(hook_event_name 無し)= Gemini CLI / Codex / OTel / 汎用
++	// エージェントのイベントは agentevent で正規化し、Claude Code 相当のフィールドへ写す。
++	// これで /hooks 取り込みがエージェント非依存になり、hook_stats / timeline がどの
++	// エージェントでも効く。既存の Claude Code payload(hook_event_name あり)は不変。
++	if e.HookEventName == "" {
++		generic := make(map[string]any, len(raw))
++		for k, v := range raw {
++			var a any
++			if json.Unmarshal(v, &a) == nil {
++				generic[k] = a
++			}
++		}
++		norm := agentevent.Normalize(generic)
++		e.HookEventName = hookNameFor(norm.Operation, norm.Phase)
++		if e.ToolName == "" {
++			e.ToolName = norm.Tool
++		}
++		if e.SessionID == "" {
++			e.SessionID = norm.Session
++		}
++		if e.AgentType == "" {
++			e.AgentType = norm.Agent
++		}
++		if e.DurationMS == 0 {
++			e.DurationMS = norm.DurationMs
++		}
++		if norm.Phase == agentevent.PhaseError {
++			e.IsError = true
++		}
++	}
++
+ 	// error 判定: PostToolUseFailure or tool_response.is_error true
+ 	if e.HookEventName == "PostToolUseFailure" {
+ 		e.IsError = true
+@@ -293,6 +327,33 @@ func (r *Receiver) parseEvent(raw map[string]json.RawMessage) Event {
+ 	return e
+ }
+ 
++// hookNameFor は agentevent の (operation, phase) を Claude Code 相当の
++// hook event 名へ写す。hook_stats の語彙を全エージェントで揃えるため。
++func hookNameFor(op, phase string) string {
++	switch op {
++	case agentevent.OpExecuteTool:
++		switch phase {
++		case agentevent.PhaseStart:
++			return "PreToolUse"
++		case agentevent.PhaseError:
++			return "PostToolUseFailure"
++		default:
++			return "PostToolUse"
++		}
++	case agentevent.OpInvokeAgent:
++		if phase == agentevent.PhaseStart {
++			return "SessionStart"
++		}
++		return "Stop"
++	case agentevent.OpChat:
++		return "Notification"
++	}
++	if op == "" {
++		return "Notification"
++	}
++	return op + ":" + phase
++}
++
+ // append は JSONL に 1 entry 追記する (atomic、O_APPEND)。
+ func (r *Receiver) append(e Event) error {
+ 	f, err := os.OpenFile(r.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+diff --git a/yagura-v0.35.0/internal/hookreceiver/receiver_test.go b/yagura-v0.35.0/internal/hookreceiver/receiver_test.go
+index b7aac6e..a98f68c 100644
+--- a/yagura-v0.35.0/internal/hookreceiver/receiver_test.go
++++ b/yagura-v0.35.0/internal/hookreceiver/receiver_test.go
+@@ -292,3 +292,53 @@ func TestAllStats(t *testing.T) {
+ // helper imports
+ var _ = io.EOF
+ var _ = json.NewEncoder
++
++// foreign-agent events (no hook_event_name) are normalized via agentevent and
++// recorded with Claude-Code-equivalent vocabulary, so hook_stats works for any agent.
++func TestHandle_ForeignAgentNormalized(t *testing.T) {
++	r, _ := newRcv(t)
++	post := func(payload string) {
++		req := httptest.NewRequest("POST", "/hooks/agent", strings.NewReader(payload))
++		w := httptest.NewRecorder()
++		r.Handle(w, req)
++		if w.Code != http.StatusOK {
++			t.Fatalf("status %d: %s", w.Code, w.Body.String())
++		}
++	}
++	// Gemini CLI style: beforeToolCall → PreToolUse
++	post(`{"agent":"gemini_cli","event":"beforeToolCall","tool":"Bash","cwd":"/home/m/breeze/src","session":"g1"}`)
++	// Codex style failure: toolResult + status failure → PostToolUseFailure
++	post(`{"agent":"codex","type":"toolResult","tool":"Bash","cwd":"/home/m/breeze/src","status":"failure"}`)
++
++	st := r.ProjectStats("breeze")
++	if st.Total != 2 {
++		t.Fatalf("expected 2 events, got %d (%+v)", st.Total, st)
++	}
++	if st.ByEvent["PreToolUse"] != 1 || st.ByEvent["PostToolUseFailure"] != 1 {
++		t.Errorf("event vocabulary not normalized: %+v", st.ByEvent)
++	}
++	if st.ByTool["Bash"] != 2 {
++		t.Errorf("tool not recorded across agents: %+v", st.ByTool)
++	}
++	if st.ErrorCount != 1 {
++		t.Errorf("foreign-agent error not counted: %+v", st)
++	}
++}
++
++// hookNameFor maps canonical operation/phase to Claude-Code-equivalent names.
++func TestHookNameFor(t *testing.T) {
++	cases := []struct{ op, phase, want string }{
++		{"execute_tool", "start", "PreToolUse"},
++		{"execute_tool", "end", "PostToolUse"},
++		{"execute_tool", "error", "PostToolUseFailure"},
++		{"invoke_agent", "start", "SessionStart"},
++		{"invoke_agent", "end", "Stop"},
++		{"chat", "end", "Notification"},
++		{"", "end", "Notification"},
++	}
++	for _, c := range cases {
++		if got := hookNameFor(c.op, c.phase); got != c.want {
++			t.Errorf("hookNameFor(%q,%q)=%q want %q", c.op, c.phase, got, c.want)
++		}
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/injectscan/injectscan.go b/yagura-v0.35.0/internal/injectscan/injectscan.go
