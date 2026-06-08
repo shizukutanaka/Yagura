@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..b9ddddc 100644
+index 9b29eec..d37b467 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,899 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,916 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1205,6 +1205,23 @@ index 9b29eec..b9ddddc 100644
 +  persistence 未有効なら no-op。テスト追加(memory cap 超過で disk に残った 3 件を TTL 経過後
 +  の mid-run prune で全回収 / 未有効は no-op)。test/内部のみ(tool 62 / package 50 不変)、
 +  ADR-0001 維持、`-race` green。
++- **gha_audit: 同種 OSS(zizmor)とのパリティで supply-chain 検査を 7→9 に拡張**
++  (`internal/ghaaudit`)。GitHub Actions セキュリティスキャナの比較調査
++  (zizmor の audit 一覧 / arXiv 2601.14455 "Unpacking Security Scanners for GitHub
++  Actions Workflows" / GitHub Secure-use docs)を行い、yagura が未検出だった 2 つの
++  well-known パターンを追加:
++  - **`secrets-inherit`(HIGH)**: reusable workflow を `secrets: inherit` で呼ぶと caller の
++    全 secret が callee に渡り、必要範囲を大きく超える(zizmor: secrets-inherit /
++    overprovisioned-secrets)。明示的な per-secret 渡しは flag しない。
++  - **`self-hosted-runner`(MEDIUM)**: `runs-on:` の self-hosted runner 利用(zizmor:
++    self-hosted-runner)。隔離が難しく public repo / fork-PR トリガで危険。inline scalar /
++    flow-list 形式を検出(GitHub-hosted は flag しない)。
++  どちらも line-based 正規表現で zero-dep・低 false-positive、yagura の既存 caveman ルール
++  様式に一致。tool description を「7 → 9 supply-chain risk patterns」に更新、MCP_TOOLS.md 再生成。
++  yagura 自身の workflows は新ルールで増えない(publish-gate 不変、既知 SLSA 例外 1 件のみ)。
++  テスト追加(secrets-inherit 検出 + explicit は clean / self-hosted scalar・list 検出 +
++  ubuntu-latest は clean)。外部依存ゼロ、新規 tool/package なし(tool 62 / package 50 不変)、
++  ADR-0001 維持、`-race` green。
 +
 +### What's not yet
 +
@@ -1223,7 +1240,7 @@ index 9b29eec..b9ddddc 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8577,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8594,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -5863,7 +5880,7 @@ index 0000000..3bf6dd6
 +	}
 +}
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..2d5ee7c 100644
+index 689c182..46634e3 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
@@ -6168,6 +6185,15 @@ index 689c182..2d5ee7c 100644
  ## Observability
  
  ### `yagura_agent_status`
+@@ -495,7 +720,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ 
+ ### `yagura_gha_audit`
+ 
+-[G] GHA workflow audit: 7 supply-chain risk patterns.
++[G] GHA workflow audit: 9 supply-chain risk patterns.
+ 
+ **Arguments:**
+ 
 @@ -541,6 +766,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  | Name | Required | Description |
@@ -9789,6 +9815,186 @@ index 706e5a5..aad82bf 100644
 +	c := New(10, time.Hour) // persistence not enabled
 +	c.PruneExpiredDisk()    // must not panic
 +}
+diff --git a/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go b/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go
+index 905ac4e..9fce93f 100644
+--- a/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go
++++ b/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go
+@@ -170,6 +170,32 @@ func (a *Auditor) AuditFile(filePath, content string) []Finding {
+ 				Suggestion:  "Pass only the specific secrets needed: env: TOKEN: ${{ secrets.MY_TOKEN }}.",
+ 			})
+ 		}
++
++		// R8 secrets-inherit: reusable workflow を 'secrets: inherit' で呼ぶ(zizmor parity)
++		if reSecretsInherit.MatchString(raw) {
++			findings = append(findings, Finding{
++				RuleID:      "secrets-inherit",
++				Description: "Reusable workflow called with 'secrets: inherit' — passes every caller secret, far beyond what the callee needs",
++				Severity:    SeverityHigh,
++				File:        filePath,
++				Line:        lineNum,
++				Snippet:     stripped,
++				Suggestion:  "Pass only the needed secrets explicitly under 'secrets:' (e.g. TOKEN: ${{ secrets.TOKEN }}).",
++			})
++		}
++
++		// R9 self-hosted-runner: self-hosted runner の利用(zizmor parity)
++		if reSelfHosted.MatchString(raw) {
++			findings = append(findings, Finding{
++				RuleID:      "self-hosted-runner",
++				Description: "Job runs on a self-hosted runner (hard to isolate; risky on public repos or with fork-PR triggers)",
++				Severity:    SeverityMedium,
++				File:        filePath,
++				Line:        lineNum,
++				Snippet:     stripped,
++				Suggestion:  "Prefer GitHub-hosted runners; if self-hosted is required, keep the repo private and avoid pull_request triggers.",
++			})
++		}
+ 	}
+ 
+ 	// R3 no-permissions: workflow に top-level permissions: 無し
+@@ -214,6 +240,14 @@ var (
+ 
+ 	// `${{ toJson(secrets) }}` or `${{ secrets.*\.\* }}` 全 secret 渡し
+ 	reToJsonSecrets = regexp.MustCompile(`\$\{\{\s*toJson\(\s*secrets\s*\)\s*\}\}`)
++
++	// `secrets: inherit` — reusable workflow 呼出で caller の全 secret を渡す
++	// (zizmor: secrets-inherit / overprovisioned-secrets。blast radius が過大)
++	reSecretsInherit = regexp.MustCompile(`^\s*secrets:\s*inherit\s*$`)
++
++	// `runs-on: ... self-hosted ...` — self-hosted runner(zizmor: self-hosted-runner。
++	// 隔離が難しく public repo / fork-PR では危険)。inline 形式(scalar / flow list)を検出。
++	reSelfHosted = regexp.MustCompile(`^\s*runs-on:\s*.*\bself-hosted\b`)
+ )
+ 
+ // reTriggerKey は trigger 名を YAML key として検出する正規表現を返す。
+diff --git a/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go b/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go
+index 29b7cb7..93c3ff6 100644
+--- a/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go
++++ b/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go
+@@ -36,12 +36,12 @@ func TestClassifyRef(t *testing.T) {
+ 
+ func TestExtractRef(t *testing.T) {
+ 	cases := map[string]string{
+-		"actions/checkout@v4":                              "v4",
+-		"actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683": "11bd71901bbe5b1630ceea73d27597364c9af683",
++		"actions/checkout@v4": "v4",
++		"actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683":           "11bd71901bbe5b1630ceea73d27597364c9af683",
+ 		"slsa-framework/slsa-github-generator/.github/workflows/x.yml@v2.0.0": "v2.0.0",
+-		"no-at-sign":   "",
+-		"trailing@":    "",
+-		"":             "",
++		"no-at-sign": "",
++		"trailing@":  "",
++		"":           "",
+ 	}
+ 	for in, want := range cases {
+ 		if got := extractRef(in); got != want {
+@@ -410,13 +410,13 @@ func TestSortFindings_SeverityDesc(t *testing.T) {
+ 
+ func TestIndentOf(t *testing.T) {
+ 	cases := map[string]int{
+-		"":          0,
+-		"foo":       0,
+-		"  foo":     2,
+-		"    foo":   4,
+-		"\tfoo":     4, // tab = 4 spaces
+-		"\t  foo":   6,
+-		"      ":    6,
++		"":        0,
++		"foo":     0,
++		"  foo":   2,
++		"    foo": 4,
++		"\tfoo":   4, // tab = 4 spaces
++		"\t  foo": 6,
++		"      ":  6,
+ 	}
+ 	for in, want := range cases {
+ 		if got := indentOf(in); got != want {
+@@ -429,12 +429,12 @@ func TestIndentOf(t *testing.T) {
+ 
+ func TestInRunBlock_VariousPositions(t *testing.T) {
+ 	lines := []string{
+-		"jobs:",        // 1
+-		"  build:",     // 2
+-		"    steps:",   // 3
+-		"      - run: |", // 4 (run: 開始)
+-		"          echo hello",  // 5 (in run)
+-		"          echo world",  // 6 (in run)
++		"jobs:",                             // 1
++		"  build:",                          // 2
++		"    steps:",                        // 3
++		"      - run: |",                    // 4 (run: 開始)
++		"          echo hello",              // 5 (in run)
++		"          echo world",              // 6 (in run)
+ 		"      - uses: actions/checkout@v4", // 7 (not in run)
+ 	}
+ 	if !inRunBlock(lines, 5) {
+@@ -474,10 +474,10 @@ jobs:
+ func TestReTriggerKey_Match(t *testing.T) {
+ 	re := reTriggerKey("pull_request_target")
+ 	cases := map[string]bool{
+-		"  pull_request_target:":         true,
+-		"  pull_request_target: ":        true,
+-		"pull_request_target:":           true,
+-		"# pull_request_target:":         false,
++		"  pull_request_target:":          true,
++		"  pull_request_target: ":         true,
++		"pull_request_target:":            true,
++		"# pull_request_target:":          false,
+ 		"other_event_pull_request_target": false,
+ 	}
+ 	for in, want := range cases {
+@@ -498,3 +498,50 @@ func TestAuditFile_LargeInput_DoesNotCrash(t *testing.T) {
+ 		t.Errorf("large clean input flagged %d findings", len(findings))
+ 	}
+ }
++
++// ─── R8 secrets-inherit / R9 self-hosted-runner (zizmor parity) ──
++
++func TestAuditFile_SecretsInherit(t *testing.T) {
++	wf := "on: workflow_call\npermissions: {}\njobs:\n  call:\n    uses: ./.github/workflows/reusable.yml\n    secrets: inherit\n"
++	findings := New().AuditFile("caller.yml", wf)
++	if !hasRule(findings, "secrets-inherit") {
++		t.Errorf("expected secrets-inherit finding, got %+v", findings)
++	}
++}
++
++func TestAuditFile_SecretsInherit_ExplicitIsClean(t *testing.T) {
++	// passing secrets explicitly must NOT trip secrets-inherit
++	wf := "on: workflow_call\npermissions: {}\njobs:\n  call:\n    uses: ./.github/workflows/reusable.yml\n    secrets:\n      TOKEN: ${{ secrets.TOKEN }}\n"
++	if hasRule(New().AuditFile("caller.yml", wf), "secrets-inherit") {
++		t.Error("explicit per-secret passing should not be flagged")
++	}
++}
++
++func TestAuditFile_SelfHostedRunner(t *testing.T) {
++	for _, line := range []string{
++		"    runs-on: self-hosted",
++		"    runs-on: [self-hosted, linux, x64]",
++	} {
++		wf := "on: [push]\npermissions: {}\njobs:\n  b:\n" + line + "\n    steps:\n      - run: echo hi\n"
++		findings := New().AuditFile("w.yml", wf)
++		if !hasRule(findings, "self-hosted-runner") {
++			t.Errorf("expected self-hosted-runner finding for %q, got %+v", line, findings)
++		}
++	}
++}
++
++func TestAuditFile_GitHubHostedRunnerIsClean(t *testing.T) {
++	wf := "on: [push]\npermissions: {}\njobs:\n  b:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n"
++	if hasRule(New().AuditFile("w.yml", wf), "self-hosted-runner") {
++		t.Error("ubuntu-latest must not be flagged as self-hosted")
++	}
++}
++
++func hasRule(findings []Finding, ruleID string) bool {
++	for _, f := range findings {
++		if f.RuleID == ruleID {
++			return true
++		}
++	}
++	return false
++}
 diff --git a/yagura-v0.35.0/internal/harness/agentconfig_audit.go b/yagura-v0.35.0/internal/harness/agentconfig_audit.go
 new file mode 100644
 index 0000000..76510e6
@@ -12432,7 +12638,7 @@ index 1549179..0a1b2c2 100644
  		t.Errorf("expected at least %d tools, got %d: %v", minExpectedTools, len(names), names)
  	}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..8217469 100644
+index 939a67e..b302bb7 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
 @@ -11,25 +11,20 @@ import (
@@ -12619,8 +12825,9 @@ index 939a67e..8217469 100644
  func buildGhaAuditTool(d Deps) *Tool {
  	return &Tool{
 -		Name: "yagura_gha_audit",
+-		Description: "[G] GHA workflow audit: 7 supply-chain risk patterns.",
 +		Name:        "yagura_gha_audit",
- 		Description: "[G] GHA workflow audit: 7 supply-chain risk patterns.",
++		Description: "[G] GHA workflow audit: 9 supply-chain risk patterns.",
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
