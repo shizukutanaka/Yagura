@@ -319,10 +319,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..f8bfbad 100644
+index 9b29eec..dc15b5c 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,653 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,670 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -958,6 +958,23 @@ index 9b29eec..f8bfbad 100644
 +  (`collectYaguraMetrics` が Claude Code + Gemini の Bash を tool="Bash"} 2 に集計、project/tool ラベル
 +  検証)。live dogfood: `/metrics` に `yagura_hook_tool_calls_total{project="breeze",tool="Bash"} 1` /
 +  `tool="Read"} 1`。
++- **`yagura_quality_check`: プロジェクト固有 lint ルールの読み込み(`custom_rules`)**
++  (`internal/qualitycheck`)。Roadmap #4「Custom rule loading」の最初の実用化。これまで
++  quality_check の lint ルールはビルトイン固定(`as any` / `ts-ignore` / TODO …)で、
++  プロジェクト固有の「逸脱を物理的に潰す」ルール(例:`console.log` 禁止、社内 deprecated
++  API)を足すには再コンパイルが必要だった。新たに `custom_rules` パラメータを追加し、
++  `[{id, pattern(regex), severity(prohibited|warning|info), languages?, description?,
++  suggestion?}]` を実行時に渡せるようにした。ビルトインルールに **append** されるので
++  既存の検出はそのまま効く。`Rule.pattern` は unexported なので、外部仕様 `RuleSpec` を
++  `CompileRules` で検証・コンパイルする間接化を採用:id/pattern 必須、severity 未指定は
++  warning(不正値はエラー)、languages 未指定は `["any"]`、pattern は Go regexp(RE2=
++  線形時間、ReDoS 無し)で Compile し不正 regex はエラー、pattern 長は 1000 まで、入力
++  1 回あたり 200 ルールまで(暴走防止)。入力順を保つ決定論的コンパイル。live dogfood:
++  `console.log(1); const x = y as any;` に custom `no-console-log`(prohibited)を渡すと
++  `by_rule:{no-console-log:1, ts-as-any:1}` / `has_prohibited:true`、不正 regex は
++  `invalid_input` エラー。外部依存ゼロ、新規 tool/package なし(tool 62 / package 50
++  不変)、ADR-0001 維持。テスト追加(`CompileRules` の valid/default/順序保持/各種エラー/
++  空入力/カスタムルール検出、tool 経由の custom+builtin 併用/不正 regex 拒否/200 超拒否)。
 +
 +### What's not yet
 +
@@ -4812,7 +4829,7 @@ index 0000000..fccaa9c
 +	}
 +}
 diff --git a/yagura-v0.35.0/docs/MCP_TOOLS.md b/yagura-v0.35.0/docs/MCP_TOOLS.md
-index 689c182..7fee93f 100644
+index 689c182..2d5ee7c 100644
 --- a/yagura-v0.35.0/docs/MCP_TOOLS.md
 +++ b/yagura-v0.35.0/docs/MCP_TOOLS.md
 @@ -1,6 +1,6 @@
@@ -5117,7 +5134,15 @@ index 689c182..7fee93f 100644
  ## Observability
  
  ### `yagura_agent_status`
-@@ -576,7 +801,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+@@ -541,6 +766,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
+ 
+ | Name | Required | Description |
+ |---|---|---|
++| `custom_rules` (array) |  | project-specific lint rules: [{id, pattern(regex), severity(prohibited|warning|info), languages?, description?, suggestion?}] |
+ | `files` (object) |  |  |
+ | `language` (string) |  |  |
+ | `summary_only` (boolean) |  |  |
+@@ -576,7 +802,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
  
  ### `yagura_secretscan`
  
@@ -9942,7 +9967,7 @@ index 1549179..0a1b2c2 100644
  		t.Errorf("expected at least %d tools, got %d: %v", minExpectedTools, len(names), names)
  	}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..d949ad9 100644
+index 939a67e..d6258ef 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
 @@ -11,25 +11,20 @@ import (
@@ -10186,7 +10211,7 @@ index 939a67e..d949ad9 100644
  // Inspired by cortex (aircloset, 辻 2026/05) "Product Graph" 構想:
  // portfolio の depends_on を semantic graph として AI から探索可能にする。
  
-@@ -658,14 +687,14 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
+@@ -658,23 +687,25 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
  
  func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
  	return &Tool{
@@ -10203,9 +10228,42 @@ index 939a67e..d949ad9 100644
 +				"text":         map[string]any{"type": "string"},
 +				"language":     map[string]any{"type": "string"},
  				"summary_only": map[string]any{"type": "boolean"},
++				"custom_rules": map[string]any{"type": "array", "description": "project-specific lint rules: [{id, pattern(regex), severity(prohibited|warning|info), languages?, description?, suggestion?}]"},
  			},
  		},
-@@ -709,13 +738,13 @@ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
+ 		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+ 			var in struct {
+-				Files       map[string]string `json:"files"`
+-				Text        string            `json:"text"`
+-				Language    string            `json:"language"`
+-				SummaryOnly bool              `json:"summary_only"`
++				Files       map[string]string       `json:"files"`
++				Text        string                  `json:"text"`
++				Language    string                  `json:"language"`
++				SummaryOnly bool                    `json:"summary_only"`
++				CustomRules []qualitycheck.RuleSpec `json:"custom_rules"`
+ 			}
+ 			if err := json.Unmarshal(args, &in); err != nil {
+ 				return nil, &ToolError{Code: "invalid_input", Cause: err}
+@@ -683,7 +714,17 @@ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
+ 				return nil, &ToolError{Code: "invalid_input",
+ 					Message: "either 'files' or 'text' is required"}
+ 			}
++			if len(in.CustomRules) > 200 {
++				return nil, &ToolError{Code: "invalid_input", Message: "too many custom_rules (max 200)"}
++			}
+ 			rules := qualitycheck.DefaultRules()
++			if len(in.CustomRules) > 0 {
++				custom, err := qualitycheck.CompileRules(in.CustomRules)
++				if err != nil {
++					return nil, &ToolError{Code: "invalid_input", Message: err.Error()}
++				}
++				rules = append(rules, custom...)
++			}
+ 
+ 			if in.Text != "" {
+ 				findings := qualitycheck.ScanText("<input>", in.Text, in.Language, rules)
+@@ -709,13 +750,13 @@ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
  // formatQualityResult is MCP-friendly output formatter.
  func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
  	out := map[string]any{
@@ -10226,7 +10284,7 @@ index 939a67e..d949ad9 100644
  	}
  	if !summaryOnly {
  		out["findings"] = res.Findings
-@@ -730,7 +759,7 @@ func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
+@@ -730,7 +771,7 @@ func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
  
  func buildHarnessRecommendTool(d Deps) *Tool {
  	return &Tool{
@@ -10235,7 +10293,7 @@ index 939a67e..d949ad9 100644
  		Description: "[G] Claude Code .claude/ scaffold by slug or language.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -765,8 +794,8 @@ func buildHarnessRecommendTool(d Deps) *Tool {
+@@ -765,8 +806,8 @@ func buildHarnessRecommendTool(d Deps) *Tool {
  
  func buildSkillAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -10246,7 +10304,7 @@ index 939a67e..d949ad9 100644
  		InputSchema: map[string]any{
  			"type": "object",
  			"properties": map[string]any{
-@@ -791,7 +820,7 @@ func buildSkillAuditTool(d Deps) *Tool {
+@@ -791,7 +832,7 @@ func buildSkillAuditTool(d Deps) *Tool {
  
  func buildSubagentAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -10255,7 +10313,7 @@ index 939a67e..d949ad9 100644
  		Description: "[G] Subagent .md audit: prompt style, tools, description.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -822,7 +851,7 @@ func buildSubagentAuditTool(d Deps) *Tool {
+@@ -822,7 +863,7 @@ func buildSubagentAuditTool(d Deps) *Tool {
  
  func buildToolsCatalogTool(s *Server) *Tool {
  	return &Tool{
@@ -10264,7 +10322,7 @@ index 939a67e..d949ad9 100644
  		Description: "[G] Full tool details lookup. Use when compact mode hides info you need.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -885,7 +914,7 @@ func buildToolsCatalogTool(s *Server) *Tool {
+@@ -885,7 +926,7 @@ func buildToolsCatalogTool(s *Server) *Tool {
  
  func buildDedupeStatsTool(s *Server) *Tool {
  	return &Tool{
@@ -10273,7 +10331,7 @@ index 939a67e..d949ad9 100644
  		Description: "[S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -905,7 +934,7 @@ func buildDedupeStatsTool(s *Server) *Tool {
+@@ -905,7 +946,7 @@ func buildDedupeStatsTool(s *Server) *Tool {
  
  func buildPlanStatusTool(d Deps, cache plantracker.CacheLike) *Tool {
  	return &Tool{
@@ -10282,7 +10340,7 @@ index 939a67e..d949ad9 100644
  		Description: "[G] Plan.md progress for project. Parses checkboxes + required sections (目的/スコープ/フェーズ/DoD).",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -968,7 +997,7 @@ func loadPlanMd(localPath string) (string, string, error) {
+@@ -968,7 +1009,7 @@ func loadPlanMd(localPath string) (string, string, error) {
  
  func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
  	return &Tool{
@@ -10291,7 +10349,7 @@ index 939a67e..d949ad9 100644
  		Description: "[S] Cross-project release readiness ranking. Aggregates Plan/CI/issues/quality/AI-risk.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1123,7 +1152,7 @@ func pickReason(plan plantracker.PlanState, ciStatus string, openCrit int,
+@@ -1123,7 +1164,7 @@ func pickReason(plan plantracker.PlanState, ciStatus string, openCrit int,
  
  func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
  	return &Tool{
@@ -10300,7 +10358,7 @@ index 939a67e..d949ad9 100644
  		Description: "[G] AI code risk audit. 6 categories: auth/billing/data/external/crypto/secret. 2x multiplier inside AI-marker zones.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1222,7 +1251,7 @@ func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
+@@ -1222,7 +1263,7 @@ func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
  
  func buildTestAuditTool(d Deps) *Tool {
  	return &Tool{
@@ -10309,7 +10367,7 @@ index 939a67e..d949ad9 100644
  		Description: "[G] Source-test coverage detection. Go/TS/JS/Python/Rust/Java filename + Rust inline #[cfg(test)] + Python doctest.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1267,7 +1296,7 @@ func buildTestAuditTool(d Deps) *Tool {
+@@ -1267,7 +1308,7 @@ func buildTestAuditTool(d Deps) *Tool {
  
  func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Store) *Tool {
  	return &Tool{
@@ -10318,7 +10376,7 @@ index 939a67e..d949ad9 100644
  		Description: "[S] Aggregate health signals across portfolio. Returns actionable alerts with suggested_tool + args.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1425,15 +1454,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
+@@ -1425,15 +1466,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
  
  func buildAlertResolveTool(store *alertfix.Store) *Tool {
  	return &Tool{
@@ -10339,7 +10397,7 @@ index 939a67e..d949ad9 100644
  			},
  			"required": []string{"alert_id", "action"},
  		},
-@@ -1475,9 +1504,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+@@ -1475,9 +1516,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
  			}
  			st, _ := store.Get(in.AlertID)
  			return map[string]any{
@@ -10352,7 +10410,7 @@ index 939a67e..d949ad9 100644
  				"lifecycle_stats": store.Stats(),
  			}, nil
  		},
-@@ -1492,14 +1521,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+@@ -1492,14 +1533,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
  
  func buildAgentsMdTool(d Deps) *Tool {
  	return &Tool{
@@ -10370,7 +10428,7 @@ index 939a67e..d949ad9 100644
  			},
  			"required": []string{"slug"},
  		},
-@@ -1578,7 +1607,7 @@ func buildAgentsMdTool(d Deps) *Tool {
+@@ -1578,7 +1619,7 @@ func buildAgentsMdTool(d Deps) *Tool {
  
  func buildFeatureListTool(d Deps) *Tool {
  	return &Tool{
@@ -10379,7 +10437,7 @@ index 939a67e..d949ad9 100644
  		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1643,7 +1672,7 @@ func buildFeatureListTool(d Deps) *Tool {
+@@ -1643,7 +1684,7 @@ func buildFeatureListTool(d Deps) *Tool {
  
  func buildHarnessCoverageTool(d Deps) *Tool {
  	return &Tool{
@@ -10388,7 +10446,7 @@ index 939a67e..d949ad9 100644
  		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -1687,11 +1716,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
+@@ -1687,11 +1728,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
  				}
  			}
  			return map[string]any{
@@ -11470,6 +11528,94 @@ index 0000000..ca48954
 +	tool := buildPathPolicyTool(Deps{})
 +	if _, err := tool.Handler(context.Background(), json.RawMessage(`{`)); err == nil {
 +		t.Error("expected error for malformed JSON")
++	}
++}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_qualitycheck_test.go b/yagura-v0.35.0/internal/mcp/tools_qualitycheck_test.go
+new file mode 100644
+index 0000000..fe29561
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_qualitycheck_test.go
+@@ -0,0 +1,82 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/qualitycheck"
++)
++
++// ─── yagura_quality_check: custom_rules (v0.35) ──────────────
++
++func TestQualityCheck_CustomRuleFlagsPattern(t *testing.T) {
++	d := newDeps(t)
++	tool := buildQualityCheckTool(d, nil)
++	r := mustCall(t, tool, map[string]any{
++		"text":     `console.log("debug");`,
++		"language": "ts",
++		"custom_rules": []qualitycheck.RuleSpec{{
++			ID:       "no-console-log",
++			Pattern:  `console\.log`,
++			Severity: qualitycheck.SevProhibited,
++		}},
++	}).(map[string]any)
++
++	byRule := r["by_rule"].(map[string]int)
++	if byRule["no-console-log"] != 1 {
++		t.Errorf("custom rule should flag 1 console.log, got %d (by_rule=%v)", byRule["no-console-log"], byRule)
++	}
++	if !r["has_prohibited"].(bool) {
++		t.Error("expected has_prohibited=true for a prohibited custom rule")
++	}
++}
++
++func TestQualityCheck_DefaultRulesStillApplyWithCustom(t *testing.T) {
++	d := newDeps(t)
++	tool := buildQualityCheckTool(d, nil)
++	r := mustCall(t, tool, map[string]any{
++		"text":     "const x = y as any; // TODO\nconsole.log(1);",
++		"language": "ts",
++		"custom_rules": []qualitycheck.RuleSpec{{
++			ID:      "no-console-log",
++			Pattern: `console\.log`,
++		}},
++	}).(map[string]any)
++
++	byRule := r["by_rule"].(map[string]int)
++	// built-in ts-as-any + todo must still fire alongside the custom rule
++	if byRule["ts-as-any"] != 1 || byRule["todo"] != 1 || byRule["no-console-log"] != 1 {
++		t.Errorf("expected built-in and custom rules together, got %v", byRule)
++	}
++}
++
++func TestQualityCheck_InvalidCustomRuleRejected(t *testing.T) {
++	d := newDeps(t)
++	tool := buildQualityCheckTool(d, nil)
++	b, _ := json.Marshal(map[string]any{
++		"text": "x",
++		"custom_rules": []qualitycheck.RuleSpec{{
++			ID:      "bad",
++			Pattern: `[unclosed`,
++		}},
++	})
++	_, err := tool.Handler(context.Background(), b)
++	if !IsCode(err, "invalid_input") {
++		t.Errorf("expected invalid_input error for bad regex, got %v", err)
++	}
++}
++
++func TestQualityCheck_TooManyCustomRulesRejected(t *testing.T) {
++	d := newDeps(t)
++	tool := buildQualityCheckTool(d, nil)
++	specs := make([]qualitycheck.RuleSpec, 201)
++	for i := range specs {
++		specs[i] = qualitycheck.RuleSpec{ID: "r", Pattern: "x"}
++	}
++	b, _ := json.Marshal(map[string]any{"text": "x", "custom_rules": specs})
++	_, err := tool.Handler(context.Background(), b)
++	if !IsCode(err, "invalid_input") {
++		t.Errorf("expected invalid_input for >200 custom_rules, got %v", err)
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_recovery.go b/yagura-v0.35.0/internal/mcp/tools_recovery.go
@@ -13684,6 +13830,256 @@ index 0000000..2bd70b4
 +	}
 +	if got != 1 {
 +		t.Errorf("expected 1 private-ip (CIDRs skipped), got %d: %+v", got, fs)
++	}
++}
+diff --git a/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go b/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go
+index b9f7ab6..5818067 100644
+--- a/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go
++++ b/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go
+@@ -1,13 +1,14 @@
+ // Package qualitycheck は「逸脱を物理的に潰す」品質ゲートを実装する。
+ //
+ // 動機 (v0.19.0, cortex/aircloset 2026/05 翻訳):
+-//   cortex の harness の中心は「コードの正しさを 100% 担保する」ことで、
+-//   その手段が「`as any` / TODO / `eslint-disable` を 0 件強制」。これにより
+-//   AI が間違ったコードを書いても merge されない設計が成立している。
+ //
+-//   yagura は portfolio 23+ プロジェクトを対象に同等の検査を提供する。
+-//   各プロジェクトの CI 内で `yagura_quality_check` を呼び出して 0 件強制すれば、
+-//   m の sovereign computing stack 全体が同じ品質ゲートで保護される。
++//	cortex の harness の中心は「コードの正しさを 100% 担保する」ことで、
++//	その手段が「`as any` / TODO / `eslint-disable` を 0 件強制」。これにより
++//	AI が間違ったコードを書いても merge されない設計が成立している。
++//
++//	yagura は portfolio 23+ プロジェクトを対象に同等の検査を提供する。
++//	各プロジェクトの CI 内で `yagura_quality_check` を呼び出して 0 件強制すれば、
++//	m の sovereign computing stack 全体が同じ品質ゲートで保護される。
+ //
+ // 設計判断:
+ //   - ゼロ依存 (ADR-0001, regex のみ stdlib)
+@@ -61,19 +62,19 @@ type Finding struct {
+ 	File        string   `json:"file"`
+ 	Line        int      `json:"line"`
+ 	Column      int      `json:"column"`
+-	Excerpt     string   `json:"excerpt"`     // 該当 line の trimmed snippet (最大 120 char)
++	Excerpt     string   `json:"excerpt"` // 該当 line の trimmed snippet (最大 120 char)
+ 	Description string   `json:"description"`
+ 	Suggestion  string   `json:"suggestion,omitempty"`
+ }
+ 
+ // Result はファイル全体スキャンの集計。
+ type Result struct {
+-	FilesScanned int                `json:"files_scanned"`
+-	TotalLines   int                `json:"total_lines"`
+-	Findings     []Finding          `json:"findings"`
+-	BySeverity   map[Severity]int   `json:"by_severity"`
+-	ByRule       map[string]int     `json:"by_rule"`
+-	ByFile       map[string]int     `json:"by_file,omitempty"`
++	FilesScanned int              `json:"files_scanned"`
++	TotalLines   int              `json:"total_lines"`
++	Findings     []Finding        `json:"findings"`
++	BySeverity   map[Severity]int `json:"by_severity"`
++	ByRule       map[string]int   `json:"by_rule"`
++	ByFile       map[string]int   `json:"by_file,omitempty"`
+ 	// v0.23.0: cache 統計(ScanFilesCached 使用時のみ非ゼロ)
+ 	CacheHits   int `json:"cache_hits,omitempty"`
+ 	CacheMisses int `json:"cache_misses,omitempty"`
+@@ -225,13 +226,73 @@ func buildDefaultRules() []Rule {
+ 	return rules
+ }
+ 
++// RuleSpec はユーザ定義 lint ルールの外部仕様(JSON 可)。Rule.pattern は unexported なので、
++// 外部からは pattern を文字列で渡し CompileRules でコンパイルする。プロジェクト固有の
++// 「逸脱を物理的に潰す」ルール(例: console.log 禁止)を再コンパイルなしで足せる。
++type RuleSpec struct {
++	ID          string   `json:"id"`
++	Pattern     string   `json:"pattern"`
++	Severity    Severity `json:"severity"`
++	Languages   []string `json:"languages,omitempty"`
++	Description string   `json:"description,omitempty"`
++	Suggestion  string   `json:"suggestion,omitempty"`
++}
++
++const maxPatternLen = 1000
++
++// CompileRules は RuleSpec 群を Rule へコンパイルする。決定論的(入力順を保つ)。
++//   - id / pattern は必須。空ならエラー。
++//   - severity 未指定は warning。不正値はエラー。
++//   - languages 未指定は ["any"]。
++//   - pattern は Go の regexp(RE2、線形時間=ReDoS なし)で Compile。不正 regex はエラー。
++//   - pattern 長は maxPatternLen まで(暴走防止)。
++func CompileRules(specs []RuleSpec) ([]Rule, error) {
++	out := make([]Rule, 0, len(specs))
++	for i, s := range specs {
++		if strings.TrimSpace(s.ID) == "" {
++			return nil, fmt.Errorf("custom rule #%d: id is required", i)
++		}
++		if strings.TrimSpace(s.Pattern) == "" {
++			return nil, fmt.Errorf("custom rule %q: pattern is required", s.ID)
++		}
++		if len(s.Pattern) > maxPatternLen {
++			return nil, fmt.Errorf("custom rule %q: pattern too long (>%d)", s.ID, maxPatternLen)
++		}
++		sev := s.Severity
++		if sev == "" {
++			sev = SevWarning
++		}
++		if sev != SevProhibited && sev != SevWarning && sev != SevInfo {
++			return nil, fmt.Errorf("custom rule %q: invalid severity %q (prohibited/warning/info)", s.ID, sev)
++		}
++		re, err := regexp.Compile(s.Pattern)
++		if err != nil {
++			return nil, fmt.Errorf("custom rule %q: invalid pattern: %w", s.ID, err)
++		}
++		langs := s.Languages
++		if len(langs) == 0 {
++			langs = []string{"any"}
++		}
++		out = append(out, Rule{
++			ID:          s.ID,
++			Severity:    sev,
++			Languages:   langs,
++			Description: s.Description,
++			Suggestion:  s.Suggestion,
++			pattern:     re,
++		})
++	}
++	return out, nil
++}
++
+ // ScanText は 1 つのコンテンツに対してルールを適用する。
+ //
+ // 引数:
+-//   path     — 結果に含める file 名(空でも可、表示用)
+-//   content  — スキャン対象テキスト
+-//   language — 言語ヒント("ts" "go" "py" "any" 等)。"" / "any" なら言語非依存ルールのみ
+-//   rules    — 適用するルール
++//
++//	path     — 結果に含める file 名(空でも可、表示用)
++//	content  — スキャン対象テキスト
++//	language — 言語ヒント("ts" "go" "py" "any" 等)。"" / "any" なら言語非依存ルールのみ
++//	rules    — 適用するルール
+ //
+ // 戻り値: Finding 配列(line/column 順に sort されない、呼出側で必要なら sort)
+ func ScanText(path, content, language string, rules []Rule) []Finding {
+diff --git a/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go b/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go
+index 21fec45..6e862ef 100644
+--- a/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go
++++ b/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go
+@@ -457,3 +457,115 @@ func TestCacheKeyFor_DifferentLanguageDiffersKey(t *testing.T) {
+ 		t.Error("different language should produce different cache key")
+ 	}
+ }
++
++// ─── v0.35: CompileRules (custom rule loading) ─────────────
++
++func TestCompileRules_ValidSpec(t *testing.T) {
++	rules, err := CompileRules([]RuleSpec{{
++		ID:          "no-console-log",
++		Pattern:     `console\.log`,
++		Severity:    SevProhibited,
++		Languages:   []string{"ts", "js"},
++		Description: "console.log left in code",
++		Suggestion:  "use a logger",
++	}})
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(rules) != 1 {
++		t.Fatalf("expected 1 rule, got %d", len(rules))
++	}
++	r := rules[0]
++	if r.ID != "no-console-log" || r.pattern == nil {
++		t.Errorf("rule not compiled correctly: %+v", r)
++	}
++	if r.Severity != SevProhibited {
++		t.Errorf("severity: got %s, want prohibited", r.Severity)
++	}
++}
++
++func TestCompileRules_DefaultsSeverityAndLanguages(t *testing.T) {
++	rules, err := CompileRules([]RuleSpec{{ID: "x", Pattern: `foo`}})
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if rules[0].Severity != SevWarning {
++		t.Errorf("default severity: got %s, want warning", rules[0].Severity)
++	}
++	if len(rules[0].Languages) != 1 || rules[0].Languages[0] != "any" {
++		t.Errorf("default languages: got %v, want [any]", rules[0].Languages)
++	}
++}
++
++func TestCompileRules_PreservesInputOrder(t *testing.T) {
++	rules, err := CompileRules([]RuleSpec{
++		{ID: "a", Pattern: `a`},
++		{ID: "b", Pattern: `b`},
++		{ID: "c", Pattern: `c`},
++	})
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	got := []string{rules[0].ID, rules[1].ID, rules[2].ID}
++	if got[0] != "a" || got[1] != "b" || got[2] != "c" {
++		t.Errorf("order not preserved: %v", got)
++	}
++}
++
++func TestCompileRules_Errors(t *testing.T) {
++	cases := []struct {
++		name string
++		spec RuleSpec
++		want string
++	}{
++		{"empty id", RuleSpec{ID: " ", Pattern: `foo`}, "id is required"},
++		{"empty pattern", RuleSpec{ID: "x", Pattern: "  "}, "pattern is required"},
++		{"invalid regex", RuleSpec{ID: "x", Pattern: `[unclosed`}, "invalid pattern"},
++		{"bad severity", RuleSpec{ID: "x", Pattern: `foo`, Severity: "fatal"}, "invalid severity"},
++		{"pattern too long", RuleSpec{ID: "x", Pattern: strings.Repeat("a", maxPatternLen+1)}, "too long"},
++	}
++	for _, c := range cases {
++		t.Run(c.name, func(t *testing.T) {
++			_, err := CompileRules([]RuleSpec{c.spec})
++			if err == nil {
++				t.Fatalf("expected error containing %q, got nil", c.want)
++			}
++			if !strings.Contains(err.Error(), c.want) {
++				t.Errorf("error %q should contain %q", err.Error(), c.want)
++			}
++		})
++	}
++}
++
++func TestCompileRules_EmptyInput(t *testing.T) {
++	rules, err := CompileRules(nil)
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if len(rules) != 0 {
++		t.Errorf("expected 0 rules, got %d", len(rules))
++	}
++}
++
++func TestCompileRules_CustomRuleFlagsPattern(t *testing.T) {
++	custom, err := CompileRules([]RuleSpec{{
++		ID:        "no-console-log",
++		Pattern:   `console\.log`,
++		Severity:  SevProhibited,
++		Languages: []string{"any"},
++	}})
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	rules := append(DefaultRules(), custom...)
++	findings := ScanText("app.ts", `console.log("debug");`, "ts", rules)
++	hit := false
++	for _, f := range findings {
++		if f.RuleID == "no-console-log" && f.Severity == SevProhibited {
++			hit = true
++		}
++	}
++	if !hit {
++		t.Errorf("custom rule should flag console.log: %+v", findings)
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/recovery/recovery.go b/yagura-v0.35.0/internal/recovery/recovery.go
