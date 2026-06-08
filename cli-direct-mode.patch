@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..bf2110e 100644
+index 9b29eec..aa58434 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,719 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,729 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1025,6 +1025,16 @@ index 9b29eec..bf2110e 100644
 +  end-to-end 確認。これで desktop app の「ネイティブっぽく開く」挙動が回帰で守られる。
 +  カバレッジ 33.1% → 40.3%(残りは `main()` / Windows 専用 tray コード=linux では
 +  非 compile)。test 追加のみ(tool 62 / package 50 不変)、ADR-0001 維持。
++- **MCP ツールハンドラのテスト拡充(alert lifecycle + graph)**
++  (`internal/mcp/tools_alertresolve_test.go` / `tools_graph_test.go`)。最大かつ最弱の
++  カバレッジ package だった `internal/mcp`(51%)を、直接テストの無かった重要ハンドラから
++  補強。`yagura_alert_resolve`(resolve/snooze/reopen のライフサイクル — domain store は
++  既存テスト有りだが MCP ハンドラ自体は無防備だった)を全 3 アクション + nil store の
++  unavailable + 不正入力(malformed JSON / alert_id 欠落 / 未知 action)で検証。
++  `yagura_graph_{neighbors,impact,stats}` を app→lib の依存グラフで「lib の dependent に
++  app が出る」「lib の変更が app に impact する」「depth の default=2 / 上限 clamp=10」
++  「slug 必須」で検証。これで alert ライフサイクルとグラフ walk の API 契約が回帰で守られる。
++  カバレッジ 51.4% → 53.8%。test 追加のみ(tool 62 / package 50 不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1043,7 +1053,7 @@ index 9b29eec..bf2110e 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8397,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8407,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -11140,6 +11150,118 @@ index 0000000..44b6508
 +		t.Error("expected error for malformed JSON")
 +	}
 +}
+diff --git a/yagura-v0.35.0/internal/mcp/tools_alertresolve_test.go b/yagura-v0.35.0/internal/mcp/tools_alertresolve_test.go
+new file mode 100644
+index 0000000..bae704e
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_alertresolve_test.go
+@@ -0,0 +1,106 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"path/filepath"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/alertfix"
++)
++
++func newAlertStore(t *testing.T) *alertfix.Store {
++	t.Helper()
++	store, err := alertfix.NewStore(filepath.Join(t.TempDir(), "alert_state.jsonl"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	return store
++}
++
++func callAlert(t *testing.T, store *alertfix.Store, args map[string]any) (map[string]any, error) {
++	t.Helper()
++	tool := buildAlertResolveTool(store)
++	b, _ := json.Marshal(args)
++	out, err := tool.Handler(context.Background(), b)
++	if err != nil {
++		return nil, err
++	}
++	return out.(map[string]any), nil
++}
++
++func TestAlertResolve_Resolve(t *testing.T) {
++	store := newAlertStore(t)
++	r, err := callAlert(t, store, map[string]any{"alert_id": "a1", "action": "resolve", "note": "fixed"})
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if r["action"] != "resolve" {
++		t.Errorf("action = %v", r["action"])
++	}
++	st := r["current_state"].(*alertfix.CurrentState)
++	if st.Status != alertfix.StatusResolved {
++		t.Errorf("status = %q, want resolved", st.Status)
++	}
++}
++
++func TestAlertResolve_SnoozeDefaultsToSevenDays(t *testing.T) {
++	store := newAlertStore(t)
++	r, err := callAlert(t, store, map[string]any{"alert_id": "a2", "action": "snooze"})
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	st := r["current_state"].(*alertfix.CurrentState)
++	if st.Status != alertfix.StatusSnoozed {
++		t.Errorf("status = %q, want snoozed", st.Status)
++	}
++	if st.SnoozeUntil == nil {
++		t.Error("snooze should set a snooze_until deadline (default 7 days)")
++	}
++}
++
++func TestAlertResolve_Reopen(t *testing.T) {
++	store := newAlertStore(t)
++	// resolve, then reopen → back to active
++	if _, err := callAlert(t, store, map[string]any{"alert_id": "a3", "action": "resolve"}); err != nil {
++		t.Fatal(err)
++	}
++	r, err := callAlert(t, store, map[string]any{"alert_id": "a3", "action": "reopen"})
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	st := r["current_state"].(*alertfix.CurrentState)
++	if st.Status != alertfix.StatusActive {
++		t.Errorf("status after reopen = %q, want active", st.Status)
++	}
++}
++
++func TestAlertResolve_NilStoreUnavailable(t *testing.T) {
++	tool := buildAlertResolveTool(nil)
++	b, _ := json.Marshal(map[string]any{"alert_id": "x", "action": "resolve"})
++	_, err := tool.Handler(context.Background(), b)
++	if !IsCode(err, "unavailable") {
++		t.Errorf("expected unavailable when store is nil, got %v", err)
++	}
++}
++
++func TestAlertResolve_InvalidInputs(t *testing.T) {
++	store := newAlertStore(t)
++	tool := buildAlertResolveTool(store)
++	cases := []struct {
++		name string
++		args string
++	}{
++		{"malformed json", `{`},
++		{"missing alert_id", `{"action":"resolve"}`},
++		{"unknown action", `{"alert_id":"a","action":"frobnicate"}`},
++	}
++	for _, c := range cases {
++		t.Run(c.name, func(t *testing.T) {
++			_, err := tool.Handler(context.Background(), json.RawMessage(c.args))
++			if !IsCode(err, "invalid_input") {
++				t.Errorf("expected invalid_input, got %v", err)
++			}
++		})
++	}
++}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_audit.go b/yagura-v0.35.0/internal/mcp/tools_audit.go
 new file mode 100644
 index 0000000..08b542a
@@ -11297,6 +11419,109 @@ index 0000000..90b70e7
 +}
 +
 +func tCtx() context.Context { return context.Background() }
+diff --git a/yagura-v0.35.0/internal/mcp/tools_graph_test.go b/yagura-v0.35.0/internal/mcp/tools_graph_test.go
+new file mode 100644
+index 0000000..c7294b1
+--- /dev/null
++++ b/yagura-v0.35.0/internal/mcp/tools_graph_test.go
+@@ -0,0 +1,97 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/projectgraph"
++)
++
++// graphDeps registers app → lib (app depends on lib) plus an isolated node.
++func graphDeps(t *testing.T) Deps {
++	t.Helper()
++	d := newDeps(t)
++	_ = d.Registry.Add(sampleProject("app", func(p *project.Project) { p.DependsOn = []string{"lib"} }))
++	_ = d.Registry.Add(sampleProject("lib"))
++	_ = d.Registry.Add(sampleProject("solo"))
++	return d
++}
++
++func TestGraphNeighbors(t *testing.T) {
++	d := graphDeps(t)
++	tool := buildGraphNeighborsTool(d)
++	r := mustCall(t, tool, map[string]any{"slug": "lib"}).(projectgraph.NeighborsResult)
++	// app depends on lib → lib's direct dependent is app
++	found := false
++	for _, dep := range r.DirectDependents {
++		if dep == "app" {
++			found = true
++		}
++	}
++	if !found {
++		t.Errorf("lib should have app as a direct dependent, got %+v", r.DirectDependents)
++	}
++}
++
++func TestGraphNeighbors_DepthClampedAndDefaulted(t *testing.T) {
++	d := graphDeps(t)
++	tool := buildGraphNeighborsTool(d)
++	// depth omitted → default 2
++	r := mustCall(t, tool, map[string]any{"slug": "app"}).(projectgraph.NeighborsResult)
++	if r.Depth != 2 {
++		t.Errorf("default depth = %d, want 2", r.Depth)
++	}
++	// depth over the max → clamped to 10
++	r2 := mustCall(t, tool, map[string]any{"slug": "app", "depth": 99}).(projectgraph.NeighborsResult)
++	if r2.Depth != 10 {
++		t.Errorf("depth 99 should clamp to 10, got %d", r2.Depth)
++	}
++}
++
++func TestGraphImpact(t *testing.T) {
++	d := graphDeps(t)
++	tool := buildGraphImpactTool(d)
++	r := mustCall(t, tool, map[string]any{"slug": "lib"}).(projectgraph.ImpactResult)
++	// changing lib impacts app
++	if r.ImpactCount < 1 {
++		t.Errorf("lib impact_count = %d, want >= 1", r.ImpactCount)
++	}
++	found := false
++	for _, s := range r.TransitiveImpact {
++		if s == "app" {
++			found = true
++		}
++	}
++	if !found {
++		t.Errorf("lib impact should include app, got %+v", r.TransitiveImpact)
++	}
++}
++
++func TestGraphStats(t *testing.T) {
++	d := graphDeps(t)
++	tool := buildGraphStatsTool(d)
++	r := mustCall(t, tool, struct{}{}).(map[string]any)
++	if _, ok := r["stats"]; !ok {
++		t.Error("expected a stats key")
++	}
++	if _, ok := r["dangling"]; !ok {
++		t.Error("expected a dangling key")
++	}
++}
++
++func TestGraphTools_SlugRequired(t *testing.T) {
++	d := graphDeps(t)
++	for name, tool := range map[string]*Tool{
++		"neighbors": buildGraphNeighborsTool(d),
++		"impact":    buildGraphImpactTool(d),
++	} {
++		t.Run(name, func(t *testing.T) {
++			b, _ := json.Marshal(map[string]any{})
++			if _, err := tool.Handler(context.Background(), b); !IsCode(err, "invalid_input") {
++				t.Errorf("%s: expected invalid_input for missing slug, got %v", name, err)
++			}
++		})
++	}
++}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_inventory.go b/yagura-v0.35.0/internal/mcp/tools_inventory.go
 index e08cf8f..1b592ad 100644
 --- a/yagura-v0.35.0/internal/mcp/tools_inventory.go
