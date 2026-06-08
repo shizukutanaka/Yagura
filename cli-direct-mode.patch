@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..239cc59 100644
+index 9b29eec..675617d 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,782 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,796 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1088,6 +1088,20 @@ index 9b29eec..239cc59 100644
 +  detail の alert 描画 / provider 無し空状態 / sweep 前空状態、`healthState.PortfolioAlerts` の
 +  写像と sweep 前 ok=false)。外部依存ゼロ、新規 tool/package なし(tool 62 / package 50
 +  不変)、ADR-0001 維持。
++- **health sweep を lifecycle-aware に(resolve/snooze 済み alert を dashboard から除外)**
++  (`internal/alertfix` / `internal/mcp` / `cmd/yagura/main.go`)。periodic health sweep は
++  `alertfix.EvaluateAll` の生結果をそのまま使っており、`alert_resolve` で resolve/snooze
++  済みの alert も banner / alerts ページに出続けて「対応済みなのに鳴り止まない」状態だった。
++  alert lifecycle store の filter + 集計 recompute(`alert_fix` tool が inline で持っていた
++  ロジック)を `Store.FilterReport(Report) Report` として切り出し、(1) `yagura_alert_fix`
++  tool をこれを使うよう DRY 化、(2) health sweep にも適用。alert store を scanner より前に
++  生成して `healthSweep(reg, store)` に渡し、store が non-nil なら resolved/snoozed を除外
++  (nil 時は従来どおり全件)。これで「dashboard で resolve → 次 sweep で banner から消える」が
++  成立(scanner ↔ alert_fix ↔ lifecycle ↔ dashboard の閉ループ)。live dogfood:
++  `breeze:vulns:critical` を `alert_resolve` で resolve 後、`alert_fix` が total=0 /
++  filtered_inactive=1 を返すことを確認(sweep も同じ `FilterReport` を共有)。テスト追加
++  (`Store.FilterReport` の除外+集計再計算、`healthSweep` が resolve 済みを除外)。
++  外部依存ゼロ、新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1106,7 +1120,7 @@ index 9b29eec..239cc59 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8460,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8474,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -4543,10 +4557,10 @@ index 0000000..dc7fbf7
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/healthsweep_test.go b/yagura-v0.35.0/cmd/yagura/healthsweep_test.go
 new file mode 100644
-index 0000000..c1e4b5a
+index 0000000..312f4bb
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/healthsweep_test.go
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,145 @@
 +package main
 +
 +import (
@@ -4576,7 +4590,7 @@ index 0000000..c1e4b5a
 +		t.Fatalf("inject sensor data: %v", err)
 +	}
 +
-+	report := healthSweep(reg)
++	report := healthSweep(reg, nil)
 +	if report.ProjectsScanned != 1 {
 +		t.Errorf("projects_scanned = %d, want 1", report.ProjectsScanned)
 +	}
@@ -4585,6 +4599,47 @@ index 0000000..c1e4b5a
 +	}
 +	if report.BySeverity[alertfix.SevCritical] < 1 {
 +		t.Errorf("expected >=1 critical, got %d", report.BySeverity[alertfix.SevCritical])
++	}
++}
++
++func TestHealthSweep_ExcludesResolvedAlerts(t *testing.T) {
++	reg, err := registry.New(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := reg.Add(&project.Project{
++		Slug: "breeze", DisplayName: "Breeze", Repository: "github.com/o/breeze", Stage: project.StageActive,
++	}); err != nil {
++		t.Fatal(err)
++	}
++	p, _ := reg.Get("breeze")
++	p.VulnCritical = 3
++	if err := reg.Update(p); err != nil {
++		t.Fatal(err)
++	}
++	store, err := alertfix.NewStore("") // in-memory
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	// unfiltered: the critical alert is present
++	before := healthSweep(reg, store)
++	if before.Total == 0 {
++		t.Fatal("expected at least one alert before resolving")
++	}
++	// resolve every alert the sweep produced
++	for _, a := range before.Alerts {
++		if err := store.Resolve(a.ID, "handled"); err != nil {
++			t.Fatal(err)
++		}
++	}
++	// next sweep must exclude the resolved alerts
++	after := healthSweep(reg, store)
++	if after.Total != 0 {
++		t.Errorf("resolved alerts should be filtered out, got %d (%+v)", after.Total, after.BySeverity)
++	}
++	if after.HasCritical {
++		t.Error("has_critical should be false once the critical alert is resolved")
 +	}
 +}
 +
@@ -4643,7 +4698,7 @@ index 0000000..c1e4b5a
 +		Slug: "calm", DisplayName: "Calm", Repository: "github.com/o/calm",
 +		Stage: project.StageActive,
 +	})
-+	report := healthSweep(reg)
++	report := healthSweep(reg, nil)
 +	if report.ProjectsScanned != 1 {
 +		t.Errorf("projects_scanned = %d, want 1", report.ProjectsScanned)
 +	}
@@ -4772,7 +4827,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..287d79e 100644
+index bd1fe39..0af435c 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -4928,15 +4983,27 @@ index bd1fe39..287d79e 100644
  	results, err := audit.Verify(auditDir)
  	if err != nil {
  		return fmt.Errorf("verify: %w", err)
-@@ -361,6 +386,7 @@ func run() error {
+@@ -361,6 +386,19 @@ func run() error {
  	sbomGen := sbom.New()              // CycloneDX 1.5 SBOM 生成器(zero-dep)
  	ghaAuditor := ghaaudit.New()       // GitHub Actions workflow 静的解析器(zero-dep)
  
++	// v0.30.0 alert lifecycle store — created before the scanner so the periodic
++	// health sweep can exclude resolved/snoozed alerts (same filter as alert_fix).
++	// nil (load error) is tolerated: the sweep then reports every evaluated alert.
++	var alertStore *alertfix.Store
++	alertStatePath := filepath.Join(cfg.StateDir, "alert_state.jsonl")
++	if st, err := alertfix.NewStore(alertStatePath); err != nil {
++		logger.Warn("alert state load failed (continuing without lifecycle)",
++			"path", alertStatePath, "err", err)
++	} else {
++		alertStore = st
++	}
++
 +	health := &healthState{}
  	scan := scanner.New(scanner.Config{
  		Registry:    reg,
  		GitHub:      gh,
-@@ -368,6 +394,24 @@ func run() error {
+@@ -368,6 +406,24 @@ func run() error {
  		Metrics:     scannerMetrics,
  		Interval:    cfg.ScanInterval,
  		ScanTimeout: cfg.ScanTimeout,
@@ -4945,7 +5012,7 @@ index bd1fe39..287d79e 100644
 +		// result (for the dashboard banner) and log a structured summary so
 +		// operators see health drift without an on-demand alert_fix call.
 +		AfterScan: func(context.Context) {
-+			report := healthSweep(reg)
++			report := healthSweep(reg, alertStore)
 +			health.set(report)
 +			if report.Total > 0 {
 +				logger.Info("health sweep",
@@ -4961,7 +5028,21 @@ index bd1fe39..287d79e 100644
  	})
  	scan.Start(ctx)
  	logger.Info("scanner started", "interval", cfg.ScanInterval)
-@@ -568,6 +612,14 @@ func run() error {
+@@ -467,11 +523,8 @@ func run() error {
+ 	mcpServer.SetAudit(auditLog)
+ 
+ 	// v0.30.0: alert lifecycle store (resolved/snoozed の永続化)
+-	alertStatePath := filepath.Join(cfg.StateDir, "alert_state.jsonl")
+-	if alertStore, err := alertfix.NewStore(alertStatePath); err != nil {
+-		logger.Warn("alert state load failed (continuing without lifecycle)",
+-			"path", alertStatePath, "err", err)
+-	} else {
++	// 注: store は scanner より前に作成済み(health sweep が lifecycle filter に使う)。
++	if alertStore != nil {
+ 		mcpServer.SetAlertStore(alertStore)
+ 	}
+ 
+@@ -568,6 +621,14 @@ func run() error {
  	// v0.14.0: agent handoff panel on dashboard
  	dash.SetAgentStatusProvider(quotaMon)
  
@@ -4976,7 +5057,7 @@ index bd1fe39..287d79e 100644
  	// 9. HTTP server
  	var ready atomic.Bool
  	ready.Store(true)
-@@ -603,6 +655,10 @@ func run() error {
+@@ -603,6 +664,10 @@ func run() error {
  	// observation mode: 全 event を JSONL persist、空 response で agent 継続
  	if hookReceiver != nil {
  		mux.HandleFunc("/hooks/claude-code", hookReceiver.Handle)
@@ -4987,7 +5068,7 @@ index bd1fe39..287d79e 100644
  	}
  
  	// v0.31.0: MCP 2026 spec .well-known metadata endpoint
-@@ -610,15 +666,16 @@ func run() error {
+@@ -610,15 +675,16 @@ func run() error {
  	// 接続前に server capabilities を発見可能にする
  	mux.HandleFunc("/.well-known/mcp", func(w http.ResponseWriter, _ *http.Request) {
  		meta := map[string]any{
@@ -5010,7 +5091,7 @@ index bd1fe39..287d79e 100644
  			},
  			"capabilities": map[string]any{
  				"tools":               len(mcpServer.ToolNames()),
-@@ -637,18 +694,18 @@ func run() error {
+@@ -637,18 +703,18 @@ func run() error {
  	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
  	// v0.12.0: per-route rate limiting で DoS / PAT 枯渇を防止
  	sbomLimiter := httplimit.New(httplimit.Options{
@@ -5035,7 +5116,7 @@ index bd1fe39..287d79e 100644
  		KeyFn:           httplimit.TokenKey,
  	})
  	// 定期 GC で idle bucket を回収(メモリ leak 防止)
-@@ -761,8 +818,8 @@ type scannerMetricsAdapter struct {
+@@ -761,8 +827,8 @@ type scannerMetricsAdapter struct {
  	lastAt   *metrics.Gauge
  }
  
@@ -5046,7 +5127,7 @@ index bd1fe39..287d79e 100644
  func (a *scannerMetricsAdapter) SetLastScanDuration(d time.Duration) {
  	a.duration.Set(d.Milliseconds())
  }
-@@ -832,6 +889,162 @@ type registryLookup struct {
+@@ -832,6 +898,170 @@ type registryLookup struct {
  	reg *registry.Registry
  }
  
@@ -5056,13 +5137,21 @@ index bd1fe39..287d79e 100644
 +// yagura_alert_fix) and alertfix.EvaluateAll, so the deterministic rules match the
 +// on-demand tool. Plan.md enrichment is intentionally skipped here (sensor-only;
 +// no per-cycle disk I/O) — the on-demand tool still does the richer evaluation.
-+func healthSweep(reg *registry.Registry) alertfix.Report {
++//
++// When store is non-nil, resolved/snoozed alerts are excluded (same lifecycle
++// filter as yagura_alert_fix) so the dashboard banner/list only nags about alerts
++// that are actually still open.
++func healthSweep(reg *registry.Registry, store *alertfix.Store) alertfix.Report {
 +	projects := reg.List()
 +	snaps := make([]alertfix.ProjectSnapshot, 0, len(projects))
 +	for _, p := range projects {
 +		snaps = append(snaps, mcp.ProjectToSnapshot(*p))
 +	}
-+	return alertfix.EvaluateAll(snaps, alertfix.DefaultThresholds())
++	report := alertfix.EvaluateAll(snaps, alertfix.DefaultThresholds())
++	if store != nil {
++		report = store.FilterReport(report)
++	}
++	return report
 +}
 +
 +// healthState holds the latest health-sweep report for read-only consumers
@@ -5209,7 +5298,7 @@ index bd1fe39..287d79e 100644
  func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  	if l == nil || l.reg == nil || cwd == "" {
  		return "", false
-@@ -892,7 +1105,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -892,7 +1122,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  
  	// Hook receiver stats (per-project event counters)
  	if hr != nil {
@@ -5218,7 +5307,7 @@ index bd1fe39..287d79e 100644
  		for slug, st := range hr.AllStats() {
  			for event, count := range st.ByEvent {
  				hookCalls = append(hookCalls, promexport.Sample{
-@@ -900,6 +1113,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -900,6 +1130,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  					Value:  float64(count),
  				})
  			}
@@ -5233,7 +5322,7 @@ index bd1fe39..287d79e 100644
  			hookErrs = append(hookErrs, promexport.Sample{
  				Labels: map[string]string{"project": slug},
  				Value:  float64(st.ErrorCount),
-@@ -908,10 +1129,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -908,10 +1146,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  		if len(hookCalls) > 0 {
  			out = append(out,
  				promexport.Collection{Name: "yagura_hook_events_total",
@@ -7258,6 +7347,99 @@ index 0000000..46f2e48
 +	}
 +	if as.Waves != 2 {
 +		t.Errorf("concurrency<=0 defaults to 1 → 2 waves, got %d", as.Waves)
++	}
++}
+diff --git a/yagura-v0.35.0/internal/alertfix/state.go b/yagura-v0.35.0/internal/alertfix/state.go
+index abd518a..59b712f 100644
+--- a/yagura-v0.35.0/internal/alertfix/state.go
++++ b/yagura-v0.35.0/internal/alertfix/state.go
+@@ -1,13 +1,14 @@
+ // alertfix lifecycle persistence (v0.30).
+ //
+ // 動機:
+-//   v0.27 で alert_fix を実装した時点では state を持たず、毎回 evaluate して
+-//   全 alert を出していた。これでは:
+-//     1. 同じ alert が永遠に発火 — agent loop が無限ループ的に同じ提案を受け取る
+-//     2. resolve / snooze 不可能 — 「あとで対応」ができない
+-//     3. cortex flywheel ④ Alert-Fix の閉ループに到達しない
+ //
+-//   本 file は JSONL 永続化 + 3 action (resolve / snooze / reopen) を追加。
++//	v0.27 で alert_fix を実装した時点では state を持たず、毎回 evaluate して
++//	全 alert を出していた。これでは:
++//	  1. 同じ alert が永遠に発火 — agent loop が無限ループ的に同じ提案を受け取る
++//	  2. resolve / snooze 不可能 — 「あとで対応」ができない
++//	  3. cortex flywheel ④ Alert-Fix の閉ループに到達しない
++//
++//	本 file は JSONL 永続化 + 3 action (resolve / snooze / reopen) を追加。
+ //
+ // 設計判断:
+ //   - audit.log と同じく O_APPEND な JSONL — 1 entry が atomic、corrupt-line
+@@ -262,6 +263,28 @@ func (s *Store) FilterAlerts(alerts []Alert) []Alert {
+ 	return out
+ }
+ 
++// FilterReport は resolved / snoozed を除外し、Report の集計
++// (Total / BySeverity / BySource / ByProject / HasCritical)を再計算して返す。
++// yagura_alert_fix と daemon の health sweep の双方が使う(lifecycle filter の single
++// source of truth)。s が nil の場合は呼出側が判断する(ここでは前提として non-nil)。
++func (s *Store) FilterReport(r Report) Report {
++	r.Alerts = s.FilterAlerts(r.Alerts)
++	r.Total = len(r.Alerts)
++	r.BySeverity = map[Severity]int{}
++	r.BySource = map[Source]int{}
++	r.ByProject = map[string]int{}
++	r.HasCritical = false
++	for _, a := range r.Alerts {
++		r.BySeverity[a.Severity]++
++		r.BySource[a.Source]++
++		r.ByProject[a.Project]++
++		if a.Severity == SevCritical {
++			r.HasCritical = true
++		}
++	}
++	return r
++}
++
+ // Snapshot は現状の全 state を return する(test / debug 用)。
+ func (s *Store) Snapshot() []CurrentState {
+ 	s.mu.RLock()
+diff --git a/yagura-v0.35.0/internal/alertfix/state_test.go b/yagura-v0.35.0/internal/alertfix/state_test.go
+index 71805a9..750f7e4 100644
+--- a/yagura-v0.35.0/internal/alertfix/state_test.go
++++ b/yagura-v0.35.0/internal/alertfix/state_test.go
+@@ -246,3 +246,34 @@ func TestStore_Snapshot(t *testing.T) {
+ 		t.Errorf("snapshot len: %d", len(snap))
+ 	}
+ }
++
++// ─── FilterReport (v0.35) ────────────────────────
++
++func TestStore_FilterReport_ExcludesResolvedAndRecomputes(t *testing.T) {
++	s, _ := newStoreT(t)
++	report := Report{
++		Alerts: []Alert{
++			{ID: "a1", Project: "p1", Source: SourceVuln, Severity: SevCritical},
++			{ID: "a2", Project: "p1", Source: SourceVuln, Severity: SevHigh},
++			{ID: "a3", Project: "p2", Source: SourcePlan, Severity: SevLow},
++		},
++		Total:       3,
++		HasCritical: true,
++	}
++	if err := s.Resolve("a1", "done"); err != nil { // remove the only critical
++		t.Fatal(err)
++	}
++	got := s.FilterReport(report)
++	if got.Total != 2 {
++		t.Errorf("total = %d, want 2 after resolving a1", got.Total)
++	}
++	if got.HasCritical {
++		t.Error("has_critical should be recomputed to false")
++	}
++	if got.BySeverity[SevCritical] != 0 || got.BySeverity[SevHigh] != 1 || got.BySeverity[SevLow] != 1 {
++		t.Errorf("by_severity recompute mismatch: %+v", got.BySeverity)
++	}
++	if got.ByProject["p1"] != 1 || got.ByProject["p2"] != 1 {
++		t.Errorf("by_project recompute mismatch: %+v", got.ByProject)
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/atomicfile/atomicfile_test.go b/yagura-v0.35.0/internal/atomicfile/atomicfile_test.go
@@ -11163,7 +11345,7 @@ index 1549179..0a1b2c2 100644
  		t.Errorf("expected at least %d tools, got %d: %v", minExpectedTools, len(names), names)
  	}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
-index 939a67e..8081fe8 100644
+index 939a67e..8217469 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
 +++ b/yagura-v0.35.0/internal/mcp/tools.go
 @@ -11,25 +11,20 @@ import (
@@ -11572,7 +11754,31 @@ index 939a67e..8081fe8 100644
  		Description: "[S] Aggregate health signals across portfolio. Returns actionable alerts with suggested_tool + args.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1382,6 +1423,13 @@ func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Stor
+@@ -1341,22 +1382,8 @@ func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Stor
+ 			filteredOut := 0
+ 			if store != nil && !in.IncludeInactive {
+ 				before := len(report.Alerts)
+-				report.Alerts = store.FilterAlerts(report.Alerts)
++				report = store.FilterReport(report)
+ 				filteredOut = before - len(report.Alerts)
+-				report.Total = len(report.Alerts)
+-				// by_severity / by_source / by_project を recompute
+-				report.BySeverity = map[alertfix.Severity]int{}
+-				report.BySource = map[alertfix.Source]int{}
+-				report.ByProject = map[string]int{}
+-				report.HasCritical = false
+-				for _, a := range report.Alerts {
+-					report.BySeverity[a.Severity]++
+-					report.BySource[a.Source]++
+-					report.ByProject[a.Project]++
+-					if a.Severity == alertfix.SevCritical {
+-						report.HasCritical = true
+-					}
+-				}
+ 			}
+ 
+ 			out := map[string]any{
+@@ -1382,6 +1409,13 @@ func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Stor
  }
  
  // projectToSnapshot は registry.Project から alertfix snapshot に必要な field を抽出する。
@@ -11586,7 +11792,7 @@ index 939a67e..8081fe8 100644
  func projectToSnapshot(p project.Project) alertfix.ProjectSnapshot {
  	return alertfix.ProjectSnapshot{
  		Slug:           p.Slug,
-@@ -1425,15 +1473,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
+@@ -1425,15 +1459,15 @@ func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
  
  func buildAlertResolveTool(store *alertfix.Store) *Tool {
  	return &Tool{
@@ -11607,7 +11813,7 @@ index 939a67e..8081fe8 100644
  			},
  			"required": []string{"alert_id", "action"},
  		},
-@@ -1475,9 +1523,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+@@ -1475,9 +1509,9 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
  			}
  			st, _ := store.Get(in.AlertID)
  			return map[string]any{
@@ -11620,7 +11826,7 @@ index 939a67e..8081fe8 100644
  				"lifecycle_stats": store.Stats(),
  			}, nil
  		},
-@@ -1492,14 +1540,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
+@@ -1492,14 +1526,14 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
  
  func buildAgentsMdTool(d Deps) *Tool {
  	return &Tool{
@@ -11638,7 +11844,7 @@ index 939a67e..8081fe8 100644
  			},
  			"required": []string{"slug"},
  		},
-@@ -1578,7 +1626,7 @@ func buildAgentsMdTool(d Deps) *Tool {
+@@ -1578,7 +1612,7 @@ func buildAgentsMdTool(d Deps) *Tool {
  
  func buildFeatureListTool(d Deps) *Tool {
  	return &Tool{
@@ -11647,7 +11853,7 @@ index 939a67e..8081fe8 100644
  		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
  		InputSchema: map[string]any{
  			"type": "object",
-@@ -1643,7 +1691,7 @@ func buildFeatureListTool(d Deps) *Tool {
+@@ -1643,7 +1677,7 @@ func buildFeatureListTool(d Deps) *Tool {
  
  func buildHarnessCoverageTool(d Deps) *Tool {
  	return &Tool{
@@ -11656,7 +11862,7 @@ index 939a67e..8081fe8 100644
  		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
  		InputSchema: map[string]any{
  			"type":       "object",
-@@ -1687,11 +1735,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
+@@ -1687,11 +1721,11 @@ func buildHarnessCoverageTool(d Deps) *Tool {
  				}
  			}
  			return map[string]any{
