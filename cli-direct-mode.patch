@@ -319,10 +319,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..95cee18 100644
+index 9b29eec..32451ad 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,574 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,590 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -879,6 +879,22 @@ index 9b29eec..95cee18 100644
 +  旧 CLI 行き止まり文言が消えたこと。live dogfood: フォームの送る exact `/mcp` 呼出 → register ok →
 +  dashboard が SSR 再描画で breeze を表示 → 監査ログに `mcp_call_ok target=yagura_register`。
 +  README / QUICKSTART / docs/desktop.md の「read-only」記述を「read-mostly(register のみ MCP 経由)」へ更新。
++
++- **`go vet` クリーン化(CI gate 復旧)+ tool-count floor 更新(現段階の改善点を診断→修正)**。
++  `gofmt -l` / `go vet` / per-package coverage を一括診断して現状の改善点を洗い出した結果:
++  - **CI 破損の修正**: `go vet ./...` が `cmd/yagura/httpapi_test.go` の 7 箇所で
++    "using resp before checking for errors" を報告していた(`resp, _ := http.Get/Post(...)` の直後に
++    `defer resp.Body.Close()`。リクエスト失敗時 `resp` が nil で panic しうる潜在バグ)。CI は
++    `go vet ./...` を gate にしている(ci.yml)ため、この警告で CI が落ちる状態だった。全 7 箇所を
++    `resp, err := ...; if err != nil { t.Fatal(err) }` に修正し、`go vet ./...` を **クリーン**に戻した
++    (mandate「go vet 警告ゼロ」準拠)。テストのみの変更で production 挙動は不変。
++  - **regression guard 更新**: `internal/mcp/server_test.go` の `minExpectedTools` が 38 のまま
++    (現 62 tools)で実質無効化していたので 55 に更新。tool 大量未登録の regression を再び捕捉できる。
++  - 診断メモ(本イテレーションでは未着手): `gofmt -l` が ~30 ファイルを flag するが出荷物では問題なく、
++    gofmt のバージョン skew(maskable: 一括整形は maintainer のツールチェーンと乖離するので回避)。
++    coverage 低めは cmd/yagura-tray 33% / internal/mcp 49%(cross-package 統合テストで実質カバー)。
++  外部依存ゼロ・新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。full `go test ./...`
++  green、`go vet ./...` クリーン。
 +
 +### What's not yet
 +
@@ -4210,6 +4226,94 @@ index 0000000..dc7fbf7
 +		t.Errorf("missing path: code=%d out=%q", code, mout)
 +	}
 +}
+diff --git a/yagura-v0.35.0/cmd/yagura/httpapi_test.go b/yagura-v0.35.0/cmd/yagura/httpapi_test.go
+index 2d5c53c..7d0451c 100644
+--- a/yagura-v0.35.0/cmd/yagura/httpapi_test.go
++++ b/yagura-v0.35.0/cmd/yagura/httpapi_test.go
+@@ -82,7 +82,10 @@ func TestHTTP_GETSBOM_WrongMethod(t *testing.T) {
+ 	mux := newTestHTTPMux(t, "")
+ 	srv := httptest.NewServer(mux)
+ 	defer srv.Close()
+-	resp, _ := http.Post(srv.URL+"/sbom", "application/json", strings.NewReader("{}"))
++	resp, err := http.Post(srv.URL+"/sbom", "application/json", strings.NewReader("{}"))
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp.Body.Close()
+ 	if resp.StatusCode != http.StatusMethodNotAllowed {
+ 		t.Errorf("expected 405, got %d", resp.StatusCode)
+@@ -97,7 +100,10 @@ func TestHTTP_Auth_Required(t *testing.T) {
+ 	defer srv.Close()
+ 
+ 	// no auth → 401
+-	resp, _ := http.Get(srv.URL + "/sbom")
++	resp, err := http.Get(srv.URL + "/sbom")
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp.Body.Close()
+ 	if resp.StatusCode != http.StatusUnauthorized {
+ 		t.Errorf("expected 401, got %d", resp.StatusCode)
+@@ -106,7 +112,10 @@ func TestHTTP_Auth_Required(t *testing.T) {
+ 	// wrong token → 401
+ 	req, _ := http.NewRequest("GET", srv.URL+"/sbom", nil)
+ 	req.Header.Set("Authorization", "Bearer wrong-token")
+-	resp2, _ := http.DefaultClient.Do(req)
++	resp2, err := http.DefaultClient.Do(req)
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp2.Body.Close()
+ 	if resp2.StatusCode != http.StatusUnauthorized {
+ 		t.Errorf("expected 401, got %d", resp2.StatusCode)
+@@ -115,7 +124,10 @@ func TestHTTP_Auth_Required(t *testing.T) {
+ 	// correct token → 200
+ 	req3, _ := http.NewRequest("GET", srv.URL+"/sbom", nil)
+ 	req3.Header.Set("Authorization", "Bearer secret-token")
+-	resp3, _ := http.DefaultClient.Do(req3)
++	resp3, err := http.DefaultClient.Do(req3)
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp3.Body.Close()
+ 	if resp3.StatusCode != http.StatusOK {
+ 		t.Errorf("expected 200, got %d", resp3.StatusCode)
+@@ -163,7 +175,10 @@ func TestHTTP_POSTGhaAudit_EmptyBody(t *testing.T) {
+ 	mux := newTestHTTPMux(t, "")
+ 	srv := httptest.NewServer(mux)
+ 	defer srv.Close()
+-	resp, _ := http.Post(srv.URL+"/gha-audit", "application/json", strings.NewReader(`{"files":{}}`))
++	resp, err := http.Post(srv.URL+"/gha-audit", "application/json", strings.NewReader(`{"files":{}}`))
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp.Body.Close()
+ 	if resp.StatusCode != http.StatusBadRequest {
+ 		t.Errorf("expected 400, got %d", resp.StatusCode)
+@@ -174,7 +189,10 @@ func TestHTTP_POSTGhaAudit_WrongContentType(t *testing.T) {
+ 	mux := newTestHTTPMux(t, "")
+ 	srv := httptest.NewServer(mux)
+ 	defer srv.Close()
+-	resp, _ := http.Post(srv.URL+"/gha-audit", "text/plain", strings.NewReader(`{"files":{}}`))
++	resp, err := http.Post(srv.URL+"/gha-audit", "text/plain", strings.NewReader(`{"files":{}}`))
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp.Body.Close()
+ 	if resp.StatusCode != http.StatusBadRequest {
+ 		t.Errorf("expected 400 for wrong content-type, got %d", resp.StatusCode)
+@@ -211,7 +229,10 @@ func TestHTTP_POSTPinDrift_405_GET(t *testing.T) {
+ 	mux := newTestHTTPMux(t, "")
+ 	srv := httptest.NewServer(mux)
+ 	defer srv.Close()
+-	resp, _ := http.Get(srv.URL + "/pin-drift")
++	resp, err := http.Get(srv.URL + "/pin-drift")
++	if err != nil {
++		t.Fatal(err)
++	}
+ 	defer resp.Body.Close()
+ 	if resp.StatusCode != http.StatusMethodNotAllowed {
+ 		t.Errorf("expected 405, got %d", resp.StatusCode)
 diff --git a/yagura-v0.35.0/cmd/yagura/integration_test.go b/yagura-v0.35.0/cmd/yagura/integration_test.go
 index cfb6e51..9503a34 100644
 --- a/yagura-v0.35.0/cmd/yagura/integration_test.go
@@ -9325,6 +9429,22 @@ index 0000000..0750148
 +		}
 +	}
 +}
+diff --git a/yagura-v0.35.0/internal/mcp/server_test.go b/yagura-v0.35.0/internal/mcp/server_test.go
+index 1549179..0a1b2c2 100644
+--- a/yagura-v0.35.0/internal/mcp/server_test.go
++++ b/yagura-v0.35.0/internal/mcp/server_test.go
+@@ -150,9 +150,9 @@ func TestServer_BadJSON(t *testing.T) {
+ func TestServer_ToolNames(t *testing.T) {
+ 	s, _ := newServerForTest(t, "")
+ 	names := s.ToolNames()
+-	// v0.28: hard-coded 数を avoid。最低数のみ保証。
++	// v0.28: hard-coded 数を avoid。最低数のみ保証(大量未登録の regression を捕捉)。
+ 	// 正確な数の検証は cmd/yagura/integration_test.go の expectedTools list が担う。
+-	const minExpectedTools = 38
++	const minExpectedTools = 55
+ 	if len(names) < minExpectedTools {
+ 		t.Errorf("expected at least %d tools, got %d: %v", minExpectedTools, len(names), names)
+ 	}
 diff --git a/yagura-v0.35.0/internal/mcp/tools.go b/yagura-v0.35.0/internal/mcp/tools.go
 index 939a67e..2fdd384 100644
 --- a/yagura-v0.35.0/internal/mcp/tools.go
