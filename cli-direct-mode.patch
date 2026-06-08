@@ -319,10 +319,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..dc15b5c 100644
+index 9b29eec..422e63a 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,670 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,688 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -975,6 +975,24 @@ index 9b29eec..dc15b5c 100644
 +  `invalid_input` エラー。外部依存ゼロ、新規 tool/package なし(tool 62 / package 50
 +  不変)、ADR-0001 維持。テスト追加(`CompileRules` の valid/default/順序保持/各種エラー/
 +  空入力/カスタムルール検出、tool 経由の custom+builtin 併用/不正 regex 拒否/200 超拒否)。
++- **Dashboard: Activity 列のドリルダウン(`/dashboard/activity?slug=…`)**
++  (`internal/dashboard`)。Activity 列はこれまで合計/エラー数/top tool の数字だけで、
++  「エージェントが実際に何をしたか」までは見えなかった。CLI に馴染みのないデスクトップ
++  ユーザでも、数字をクリックすると `session_summary` 由来の構造化サマリ(tool 別/operation
++  別件数、tool 実行順、エラー一覧、異常検知、参加エージェント、エラー率)を read-only で
++  閲覧できるようにした。`yagura_session_summary` と同じ pipeline(`Timeline` →
++  `recordedToEvents` → `Summarize`)を `Server.RecordedSummary` に切り出して両者で共有
++  (single source of truth、tool 側もこれを呼ぶよう DRY 化)。dashboard は薄く保つため
++  `sessionsummary` を import せず、adapter 側で `ActivityDetail` view へ写像(`HookActivity`
++  と同じ流儀)。`ByTool` / `ByOperation` は件数降順→名前昇順で決定論的に整列。未登録 slug /
++  活動なし / provider 未設定はいずれも 404 ではなく案内文 + dashboard への戻りリンクを返す
++  (非 CLI ユーザの行き止まり回避)。新ルートは additive(既知 path のときだけ早期 return)で
++  既存の HTML 描画・trust base には触れない read-only。PWA(manifest/icon)も継承。live
++  dogfood: Claude Code + Gemini のフック投入後、`/dashboard` の Activity セルが
++  `/dashboard/activity?slug=breeze` へリンクし、詳細ページに Bash/Read/execute_tool/error
++  rate が描画、未知 slug は空状態。外部依存ゼロ、新規 tool/package なし(tool 62 / package
++  50 不変)、ADR-0001 維持。テスト追加(detail 描画/列リンク化/未知 slug 空状態/provider
++  無し、`Server.RecordedSummary` の集計・未知 slug・receiver 無し)。
 +
 +### What's not yet
 +
@@ -4431,7 +4449,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..eeb4c4e 100644
+index bd1fe39..283e432 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -4586,19 +4604,20 @@ index bd1fe39..eeb4c4e 100644
  	results, err := audit.Verify(auditDir)
  	if err != nil {
  		return fmt.Errorf("verify: %w", err)
-@@ -568,6 +592,11 @@ func run() error {
+@@ -568,6 +592,12 @@ func run() error {
  	// v0.14.0: agent handoff panel on dashboard
  	dash.SetAgentStatusProvider(quotaMon)
  
-+	// v0.35: per-project agent activity column on dashboard (from recorded hooks).
++	// v0.35: per-project agent activity column on dashboard (from recorded hooks),
++	// with a structured drill-down (/dashboard/activity?slug=…) via session_summary.
 +	if hookReceiver != nil {
-+		dash.SetHookActivityProvider(hookActivityAdapter{hr: hookReceiver})
++		dash.SetHookActivityProvider(hookActivityAdapter{hr: hookReceiver, srv: mcpServer})
 +	}
 +
  	// 9. HTTP server
  	var ready atomic.Bool
  	ready.Store(true)
-@@ -603,6 +632,10 @@ func run() error {
+@@ -603,6 +633,10 @@ func run() error {
  	// observation mode: 全 event を JSONL persist、空 response で agent 継続
  	if hookReceiver != nil {
  		mux.HandleFunc("/hooks/claude-code", hookReceiver.Handle)
@@ -4609,7 +4628,7 @@ index bd1fe39..eeb4c4e 100644
  	}
  
  	// v0.31.0: MCP 2026 spec .well-known metadata endpoint
-@@ -610,15 +643,16 @@ func run() error {
+@@ -610,15 +644,16 @@ func run() error {
  	// 接続前に server capabilities を発見可能にする
  	mux.HandleFunc("/.well-known/mcp", func(w http.ResponseWriter, _ *http.Request) {
  		meta := map[string]any{
@@ -4632,7 +4651,7 @@ index bd1fe39..eeb4c4e 100644
  			},
  			"capabilities": map[string]any{
  				"tools":               len(mcpServer.ToolNames()),
-@@ -637,18 +671,18 @@ func run() error {
+@@ -637,18 +672,18 @@ func run() error {
  	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
  	// v0.12.0: per-route rate limiting で DoS / PAT 枯渇を防止
  	sbomLimiter := httplimit.New(httplimit.Options{
@@ -4657,7 +4676,7 @@ index bd1fe39..eeb4c4e 100644
  		KeyFn:           httplimit.TokenKey,
  	})
  	// 定期 GC で idle bucket を回収(メモリ leak 防止)
-@@ -761,8 +795,8 @@ type scannerMetricsAdapter struct {
+@@ -761,8 +796,8 @@ type scannerMetricsAdapter struct {
  	lastAt   *metrics.Gauge
  }
  
@@ -4668,14 +4687,15 @@ index bd1fe39..eeb4c4e 100644
  func (a *scannerMetricsAdapter) SetLastScanDuration(d time.Duration) {
  	a.duration.Set(d.Milliseconds())
  }
-@@ -832,6 +866,37 @@ type registryLookup struct {
+@@ -832,6 +867,88 @@ type registryLookup struct {
  	reg *registry.Registry
  }
  
 +// hookActivityAdapter adapts the hook receiver's per-project stats to the
-+// dashboard's HookActivityProvider (read-only Activity column).
++// dashboard's HookActivityProvider (read-only Activity column + drill-down).
 +type hookActivityAdapter struct {
-+	hr *hookreceiver.Receiver
++	hr  *hookreceiver.Receiver
++	srv *mcp.Server
 +}
 +
 +func (a hookActivityAdapter) ProjectActivity(slug string) (dashboard.HookActivity, bool) {
@@ -4703,10 +4723,60 @@ index bd1fe39..eeb4c4e 100644
 +	}, true
 +}
 +
++// ProjectActivityDetail builds the structured drill-down view for one project by
++// summarizing its recorded hook timeline (same pipeline as yagura_session_summary).
++func (a hookActivityAdapter) ProjectActivityDetail(slug string) (dashboard.ActivityDetail, bool) {
++	if a.srv == nil {
++		return dashboard.ActivityDetail{}, false
++	}
++	sum, ok := a.srv.RecordedSummary(slug, "", 0)
++	if !ok || sum.Events == 0 {
++		return dashboard.ActivityDetail{}, false
++	}
++	d := dashboard.ActivityDetail{
++		Slug:            slug,
++		Summary:         sum.Summary,
++		ToolInvocations: sum.ToolInvocations,
++		DistinctTools:   sum.DistinctTools,
++		ErrorRate:       sum.ErrorRate,
++		Agents:          sum.Agents,
++		ByTool:          sortedLabelCounts(sum.ByTool),
++		ByOperation:     sortedLabelCounts(sum.ByOperation),
++		ToolSequence:    sum.ToolSequence,
++		SequenceTrunc:   sum.SequenceTrunc,
++		Anomalies:       sum.Anomalies,
++	}
++	for _, e := range sum.Errors {
++		d.Errors = append(d.Errors, dashboard.ActivityError{
++			Tool: e.Tool, ErrorType: e.ErrorType, Agent: e.Agent,
++		})
++	}
++	return d, true
++}
++
++// sortedLabelCounts turns a label→count map into a deterministically ordered
++// slice: count descending, then label ascending (stable for templates).
++func sortedLabelCounts(m map[string]int) []dashboard.LabelCount {
++	if len(m) == 0 {
++		return nil
++	}
++	out := make([]dashboard.LabelCount, 0, len(m))
++	for k, v := range m {
++		out = append(out, dashboard.LabelCount{Label: k, Count: v})
++	}
++	sort.Slice(out, func(i, j int) bool {
++		if out[i].Count != out[j].Count {
++			return out[i].Count > out[j].Count
++		}
++		return out[i].Label < out[j].Label
++	})
++	return out
++}
++
  func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  	if l == nil || l.reg == nil || cwd == "" {
  		return "", false
-@@ -892,7 +957,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -892,7 +1009,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  
  	// Hook receiver stats (per-project event counters)
  	if hr != nil {
@@ -4715,7 +4785,7 @@ index bd1fe39..eeb4c4e 100644
  		for slug, st := range hr.AllStats() {
  			for event, count := range st.ByEvent {
  				hookCalls = append(hookCalls, promexport.Sample{
-@@ -900,6 +965,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -900,6 +1017,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  					Value:  float64(count),
  				})
  			}
@@ -4730,7 +4800,7 @@ index bd1fe39..eeb4c4e 100644
  			hookErrs = append(hookErrs, promexport.Sample{
  				Labels: map[string]string{"project": slug},
  				Value:  float64(st.ErrorCount),
-@@ -908,10 +981,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -908,10 +1033,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  		if len(hookCalls) > 0 {
  			out = append(out,
  				promexport.Collection{Name: "yagura_hook_events_total",
@@ -5175,10 +5245,10 @@ index 62e02cd..b34cb24 100644
  - [security-spec.md](security-spec.md) — threat model.
 diff --git a/yagura-v0.35.0/docs/desktop.md b/yagura-v0.35.0/docs/desktop.md
 new file mode 100644
-index 0000000..6056d46
+index 0000000..e5d1741
 --- /dev/null
 +++ b/yagura-v0.35.0/docs/desktop.md
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,70 @@
 +# Yagura as a desktop app (no terminal required)
 +
 +Yagura's core is a single local daemon, but you don't need the command line to
@@ -5232,7 +5302,11 @@ index 0000000..6056d46
 +The rest of the dashboard is a read-only overview: every project, its stage, CI
 +status, security signals, staleness, an **Activity** column (recorded agent
 +tool calls — total · errors · top tool, for any agent that posts to
-+`/hooks/agent`), and (if configured) agent quota. It refreshes on reload. Apart from the register form, the browser never mutates
++`/hooks/agent`), and (if configured) agent quota. **Click a project's Activity
++count** to open its drill-down (`/dashboard/activity?slug=…`): a structured,
++read-only summary of what the agents did — tool- and operation-level counts, the
++tool execution sequence, errors, detected anomalies, and which agents took part.
++It refreshes on reload. Apart from the register form, the browser never mutates
 +state directly — and even that goes through the MCP server, so sensor data stays
 +scanner-only.
 +
@@ -6996,8 +7070,115 @@ index af23d66..6b601a7 100644
  }
  
  // envInt は環境変数を int として読む。未設定 or parse 失敗時は def を返す。
+diff --git a/yagura-v0.35.0/internal/dashboard/activity_test.go b/yagura-v0.35.0/internal/dashboard/activity_test.go
+new file mode 100644
+index 0000000..3d047fc
+--- /dev/null
++++ b/yagura-v0.35.0/internal/dashboard/activity_test.go
+@@ -0,0 +1,101 @@
++package dashboard
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/registry"
++)
++
++func activityHandler(t *testing.T) *Handler {
++	t.Helper()
++	reg, err := registry.New(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	_ = reg.Add(&project.Project{Slug: "breeze", DisplayName: "Breeze", Repository: "o/breeze", Stage: project.StageActive})
++	h, err := New(reg, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return h
++}
++
++// the Activity cell links to the per-project drill-down.
++func TestActivity_ColumnLinksToDetail(t *testing.T) {
++	h := activityHandler(t)
++	h.SetHookActivityProvider(fakeHookActivity{m: map[string]HookActivity{
++		"breeze": {Total: 12, Errors: 2, TopTool: "Bash"},
++	}})
++	html := get(t, h, "/dashboard").Body.String()
++	if !strings.Contains(html, `href="/dashboard/activity?slug=breeze"`) {
++		t.Errorf("Activity cell should link to the drill-down:\n%s", html)
++	}
++}
++
++func TestActivity_DetailRendersSummary(t *testing.T) {
++	h := activityHandler(t)
++	h.SetHookActivityProvider(fakeHookActivity{
++		m: map[string]HookActivity{"breeze": {Total: 5}},
++		d: map[string]ActivityDetail{"breeze": {
++			Slug:            "breeze",
++			Summary:         "5 tool calls across 2 tools",
++			ToolInvocations: 5,
++			DistinctTools:   2,
++			ErrorRate:       0.2,
++			Agents:          []string{"claude_code", "gemini_cli"},
++			ByTool:          []LabelCount{{Label: "Bash", Count: 3}, {Label: "Read", Count: 2}},
++			ByOperation:     []LabelCount{{Label: "execute_tool", Count: 5}},
++			ToolSequence:    []string{"Bash", "Read", "Bash"},
++			Errors:          []ActivityError{{Tool: "Bash", ErrorType: "timeout", Agent: "claude_code"}},
++			Anomalies:       []string{"3 consecutive Bash errors"},
++		}},
++	})
++	w := get(t, h, "/dashboard/activity?slug=breeze")
++	if w.Code != 200 {
++		t.Fatalf("code = %d", w.Code)
++	}
++	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
++		t.Errorf("content-type = %q", ct)
++	}
++	html := w.Body.String()
++	for _, want := range []string{
++		"Breeze", "5 tool calls across 2 tools", "Bash", "Read",
++		"execute_tool", "20%", "timeout", "claude_code", "gemini_cli",
++		"3 consecutive Bash errors", `href="/dashboard"`,
++	} {
++		if !strings.Contains(html, want) {
++			t.Errorf("detail page missing %q", want)
++		}
++	}
++}
++
++// unknown slug (no recorded activity) must not 404 — it shows a guidance page.
++func TestActivity_UnknownSlugShowsEmptyState(t *testing.T) {
++	h := activityHandler(t)
++	h.SetHookActivityProvider(fakeHookActivity{d: map[string]ActivityDetail{}})
++	w := get(t, h, "/dashboard/activity?slug=ghost")
++	if w.Code != 200 {
++		t.Fatalf("code = %d, want 200 (no dead-ends)", w.Code)
++	}
++	html := w.Body.String()
++	if !strings.Contains(html, "No recorded agent activity") {
++		t.Errorf("expected empty-state guidance, got:\n%s", html)
++	}
++	if !strings.Contains(html, `href="/dashboard"`) {
++		t.Error("empty state should still offer a way back")
++	}
++}
++
++// no provider at all → still renders (empty state), never panics.
++func TestActivity_NoProvider(t *testing.T) {
++	h := activityHandler(t)
++	w := get(t, h, "/dashboard/activity?slug=breeze")
++	if w.Code != 200 {
++		t.Fatalf("code = %d", w.Code)
++	}
++	if !strings.Contains(w.Body.String(), "No recorded agent activity") {
++		t.Error("expected empty state without a provider")
++	}
++}
 diff --git a/yagura-v0.35.0/internal/dashboard/dashboard.go b/yagura-v0.35.0/internal/dashboard/dashboard.go
-index 6981102..4de35f5 100644
+index 6981102..ab477bb 100644
 --- a/yagura-v0.35.0/internal/dashboard/dashboard.go
 +++ b/yagura-v0.35.0/internal/dashboard/dashboard.go
 @@ -2,7 +2,11 @@
@@ -7013,8 +7194,19 @@ index 6981102..4de35f5 100644
  //   - 単一ページ: 全プロジェクトをテーブルで一覧表示
  //   - スタイル: インライン CSS(外部リソース読込なし)
  //   - 200ms 以内のレスポンスを目標(in-memory データなので余裕)
-@@ -33,6 +37,22 @@ type Handler struct {
- 	now      func() time.Time
+@@ -27,12 +31,64 @@ import (
+ 
+ // Handler は /dashboard HTTP ハンドラを生成する。
+ type Handler struct {
+-	registry *registry.Registry
+-	logger   *slog.Logger
+-	tmpl     *template.Template
+-	now      func() time.Time
++	registry     *registry.Registry
++	logger       *slog.Logger
++	tmpl         *template.Template
++	activityTmpl *template.Template
++	now          func() time.Time
  	// v0.14.0: optional agent status provider (Claude Code ↔ Windsurf handoff)
  	quota AgentStatusProvider
 +	// v0.35: optional per-project hook activity (any agent's recorded tool calls)
@@ -7029,14 +7221,49 @@ index 6981102..4de35f5 100644
 +	LastEvent time.Time
 +}
 +
++// ActivityDetail は 1 プロジェクトの構造化された agent 活動サマリ(read-only)。
++// session_summary(internal/sessionsummary)の view 用写し。dashboard を薄く保つため
++// sessionsummary を import せず、adapter 側で写像する(HookActivity と同じ流儀)。
++type ActivityDetail struct {
++	Slug            string
++	Summary         string
++	ToolInvocations int
++	DistinctTools   int
++	ErrorRate       float64
++	Agents          []string
++	ByTool          []LabelCount    // tool 別件数(降順 → 同数は name 昇順)
++	ByOperation     []LabelCount    // operation 別件数
++	Errors          []ActivityError // 直近のエラー
++	ToolSequence    []string        // 実行順(切り詰めあり)
++	SequenceTrunc   bool
++	Anomalies       []string
++}
++
++// LabelCount は「ラベル → 件数」の決定論的に並べ替え済みエントリ。
++type LabelCount struct {
++	Label string
++	Count int
++}
++
++// ActivityError は単一のエラーイベント(tool / 種別 / agent)。
++type ActivityError struct {
++	Tool      string
++	ErrorType string
++	Agent     string
++}
++
 +// HookActivityProvider は project ごとの記録済みフック活動を返す。
 +// 実装は cmd/yagura の hookreceiver adapter。nil の場合は Activity 列が "—"。
++//
++// ProjectActivityDetail は Activity 列のドリルダウン(/dashboard/activity?slug=…)用に
++// 構造化サマリを返す。記録が無ければ ok=false。
 +type HookActivityProvider interface {
 +	ProjectActivity(slug string) (HookActivity, bool)
++	ProjectActivityDetail(slug string) (ActivityDetail, bool)
  }
  
  // AgentStatusProvider は agent quota の最小 view interface。
-@@ -55,14 +75,14 @@ func New(reg *registry.Registry, logger *slog.Logger) (*Handler, error) {
+@@ -55,19 +111,54 @@ func New(reg *registry.Registry, logger *slog.Logger) (*Handler, error) {
  		logger = slog.Default()
  	}
  	tmpl, err := template.New("dashboard").Funcs(template.FuncMap{
@@ -7059,7 +7286,48 @@ index 6981102..4de35f5 100644
  	}).Parse(htmlTemplate)
  	if err != nil {
  		return nil, fmt.Errorf("parse template: %w", err)
-@@ -79,6 +99,12 @@ func (h *Handler) SetAgentStatusProvider(p AgentStatusProvider) {
+ 	}
+-	return &Handler{registry: reg, logger: logger, tmpl: tmpl, now: time.Now}, nil
++	atmpl, err := template.New("activity").Funcs(template.FuncMap{
++		"pct": func(f float64) string { return fmt.Sprintf("%.0f%%", f*100) },
++	}).Parse(activityHTMLTemplate)
++	if err != nil {
++		return nil, fmt.Errorf("parse activity template: %w", err)
++	}
++	return &Handler{registry: reg, logger: logger, tmpl: tmpl, activityTmpl: atmpl, now: time.Now}, nil
++}
++
++// serveActivityDetail は /dashboard/activity?slug=… を捌く(read-only ドリルダウン)。
++// slug が registry に無い / activity provider 未設定 / 記録無しのいずれでも、404 ではなく
++// 案内文 + dashboard への戻りリンクを返す(非 CLI ユーザの行き止まり回避)。
++func (h *Handler) serveActivityDetail(w http.ResponseWriter, r *http.Request) {
++	slug := r.URL.Query().Get("slug")
++	data := map[string]any{"Slug": slug}
++
++	var detail ActivityDetail
++	var ok bool
++	if slug != "" && h.hooks != nil {
++		detail, ok = h.hooks.ProjectActivityDetail(slug)
++	}
++	// 表示名は registry から(無ければ slug のまま)。
++	if p, err := h.registry.Get(slug); err == nil && p != nil {
++		data["DisplayName"] = p.DisplayName
++	} else {
++		data["DisplayName"] = slug
++	}
++	data["Found"] = ok
++	if ok {
++		data["Detail"] = detail
++	}
++
++	w.Header().Set("Content-Type", "text/html; charset=utf-8")
++	if err := h.activityTmpl.Execute(w, data); err != nil {
++		h.logger.Error("render activity detail", "slug", slug, "err", err)
++	}
+ }
+ 
+ // SetNowFunc lets tests pin the current time (used for stale calculations).
+@@ -79,6 +170,12 @@ func (h *Handler) SetAgentStatusProvider(p AgentStatusProvider) {
  	h.quota = p
  }
  
@@ -7072,7 +7340,7 @@ index 6981102..4de35f5 100644
  // ServeHTTP は GET /dashboard を捌く。
  func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-@@ -87,6 +113,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+@@ -87,6 +184,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -7083,10 +7351,17 @@ index 6981102..4de35f5 100644
 +		return
 +	}
 +
++	// v0.35: Activity 列のドリルダウン(read-only)。非 CLI ユーザが「エージェントが
++	// 何をしたか」を totals だけでなく構造化サマリで見られる。additive — 既知 path のみ。
++	if r.URL.Path == "/dashboard/activity" {
++		h.serveActivityDetail(w, r)
++		return
++	}
++
  	now := h.now()
  	projects := h.registry.List()
  	sort.SliceStable(projects, func(i, j int) bool {
-@@ -130,6 +163,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+@@ -130,6 +241,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  		"Projects":    projects,
  	}
  
@@ -7104,7 +7379,82 @@ index 6981102..4de35f5 100644
  	// v0.14.0: agent panel data
  	if h.quota != nil {
  		statuses := h.quota.AllStatuses()
-@@ -406,6 +450,13 @@ const htmlTemplate = `<!DOCTYPE html>
+@@ -400,12 +522,88 @@ func scorecardTitle(s float64) string {
+ 	}
+ }
+ 
++// activityHTMLTemplate は Activity 列ドリルダウン(/dashboard/activity?slug=…)の
++// 単一プロジェクト活動詳細ページ。read-only。dashboard 本体と同じダークテーマ。
++const activityHTMLTemplate = `<!DOCTYPE html>
++<html lang="ja">
++<head>
++<meta charset="UTF-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>Activity — {{.DisplayName}} — Yagura</title>
++<link rel="manifest" href="/dashboard/manifest.webmanifest">
++<link rel="icon" type="image/svg+xml" href="/dashboard/icon.svg">
++<style>
++:root{color-scheme:dark}
++body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#c9d1d9;margin:0;padding:24px;line-height:1.5}
++a{color:#58a6ff;text-decoration:none}a:hover{text-decoration:underline}
++h1{font-size:20px;margin:0 0 4px}
++.muted{color:#8b949e;font-size:13px}
++.back{display:inline-block;margin-bottom:16px}
++.cards{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0}
++.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;min-width:120px}
++.card .n{font-size:22px;font-weight:600}
++.card .l{color:#8b949e;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
++.summary{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;margin:12px 0}
++h2{font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:.04em;margin:24px 0 8px;border-bottom:1px solid #21262d;padding-bottom:4px}
++table{border-collapse:collapse;width:100%;max-width:560px}
++th,td{text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid #21262d;font-size:13px}
++th{color:#8b949e;font-weight:500}
++td.num{text-align:right;font-variant-numeric:tabular-nums}
++.bar{display:inline-block;height:8px;background:#1f6feb;border-radius:2px;vertical-align:middle;margin-left:8px}
++.seq code{background:#161b22;border:1px solid #30363d;border-radius:4px;padding:1px 6px;margin:2px;display:inline-block;font-size:12px}
++.err{color:#f85149}
++.warn{color:#d29922}
++.tag{background:#21262d;border-radius:10px;padding:1px 8px;font-size:12px;margin-right:4px}
++.empty{color:#6e7681;font-style:italic}
++</style>
++</head>
++<body>
++<a class="back" href="/dashboard">&larr; Portfolio dashboard</a>
++<h1>{{.DisplayName}}</h1>
++<div class="muted">Agent activity (any agent) recorded by the hook receiver · <code>{{.Slug}}</code></div>
++{{if not .Found}}
++<p class="empty" style="margin-top:24px">No recorded agent activity for this project yet. Tool calls appear here once an agent posts lifecycle events to <code>/hooks/agent</code>.</p>
++{{else}}{{with .Detail}}
++<div class="summary">{{.Summary}}</div>
++<div class="cards">
++  <div class="card"><div class="n">{{.ToolInvocations}}</div><div class="l">Tool calls</div></div>
++  <div class="card"><div class="n">{{.DistinctTools}}</div><div class="l">Distinct tools</div></div>
++  <div class="card"><div class="n {{if gt .ErrorRate 0.0}}err{{end}}">{{pct .ErrorRate}}</div><div class="l">Error rate</div></div>
++</div>
++{{if .Agents}}<div class="muted">Agents: {{range .Agents}}<span class="tag">{{.}}</span>{{end}}</div>{{end}}
++
++<h2>By tool</h2>
++{{if .ByTool}}<table>{{range .ByTool}}<tr><td>{{.Label}}</td><td class="num">{{.Count}}</td></tr>{{end}}</table>{{else}}<p class="empty">none</p>{{end}}
++
++<h2>By operation</h2>
++{{if .ByOperation}}<table>{{range .ByOperation}}<tr><td>{{.Label}}</td><td class="num">{{.Count}}</td></tr>{{end}}</table>{{else}}<p class="empty">none</p>{{end}}
++
++{{if .ToolSequence}}<h2>Tool sequence{{if .SequenceTrunc}} (truncated){{end}}</h2>
++<div class="seq">{{range .ToolSequence}}<code>{{.}}</code>{{end}}</div>{{end}}
++
++{{if .Errors}}<h2>Errors</h2>
++<table><tr><th>Tool</th><th>Type</th><th>Agent</th></tr>
++{{range .Errors}}<tr><td class="err">{{if .Tool}}{{.Tool}}{{else}}—{{end}}</td><td>{{if .ErrorType}}{{.ErrorType}}{{else}}—{{end}}</td><td class="muted">{{if .Agent}}{{.Agent}}{{else}}—{{end}}</td></tr>{{end}}</table>{{end}}
++
++{{if .Anomalies}}<h2>Anomalies</h2>
++<ul>{{range .Anomalies}}<li class="warn">{{.}}</li>{{end}}</ul>{{end}}
++{{end}}{{end}}
++</body>
++</html>`
++
+ const htmlTemplate = `<!DOCTYPE html>
+ <html lang="ja">
+ <head>
  <meta charset="UTF-8">
  <title>Yagura Portfolio Dashboard</title>
  <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7118,7 +7468,7 @@ index 6981102..4de35f5 100644
  <style>
  * { box-sizing: border-box; margin: 0; padding: 0; }
  html { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
-@@ -458,6 +509,17 @@ tr:hover td { background: #161b22; }
+@@ -458,6 +656,17 @@ tr:hover td { background: #161b22; }
  footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #30363d; color: #6e7681; font-size: 12px; text-align: center; }
  .empty { text-align: center; padding: 40px; color: #8b949e; }
  .empty code { background: #21262d; padding: 2px 8px; border-radius: 3px; }
@@ -7136,7 +7486,7 @@ index 6981102..4de35f5 100644
  .summary { color: #8b949e; font-size: 12px; margin-bottom: 12px; }
  
  /* ─── WCAG 2.1 AA accessibility ─────────────────────────── */
-@@ -560,10 +622,22 @@ a:focus-visible {
+@@ -560,10 +769,22 @@ a:focus-visible {
      <div class="kpi {{if gt .Stale 0}}warn{{else}}ok{{end}}" role="status"><div class="label">Stale ≥14d</div><div class="val">{{.Stale}}</div></div>
    </div>
  
@@ -7160,7 +7510,7 @@ index 6981102..4de35f5 100644
    </div>
    {{else}}
    <table aria-label="Registered projects">
-@@ -580,6 +654,7 @@ a:focus-visible {
+@@ -580,6 +801,7 @@ a:focus-visible {
          <th scope="col" abbr="Open pull requests">PR</th>
          <th scope="col" abbr="Open issues">Iss</th>
          <th scope="col">Last commit</th>
@@ -7168,15 +7518,15 @@ index 6981102..4de35f5 100644
          <th scope="col" title="OpenSSF Scorecard score (0-10) and vulnerability counts">Security</th>
          <th scope="col">Tags</th>
        </tr>
-@@ -597,6 +672,7 @@ a:focus-visible {
+@@ -597,6 +819,7 @@ a:focus-visible {
          <td>{{.OpenPRs}}</td>
          <td>{{.OpenIssues}}</td>
          <td class="{{staleClass .LatestActivity $.Now .Stage}}">{{daysSince .LatestActivity $.Now}}</td>
-+        <td class="activity">{{$a := index $.Activity .Slug}}{{if gt $a.Total 0}}<span title="tool calls">{{$a.Total}}</span>{{if gt $a.Errors 0}} <span class="ci-fail" title="errors">{{$a.Errors}}⚠</span>{{end}}{{if $a.TopTool}} <small style="color:#8b949e" title="top tool">{{$a.TopTool}}</small>{{end}}{{else}}<span style="color:#6e7681">—</span>{{end}}</td>
++        <td class="activity">{{$a := index $.Activity .Slug}}{{if gt $a.Total 0}}<a href="/dashboard/activity?slug={{.Slug}}" title="view session activity">{{$a.Total}}</a>{{if gt $a.Errors 0}} <span class="ci-fail" title="errors">{{$a.Errors}}⚠</span>{{end}}{{if $a.TopTool}} <small style="color:#8b949e" title="top tool">{{$a.TopTool}}</small>{{end}}{{else}}<span style="color:#6e7681">—</span>{{end}}</td>
          <td class="security">{{securityCell .}}</td>
          <td class="tags">{{range .Tags}}<span class="tag">{{.}}</span>{{end}}</td>
        </tr>
-@@ -653,7 +729,29 @@ a:focus-visible {
+@@ -653,7 +876,29 @@ a:focus-visible {
    {{end}}
    </main>
  
@@ -7299,10 +7649,10 @@ index 0000000..3c7487c
 +}
 diff --git a/yagura-v0.35.0/internal/dashboard/pwa_test.go b/yagura-v0.35.0/internal/dashboard/pwa_test.go
 new file mode 100644
-index 0000000..a314af8
+index 0000000..d8d30ea
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/dashboard/pwa_test.go
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,184 @@
 +package dashboard
 +
 +import (
@@ -7442,11 +7792,19 @@ index 0000000..a314af8
 +	}
 +}
 +
-+type fakeHookActivity struct{ m map[string]HookActivity }
++type fakeHookActivity struct {
++	m map[string]HookActivity
++	d map[string]ActivityDetail
++}
 +
 +func (f fakeHookActivity) ProjectActivity(slug string) (HookActivity, bool) {
 +	a, ok := f.m[slug]
 +	return a, ok
++}
++
++func (f fakeHookActivity) ProjectActivityDetail(slug string) (ActivityDetail, bool) {
++	d, ok := f.d[slug]
++	return d, ok
 +}
 +
 +func TestDashboard_ActivityColumn(t *testing.T) {
@@ -12374,10 +12732,10 @@ index 0000000..b1cf56b
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_sessionsummary.go b/yagura-v0.35.0/internal/mcp/tools_sessionsummary.go
 new file mode 100644
-index 0000000..c0edf29
+index 0000000..1c8b35f
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_sessionsummary.go
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,129 @@
 +// tools_sessionsummary.go: yagura_session_summary — エージェントのイベント列を
 +// セッション活動の構造化サマリへ集約する(internal/sessionsummary)。
 +//
@@ -12450,12 +12808,8 @@ index 0000000..c0edf29
 +				if hr == nil {
 +					return nil, &ToolError{Code: "unavailable", Message: "hook receiver not configured"}
 +				}
-+				limit := in.Limit
-+				if limit <= 0 {
-+					limit = 500
-+				}
-+				recorded := hr.Timeline(in.Slug, time.Time{}, "", limit)
-+				norm = recordedToEvents(recorded, in.Session)
++				sum, _ := srv.RecordedSummary(in.Slug, in.Session, in.Limit)
++				return sum, nil
 +			default:
 +				return nil, &ToolError{Code: "invalid_input", Message: "provide either 'events' or 'slug'"}
 +			}
@@ -12463,6 +12817,23 @@ index 0000000..c0edf29
 +			return sessionsummary.Summarize(norm), nil
 +		},
 +	}
++}
++
++// RecordedSummary summarizes the daemon's recorded hook timeline for a project.
++// 同じ pipeline(Timeline → recordedToEvents → Summarize)を yagura_session_summary
++// と dashboard の活動ドリルダウンの双方が使う(single source of truth)。ok は記録が
++// 1 件でもあれば true。hook receiver 未設定なら空サマリ + false。
++func (s *Server) RecordedSummary(slug, session string, limit int) (sessionsummary.Summary, bool) {
++	hr := s.HookReceiver()
++	if hr == nil {
++		return sessionsummary.Summary{}, false
++	}
++	if limit <= 0 {
++		limit = 500
++	}
++	recorded := hr.Timeline(slug, time.Time{}, "", limit)
++	norm := recordedToEvents(recorded, session)
++	return sessionsummary.Summarize(norm), len(norm) > 0
 +}
 +
 +// recordedToEvents は記録済み hook event を agentevent.Event へ写す。
@@ -12496,19 +12867,67 @@ index 0000000..c0edf29
 +}
 diff --git a/yagura-v0.35.0/internal/mcp/tools_sessionsummary_test.go b/yagura-v0.35.0/internal/mcp/tools_sessionsummary_test.go
 new file mode 100644
-index 0000000..f1f63b3
+index 0000000..e8a2a90
 --- /dev/null
 +++ b/yagura-v0.35.0/internal/mcp/tools_sessionsummary_test.go
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,136 @@
 +package mcp
 +
 +import (
 +	"context"
 +	"encoding/json"
++	"net/http/httptest"
++	"path/filepath"
++	"strings"
 +	"testing"
 +
 +	"github.com/shizukutanaka/yagura/internal/hookreceiver"
 +)
++
++// fixedLookup resolves every cwd to one slug (test helper).
++type fixedLookup struct{ slug string }
++
++func (f fixedLookup) ResolveByPath(string) (string, bool) { return f.slug, true }
++
++func TestRecordedSummary(t *testing.T) {
++	hr, err := hookreceiver.NewReceiver(filepath.Join(t.TempDir(), "hooks.jsonl"), fixedLookup{slug: "breeze"}, 100)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, payload := range []string{
++		`{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/x"}`,
++		`{"hook_event_name":"PostToolUse","tool_name":"Bash","cwd":"/x"}`,
++		`{"agent":"gemini_cli","event":"beforeToolCall","tool":"Read","cwd":"/x"}`,
++	} {
++		hr.Handle(httptest.NewRecorder(), httptest.NewRequest("POST", "/hooks/agent", strings.NewReader(payload)))
++	}
++
++	srv := New("", nil)
++	srv.SetHookReceiver(hr)
++
++	sum, ok := srv.RecordedSummary("breeze", "", 0)
++	if !ok {
++		t.Fatal("expected ok for a project with recorded events")
++	}
++	if sum.ByTool["Bash"] != 1 || sum.ByTool["Read"] != 1 {
++		t.Errorf("by_tool = %+v", sum.ByTool)
++	}
++	if sum.ToolInvocations != 2 {
++		t.Errorf("tool_invocations = %d, want 2", sum.ToolInvocations)
++	}
++
++	// unknown project → ok=false, empty summary
++	if _, ok := srv.RecordedSummary("ghost", "", 0); ok {
++		t.Error("expected ok=false for a project with no recorded events")
++	}
++}
++
++func TestRecordedSummary_NoReceiver(t *testing.T) {
++	srv := New("", nil)
++	if _, ok := srv.RecordedSummary("breeze", "", 0); ok {
++		t.Error("expected ok=false when no hook receiver is configured")
++	}
++}
 +
 +func TestSessionSummaryTool(t *testing.T) {
 +	tool := buildSessionSummaryTool(Deps{}, nil)
