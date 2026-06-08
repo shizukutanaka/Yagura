@@ -320,10 +320,10 @@ index 0000000..367f50c
 +  ]
 +}
 diff --git a/yagura-v0.35.0/CHANGELOG.md b/yagura-v0.35.0/CHANGELOG.md
-index 9b29eec..734bded 100644
+index 9b29eec..4e5ace0 100644
 --- a/yagura-v0.35.0/CHANGELOG.md
 +++ b/yagura-v0.35.0/CHANGELOG.md
-@@ -4,6 +4,753 @@ All notable changes to Yagura are documented here. Format follows
+@@ -4,6 +4,767 @@ All notable changes to Yagura are documented here. Format follows
  [Keep a Changelog](https://keepachangelog.com); versions follow
  [SemVer](https://semver.org).
  
@@ -1059,6 +1059,20 @@ index 9b29eec..734bded 100644
 +  `health sweep … alerts=1 critical=1 has_critical=true` を確認。テスト追加(scanner: hook が
 +  cycle 毎に走る/nil hook 安全、main: healthSweep が critical を検出/健全 portfolio)。
 +  外部依存ゼロ、新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。
++- **Dashboard: ポートフォリオ health banner(health sweep を log だけでなく可視化)**
++  (`internal/dashboard` / `cmd/yagura/main.go`)。前 slice で追加した periodic health
++  sweep は log 専用で、非 CLI ユーザには見えなかった。直近 sweep の結果を daemon が
++  in-memory holder(`healthState`、RWMutex で HTTP 読みと scanner 書きを保護)に保持し、
++  dashboard 上部の KPI 行直下に health banner として表示する。alert が 0 件、provider 未
++  設定、初回 sweep 前(ok=false)はいずれも banner 非表示。critical があれば赤(`⛔`)、
++  それ以外は黄(`⚠`)で「Portfolio health: N alerts — X critical · Y high …(swept HH:MM)」
++  を出し、`alert_fix` で詳細を見るよう促す。read-only(mutation なし)で trust base 不変、
++  additive。provider は `PortfolioHealthProvider` interface 経由で疎結合(dashboard は
++  alertfix を import しない、`HookActivity` と同じ流儀)。live dogfood: vuln_critical=2 の
++  プロジェクトで `/dashboard` に `health-banner crit` + 「Portfolio health: 1 alert /
++  1 critical」を確認。テスト追加(banner: alert 有り表示/0 件非表示/provider 無し非表示/
++  初回前非表示、healthState: 最新 sweep を反映・sweep 前は ok=false)。外部依存ゼロ、
++  新規 tool/package なし(tool 62 / package 50 不変)、ADR-0001 維持。
 +
 +### What's not yet
 +
@@ -1077,7 +1091,7 @@ index 9b29eec..734bded 100644
  ## [v0.34.1] - 2026-05-16
  
  ### Theme — "GitHub-ready: README全面書直し + MCP_TOOLS.md自動生成 + missing OSS doc"
-@@ -7684,7 +8431,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
+@@ -7684,7 +8445,7 @@ v0.13.0 shipped the agent handoff layer but identified 5 UX gaps. v0.14.0 closes
  
  Wired into `cmd/yagura/main.go` at daemon startup:
  ```
@@ -4514,10 +4528,10 @@ index 0000000..dc7fbf7
 +}
 diff --git a/yagura-v0.35.0/cmd/yagura/healthsweep_test.go b/yagura-v0.35.0/cmd/yagura/healthsweep_test.go
 new file mode 100644
-index 0000000..43cb165
+index 0000000..b9517d5
 --- /dev/null
 +++ b/yagura-v0.35.0/cmd/yagura/healthsweep_test.go
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,81 @@
 +package main
 +
 +import (
@@ -4556,6 +4570,29 @@ index 0000000..43cb165
 +	}
 +	if report.BySeverity[alertfix.SevCritical] < 1 {
 +		t.Errorf("expected >=1 critical, got %d", report.BySeverity[alertfix.SevCritical])
++	}
++}
++
++func TestHealthState_ProviderReflectsLatestSweep(t *testing.T) {
++	h := &healthState{}
++	// before any sweep → not ready
++	if _, ok := h.PortfolioHealth(); ok {
++		t.Error("PortfolioHealth should be ok=false before the first sweep")
++	}
++	h.set(alertfix.Report{
++		Total:       2,
++		HasCritical: true,
++		BySeverity:  map[alertfix.Severity]int{alertfix.SevCritical: 1, alertfix.SevHigh: 1},
++	})
++	hs, ok := h.PortfolioHealth()
++	if !ok {
++		t.Fatal("PortfolioHealth should be ok after a sweep")
++	}
++	if hs.Total != 2 || hs.Critical != 1 || hs.High != 1 || !hs.HasCritical {
++		t.Errorf("summary mismatch: %+v", hs)
++	}
++	if hs.At.IsZero() {
++		t.Error("expected a sweep timestamp")
 +	}
 +}
 +
@@ -4697,7 +4734,7 @@ index cfb6e51..9503a34 100644
  	if len(r.Result.Tools) != len(expectedTools) {
  		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
 diff --git a/yagura-v0.35.0/cmd/yagura/main.go b/yagura-v0.35.0/cmd/yagura/main.go
-index bd1fe39..e87f0b2 100644
+index bd1fe39..076652c 100644
 --- a/yagura-v0.35.0/cmd/yagura/main.go
 +++ b/yagura-v0.35.0/cmd/yagura/main.go
 @@ -10,6 +10,7 @@
@@ -4708,7 +4745,7 @@ index bd1fe39..e87f0b2 100644
  // 10. SIGTERM 受信で graceful shutdown
  package main
  
-@@ -22,42 +23,43 @@ import (
+@@ -22,42 +23,44 @@ import (
  	"net/http"
  	"net/http/pprof"
  	"os"
@@ -4718,6 +4755,7 @@ index bd1fe39..e87f0b2 100644
  	"runtime"
 +	"sort"
  	"strings"
++	"sync"
  	"sync/atomic"
  	"time"
  
@@ -4763,7 +4801,7 @@ index bd1fe39..e87f0b2 100644
  
  	// graceful shutdown 関連
  	readyDrainGrace   = 5 * time.Second
-@@ -108,6 +110,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
+@@ -108,6 +111,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
  			}
  			return 0
  		}
@@ -4774,7 +4812,7 @@ index bd1fe39..e87f0b2 100644
  	}
  	if err := run(); err != nil {
  		fmt.Fprintf(stderr, "yagura: %v\n", err)
-@@ -128,6 +134,24 @@ Usage:
+@@ -128,6 +135,24 @@ Usage:
    yagura secret get <name>     Decrypt and print <name> to stdout
    yagura secret delete <name>  Remove <name>
  
@@ -4799,7 +4837,7 @@ index bd1fe39..e87f0b2 100644
  Set passphrase via YAGURA_SECRET_PASSPHRASE for set/get.
  Configuration is via environment variables. See documentation.
  `
-@@ -135,10 +159,11 @@ Configuration is via environment variables. See documentation.
+@@ -135,10 +160,11 @@ Configuration is via environment variables. See documentation.
  // runSecret は `yagura secret <subcommand>` を処理する。
  //
  // Subcommands:
@@ -4815,7 +4853,7 @@ index bd1fe39..e87f0b2 100644
  //
  // パスフレーズは環境変数 YAGURA_SECRET_PASSPHRASE で渡す(CLI スクリプト向け)。
  // インタラクティブ tty 入力は echo OFF が無依存で困難なため未対応(将来作業)。
-@@ -152,11 +177,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
+@@ -152,11 +178,12 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
  		return nil
  	}
  
@@ -4830,7 +4868,7 @@ index bd1fe39..e87f0b2 100644
  	if err != nil {
  		return fmt.Errorf("init store: %w", err)
  	}
-@@ -239,15 +265,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
+@@ -239,15 +266,13 @@ func bytesTrimTrailingNewline(b []byte) []byte {
  // この関数は GITHUB_TOKEN を読まない — verify は通常運用とは独立して
  // オフラインでも実行できる(disaster recovery を意識)。
  func verifyAudit(out io.Writer) error {
@@ -4852,15 +4890,25 @@ index bd1fe39..e87f0b2 100644
  	results, err := audit.Verify(auditDir)
  	if err != nil {
  		return fmt.Errorf("verify: %w", err)
-@@ -368,6 +392,22 @@ func run() error {
+@@ -361,6 +386,7 @@ func run() error {
+ 	sbomGen := sbom.New()              // CycloneDX 1.5 SBOM 生成器(zero-dep)
+ 	ghaAuditor := ghaaudit.New()       // GitHub Actions workflow 静的解析器(zero-dep)
+ 
++	health := &healthState{}
+ 	scan := scanner.New(scanner.Config{
+ 		Registry:    reg,
+ 		GitHub:      gh,
+@@ -368,6 +394,24 @@ func run() error {
  		Metrics:     scannerMetrics,
  		Interval:    cfg.ScanInterval,
  		ScanTimeout: cfg.ScanTimeout,
 +		// Scanner ↔ alert_fix periodic loop (v0.35): after each scan cycle, run a
-+		// health sweep over the freshly-updated sensor data and log a structured
-+		// summary so operators see health drift without an on-demand alert_fix call.
++		// health sweep over the freshly-updated sensor data, stash the latest
++		// result (for the dashboard banner) and log a structured summary so
++		// operators see health drift without an on-demand alert_fix call.
 +		AfterScan: func(context.Context) {
 +			report := healthSweep(reg)
++			health.set(report)
 +			if report.Total > 0 {
 +				logger.Info("health sweep",
 +					"projects", report.ProjectsScanned,
@@ -4875,7 +4923,7 @@ index bd1fe39..e87f0b2 100644
  	})
  	scan.Start(ctx)
  	logger.Info("scanner started", "interval", cfg.ScanInterval)
-@@ -568,6 +608,12 @@ func run() error {
+@@ -568,6 +612,14 @@ func run() error {
  	// v0.14.0: agent handoff panel on dashboard
  	dash.SetAgentStatusProvider(quotaMon)
  
@@ -4884,11 +4932,13 @@ index bd1fe39..e87f0b2 100644
 +	if hookReceiver != nil {
 +		dash.SetHookActivityProvider(hookActivityAdapter{hr: hookReceiver, srv: mcpServer})
 +	}
++	// v0.35: portfolio health banner fed by the scanner's periodic alert_fix sweep.
++	dash.SetPortfolioHealthProvider(health)
 +
  	// 9. HTTP server
  	var ready atomic.Bool
  	ready.Store(true)
-@@ -603,6 +649,10 @@ func run() error {
+@@ -603,6 +655,10 @@ func run() error {
  	// observation mode: 全 event を JSONL persist、空 response で agent 継続
  	if hookReceiver != nil {
  		mux.HandleFunc("/hooks/claude-code", hookReceiver.Handle)
@@ -4899,7 +4949,7 @@ index bd1fe39..e87f0b2 100644
  	}
  
  	// v0.31.0: MCP 2026 spec .well-known metadata endpoint
-@@ -610,15 +660,16 @@ func run() error {
+@@ -610,15 +666,16 @@ func run() error {
  	// 接続前に server capabilities を発見可能にする
  	mux.HandleFunc("/.well-known/mcp", func(w http.ResponseWriter, _ *http.Request) {
  		meta := map[string]any{
@@ -4922,7 +4972,7 @@ index bd1fe39..e87f0b2 100644
  			},
  			"capabilities": map[string]any{
  				"tools":               len(mcpServer.ToolNames()),
-@@ -637,18 +688,18 @@ func run() error {
+@@ -637,18 +694,18 @@ func run() error {
  	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
  	// v0.12.0: per-route rate limiting で DoS / PAT 枯渇を防止
  	sbomLimiter := httplimit.New(httplimit.Options{
@@ -4947,7 +4997,7 @@ index bd1fe39..e87f0b2 100644
  		KeyFn:           httplimit.TokenKey,
  	})
  	// 定期 GC で idle bucket を回収(メモリ leak 防止)
-@@ -761,8 +812,8 @@ type scannerMetricsAdapter struct {
+@@ -761,8 +818,8 @@ type scannerMetricsAdapter struct {
  	lastAt   *metrics.Gauge
  }
  
@@ -4958,7 +5008,7 @@ index bd1fe39..e87f0b2 100644
  func (a *scannerMetricsAdapter) SetLastScanDuration(d time.Duration) {
  	a.duration.Set(d.Milliseconds())
  }
-@@ -832,6 +883,103 @@ type registryLookup struct {
+@@ -832,6 +889,141 @@ type registryLookup struct {
  	reg *registry.Registry
  }
  
@@ -4975,6 +5025,44 @@ index bd1fe39..e87f0b2 100644
 +		snaps = append(snaps, mcp.ProjectToSnapshot(*p))
 +	}
 +	return alertfix.EvaluateAll(snaps, alertfix.DefaultThresholds())
++}
++
++// healthState holds the latest health-sweep report for read-only consumers
++// (the dashboard banner). Updated by the scanner's AfterScan hook; concurrent
++// reads from HTTP handlers are guarded by the mutex.
++type healthState struct {
++	mu     sync.RWMutex
++	report alertfix.Report
++	at     time.Time
++	set_   bool
++}
++
++func (h *healthState) set(r alertfix.Report) {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	h.report = r
++	h.at = time.Now()
++	h.set_ = true
++}
++
++// PortfolioHealth implements dashboard.PortfolioHealthProvider. ok is false until
++// the first sweep has run.
++func (h *healthState) PortfolioHealth() (dashboard.HealthSummary, bool) {
++	h.mu.RLock()
++	defer h.mu.RUnlock()
++	if !h.set_ {
++		return dashboard.HealthSummary{}, false
++	}
++	r := h.report
++	return dashboard.HealthSummary{
++		Total:       r.Total,
++		Critical:    r.BySeverity[alertfix.SevCritical],
++		High:        r.BySeverity[alertfix.SevHigh],
++		Medium:      r.BySeverity[alertfix.SevMedium],
++		Low:         r.BySeverity[alertfix.SevLow],
++		HasCritical: r.HasCritical,
++		At:          h.at,
++	}, true
 +}
 +
 +// hookActivityAdapter adapts the hook receiver's per-project stats to the
@@ -5062,7 +5150,7 @@ index bd1fe39..e87f0b2 100644
  func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
  	if l == nil || l.reg == nil || cwd == "" {
  		return "", false
-@@ -892,7 +1040,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -892,7 +1084,7 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  
  	// Hook receiver stats (per-project event counters)
  	if hr != nil {
@@ -5071,7 +5159,7 @@ index bd1fe39..e87f0b2 100644
  		for slug, st := range hr.AllStats() {
  			for event, count := range st.ByEvent {
  				hookCalls = append(hookCalls, promexport.Sample{
-@@ -900,6 +1048,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -900,6 +1092,14 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  					Value:  float64(count),
  				})
  			}
@@ -5086,7 +5174,7 @@ index bd1fe39..e87f0b2 100644
  			hookErrs = append(hookErrs, promexport.Sample{
  				Labels: map[string]string{"project": slug},
  				Value:  float64(st.ErrorCount),
-@@ -908,10 +1064,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
+@@ -908,10 +1108,13 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver) []promexpo
  		if len(hookCalls) > 0 {
  			out = append(out,
  				promexport.Collection{Name: "yagura_hook_events_total",
@@ -7585,7 +7673,7 @@ index 0000000..3d047fc
 +	}
 +}
 diff --git a/yagura-v0.35.0/internal/dashboard/dashboard.go b/yagura-v0.35.0/internal/dashboard/dashboard.go
-index 6981102..ab477bb 100644
+index 6981102..76e13e6 100644
 --- a/yagura-v0.35.0/internal/dashboard/dashboard.go
 +++ b/yagura-v0.35.0/internal/dashboard/dashboard.go
 @@ -2,7 +2,11 @@
@@ -7601,7 +7689,7 @@ index 6981102..ab477bb 100644
  //   - 単一ページ: 全プロジェクトをテーブルで一覧表示
  //   - スタイル: インライン CSS(外部リソース読込なし)
  //   - 200ms 以内のレスポンスを目標(in-memory データなので余裕)
-@@ -27,12 +31,64 @@ import (
+@@ -27,12 +31,83 @@ import (
  
  // Handler は /dashboard HTTP ハンドラを生成する。
  type Handler struct {
@@ -7618,6 +7706,8 @@ index 6981102..ab477bb 100644
  	quota AgentStatusProvider
 +	// v0.35: optional per-project hook activity (any agent's recorded tool calls)
 +	hooks HookActivityProvider
++	// v0.35: optional portfolio health summary (latest alert_fix sweep)
++	health PortfolioHealthProvider
 +}
 +
 +// HookActivity は 1 プロジェクトのエージェント活動の最小 view(read-only 表示用)。
@@ -7667,10 +7757,27 @@ index 6981102..ab477bb 100644
 +type HookActivityProvider interface {
 +	ProjectActivity(slug string) (HookActivity, bool)
 +	ProjectActivityDetail(slug string) (ActivityDetail, bool)
++}
++
++// HealthSummary は直近の alert_fix health sweep のポートフォリオ集計(read-only 表示用)。
++type HealthSummary struct {
++	Total       int
++	Critical    int
++	High        int
++	Medium      int
++	Low         int
++	HasCritical bool
++	At          time.Time
++}
++
++// PortfolioHealthProvider は直近の health sweep 結果を返す。実装は cmd/yagura の
++// scanner AfterScan が更新する holder。nil / ok=false なら banner を出さない。
++type PortfolioHealthProvider interface {
++	PortfolioHealth() (HealthSummary, bool)
  }
  
  // AgentStatusProvider は agent quota の最小 view interface。
-@@ -55,19 +111,54 @@ func New(reg *registry.Registry, logger *slog.Logger) (*Handler, error) {
+@@ -55,19 +130,54 @@ func New(reg *registry.Registry, logger *slog.Logger) (*Handler, error) {
  		logger = slog.Default()
  	}
  	tmpl, err := template.New("dashboard").Funcs(template.FuncMap{
@@ -7734,7 +7841,7 @@ index 6981102..ab477bb 100644
  }
  
  // SetNowFunc lets tests pin the current time (used for stale calculations).
-@@ -79,6 +170,12 @@ func (h *Handler) SetAgentStatusProvider(p AgentStatusProvider) {
+@@ -79,6 +189,18 @@ func (h *Handler) SetAgentStatusProvider(p AgentStatusProvider) {
  	h.quota = p
  }
  
@@ -7744,10 +7851,16 @@ index 6981102..ab477bb 100644
 +	h.hooks = p
 +}
 +
++// SetPortfolioHealthProvider attaches the latest health-sweep summary source.
++// Pass nil to hide the portfolio health banner.
++func (h *Handler) SetPortfolioHealthProvider(p PortfolioHealthProvider) {
++	h.health = p
++}
++
  // ServeHTTP は GET /dashboard を捌く。
  func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-@@ -87,6 +184,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+@@ -87,6 +209,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  
@@ -7768,7 +7881,7 @@ index 6981102..ab477bb 100644
  	now := h.now()
  	projects := h.registry.List()
  	sort.SliceStable(projects, func(i, j int) bool {
-@@ -130,6 +241,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+@@ -130,6 +266,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  		"Projects":    projects,
  	}
  
@@ -7783,10 +7896,18 @@ index 6981102..ab477bb 100644
 +	}
 +	data["Activity"] = activity
 +
++	// v0.35: portfolio health banner (latest alert_fix sweep). Only shown when a
++	// provider is wired and the sweep found alerts.
++	if h.health != nil {
++		if hs, ok := h.health.PortfolioHealth(); ok && hs.Total > 0 {
++			data["Health"] = hs
++		}
++	}
++
  	// v0.14.0: agent panel data
  	if h.quota != nil {
  		statuses := h.quota.AllStatuses()
-@@ -400,12 +522,88 @@ func scorecardTitle(s float64) string {
+@@ -400,12 +555,88 @@ func scorecardTitle(s float64) string {
  	}
  }
  
@@ -7875,7 +7996,21 @@ index 6981102..ab477bb 100644
  <style>
  * { box-sizing: border-box; margin: 0; padding: 0; }
  html { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
-@@ -458,6 +656,17 @@ tr:hover td { background: #161b22; }
+@@ -423,6 +654,13 @@ h1 .meta { font-weight: 400; color: #8b949e; font-size: 12px; margin-left: 8px;
+ .kpi.danger .val { color: #f85149; }
+ .kpi.warn .val { color: #d29922; }
+ .kpi.ok .val { color: #3fb950; }
++.health-banner { border-radius: 6px; padding: 10px 14px; margin-bottom: 24px; font-size: 13px; border: 1px solid; }
++.health-banner.crit { background: #2d1213; border-color: #f85149; color: #ffa198; }
++.health-banner.warn { background: #2b2412; border-color: #d29922; color: #e3b341; }
++.health-banner .hb-breakdown { margin-left: 6px; }
++.health-banner .hb-crit { color: #f85149; font-weight: 600; }
++.health-banner .hb-high { color: #d29922; font-weight: 600; }
++.health-banner .hb-meta { display: block; margin-top: 4px; color: #8b949e; font-size: 11px; }
+ table { width: 100%; border-collapse: collapse; background: #0d1117; }
+ th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #21262d; font-size: 13px; }
+ th { color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; background: #161b22; }
+@@ -458,6 +696,17 @@ tr:hover td { background: #161b22; }
  footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #30363d; color: #6e7681; font-size: 12px; text-align: center; }
  .empty { text-align: center; padding: 40px; color: #8b949e; }
  .empty code { background: #21262d; padding: 2px 8px; border-radius: 3px; }
@@ -7893,10 +8028,19 @@ index 6981102..ab477bb 100644
  .summary { color: #8b949e; font-size: 12px; margin-bottom: 12px; }
  
  /* ─── WCAG 2.1 AA accessibility ─────────────────────────── */
-@@ -560,10 +769,22 @@ a:focus-visible {
+@@ -560,10 +809,31 @@ a:focus-visible {
      <div class="kpi {{if gt .Stale 0}}warn{{else}}ok{{end}}" role="status"><div class="label">Stale ≥14d</div><div class="val">{{.Stale}}</div></div>
    </div>
  
++  {{with .Health}}
++  <div class="health-banner {{if .HasCritical}}crit{{else}}warn{{end}}" role="status" aria-label="Portfolio health from the latest alert_fix sweep">
++    <strong>{{if .HasCritical}}⛔{{else}}⚠{{end}} Portfolio health:</strong>
++    {{.Total}} alert{{if ne .Total 1}}s{{end}}
++    <span class="hb-breakdown">{{if gt .Critical 0}}<span class="hb-crit">{{.Critical}} critical</span>{{end}}{{if gt .High 0}}{{if gt .Critical 0}} · {{end}}<span class="hb-high">{{.High}} high</span>{{end}}{{if gt .Medium 0}} · {{.Medium}} medium{{end}}{{if gt .Low 0}} · {{.Low}} low{{end}}</span>
++    <small class="hb-meta">run <code>alert_fix</code> for detail · swept {{fmtTime .At}}</small>
++  </div>
++  {{end}}
++
 +  <details class="addproj" {{if eq .Total 0}}open{{end}}>
 +    <summary>+ Add a project</summary>
 +    <form id="addproj-form" autocomplete="off">
@@ -7917,7 +8061,7 @@ index 6981102..ab477bb 100644
    </div>
    {{else}}
    <table aria-label="Registered projects">
-@@ -580,6 +801,7 @@ a:focus-visible {
+@@ -580,6 +850,7 @@ a:focus-visible {
          <th scope="col" abbr="Open pull requests">PR</th>
          <th scope="col" abbr="Open issues">Iss</th>
          <th scope="col">Last commit</th>
@@ -7925,7 +8069,7 @@ index 6981102..ab477bb 100644
          <th scope="col" title="OpenSSF Scorecard score (0-10) and vulnerability counts">Security</th>
          <th scope="col">Tags</th>
        </tr>
-@@ -597,6 +819,7 @@ a:focus-visible {
+@@ -597,6 +868,7 @@ a:focus-visible {
          <td>{{.OpenPRs}}</td>
          <td>{{.OpenIssues}}</td>
          <td class="{{staleClass .LatestActivity $.Now .Stage}}">{{daysSince .LatestActivity $.Now}}</td>
@@ -7933,7 +8077,7 @@ index 6981102..ab477bb 100644
          <td class="security">{{securityCell .}}</td>
          <td class="tags">{{range .Tags}}<span class="tag">{{.}}</span>{{end}}</td>
        </tr>
-@@ -653,7 +876,29 @@ a:focus-visible {
+@@ -653,7 +925,29 @@ a:focus-visible {
    {{end}}
    </main>
  
@@ -7964,6 +8108,85 @@ index 6981102..ab477bb 100644
 +</script>
  </body>
  </html>`
+diff --git a/yagura-v0.35.0/internal/dashboard/health_test.go b/yagura-v0.35.0/internal/dashboard/health_test.go
+new file mode 100644
+index 0000000..d4c8633
+--- /dev/null
++++ b/yagura-v0.35.0/internal/dashboard/health_test.go
+@@ -0,0 +1,73 @@
++package dashboard
++
++import (
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/shizukutanaka/yagura/internal/project"
++	"github.com/shizukutanaka/yagura/internal/registry"
++)
++
++type fakeHealth struct {
++	hs HealthSummary
++	ok bool
++}
++
++func (f fakeHealth) PortfolioHealth() (HealthSummary, bool) { return f.hs, f.ok }
++
++func healthDash(t *testing.T) *Handler {
++	t.Helper()
++	reg, err := registry.New(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	_ = reg.Add(&project.Project{Slug: "breeze", DisplayName: "Breeze", Repository: "o/breeze", Stage: project.StageActive})
++	h, err := New(reg, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return h
++}
++
++func TestHealthBanner_ShownWithAlerts(t *testing.T) {
++	h := healthDash(t)
++	h.SetPortfolioHealthProvider(fakeHealth{ok: true, hs: HealthSummary{
++		Total: 3, Critical: 1, High: 2, HasCritical: true, At: time.Now(),
++	}})
++	html := get(t, h, "/dashboard").Body.String()
++	if !strings.Contains(html, `class="health-banner`) {
++		t.Fatal("expected a health banner when there are alerts")
++	}
++	for _, want := range []string{"Portfolio health", "3 alert", "1 critical", "2 high"} {
++		if !strings.Contains(html, want) {
++			t.Errorf("banner missing %q", want)
++		}
++	}
++	if !strings.Contains(html, "crit") {
++		t.Error("a critical sweep should use the crit banner style")
++	}
++}
++
++func TestHealthBanner_HiddenWhenClean(t *testing.T) {
++	h := healthDash(t)
++	h.SetPortfolioHealthProvider(fakeHealth{ok: true, hs: HealthSummary{Total: 0}})
++	if strings.Contains(get(t, h, "/dashboard").Body.String(), "Portfolio health:") {
++		t.Error("no banner should show when there are 0 alerts")
++	}
++}
++
++func TestHealthBanner_HiddenWithoutProvider(t *testing.T) {
++	h := healthDash(t)
++	if strings.Contains(get(t, h, "/dashboard").Body.String(), "Portfolio health:") {
++		t.Error("no banner should show without a provider")
++	}
++}
++
++func TestHealthBanner_HiddenBeforeFirstSweep(t *testing.T) {
++	h := healthDash(t)
++	h.SetPortfolioHealthProvider(fakeHealth{ok: false}) // no sweep yet
++	if strings.Contains(get(t, h, "/dashboard").Body.String(), "Portfolio health:") {
++		t.Error("no banner should show before the first sweep (ok=false)")
++	}
++}
 diff --git a/yagura-v0.35.0/internal/dashboard/pwa.go b/yagura-v0.35.0/internal/dashboard/pwa.go
 new file mode 100644
 index 0000000..3c7487c
