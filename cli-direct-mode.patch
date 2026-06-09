@@ -1,269 +1,111 @@
-diff -ruN /tmp/pg8/prev/yagura-v0.35.0/CHANGELOG.md yagura-v0.35.0/CHANGELOG.md
---- /tmp/pg8/prev/yagura-v0.35.0/CHANGELOG.md	2026-06-09 03:56:13.000000000 +0000
-+++ yagura-v0.35.0/CHANGELOG.md	2026-06-09 04:10:51.664920552 +0000
-@@ -15,6 +15,19 @@
+diff -ruN /tmp/pg9/prev/yagura-v0.35.0/CHANGELOG.md yagura-v0.35.0/CHANGELOG.md
+--- /tmp/pg9/prev/yagura-v0.35.0/CHANGELOG.md	2026-06-09 04:10:51.000000000 +0000
++++ yagura-v0.35.0/CHANGELOG.md	2026-06-09 04:16:16.596921210 +0000
+@@ -15,6 +15,17 @@
  
  ### What's new
  
-+- **可視性ミスマッチ alert(visibility literacy):internal 宣言なのに repo が Public**
-+  (`internal/alertfix` / `internal/project` / `internal/scanner`)。「Public のまま公開
-+  されてた!」を portfolio 単位で検出する。scanner は GitHub から repo の公開状態を観測して
-+  いた(`Repository.Private`)が、これまで捨てていた。これを `project.RepoPublic`(sensor、
-+  scanner 専用)として保存し、alertfix に新ルール `visibility`(HIGH)を追加:project に
-+  人間が宣言した sensitivity tag(`internal`/`confidential`/`private`/`secret`、
-+  case-insensitive)が付いているのに repo が Public なら alert する。**宣言された意図(tag=
-+  manual metadata)と観測された現実(RepoPublic=sensor)の不一致**を信号にする設計で、trust
-+  base に整合(`yagura_update` は RepoPublic を設定不可 — 回帰テストで固定)。alert は既存の
-+  health sweep → dashboard banner → `yagura_portfolio_alerts{severity}` /metrics 経路に
-+  そのまま乗る。test-first:alertfix の発火/非発火(public+tag / private+tag / public+no-tag /
-+  case-insensitive)を先に固定(赤)→ 実装で緑、scanner の観測マッピングと snapshot 伝播、
-+  trust-base 不可侵も assert。zero-dep。
- - **`tools/list` を name 昇順で決定論的に返す(client 側 prompt cache を保護)**
-   (`internal/mcp/server.go`)。MCP server の `tools/list` 応答は client(Claude Code 等)
-   が毎ターン送る *cache 可能な prefix* である。従来は Go map を直接 range していたため
-diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/alertfix/alertfix.go yagura-v0.35.0/internal/alertfix/alertfix.go
---- /tmp/pg8/prev/yagura-v0.35.0/internal/alertfix/alertfix.go	2026-06-03 00:00:00.000000000 +0000
-+++ yagura-v0.35.0/internal/alertfix/alertfix.go	2026-06-09 04:05:09.412919859 +0000
-@@ -54,6 +54,7 @@
- 	SourceStale      Source = "stale"
- 	SourceScorecard  Source = "scorecard"
- 	SourceOpenIssues Source = "open_issues"
-+	SourceVisibility Source = "visibility"
- )
- 
- // Alert は 1 つの actionable issue。
-@@ -103,6 +104,30 @@
- 	PlanProgressPct   int
- 	PlanIssues        []string
- 	HasPlanMd         bool
-+	// visibility literacy: RepoPublic は scanner が観測した実際の公開状態
-+	// (sensor、MCP からは詐称不可)。Tags は人間が宣言した分類(manual metadata)。
-+	// 両者の不一致(sensitivity tag つきなのに Public)を Evaluate が alert する。
-+	RepoPublic        bool
-+	Tags              []string
-+}
-+
-+// sensitivityTags は「本来 private であるべき」ことを示す宣言タグ群。
-+// これらの tag が付いた project の repo が Public だと visibility mismatch。
-+var sensitivityTags = map[string]bool{
-+	"internal":     true,
-+	"confidential": true,
-+	"private":      true,
-+	"secret":       true,
-+}
-+
-+// hasSensitivityTag は tags に sensitivity tag が含まれるか(case-insensitive)。
-+func hasSensitivityTag(tags []string) (string, bool) {
-+	for _, t := range tags {
-+		if sensitivityTags[strings.ToLower(strings.TrimSpace(t))] {
-+			return t, true
++- **fix(recovery): budget 1 で retry を返さない収束ガード(loop engineering)**
++  (`internal/recovery`)。recovery kernel は失敗を retry/replan/escalate に決定論的に
++  振り分け、budget(MaxAttempts、既定 3)を使い切ると terminal escalate/degrade する設計。
++  しかし `tool_init` と unknown(default)の 2 分岐だけ「attempt==1 なら optimistic に
++  1 回 retry」を `exhausted` 判定より *前* に置いていたため、`MaxAttempts==1`(= retry の
++  余地ゼロ)でも attempt 1 で非 terminal な `backoff_retry`/`retry` を返していた — budget を
++  超えてループが回り続ける、Loop Engineering でいう「終了条件のないループ」。`tool_error`
++  分岐は正しく `exhausted` を先に見ており、この 2 つだけが逸脱していた。両分岐で `exhausted`
++  を先に判定するよう修正(budget 1 は即 escalate、low severity は degrade で terminate)。
++  通常の multi-attempt path(attempt 1 of 3 は backoff retry のまま)は不変。test-first:
++  budget-1 が terminal になる spec を先に固定(赤)→ 並べ替えで緑、既存 10 ケースも全 green。
+ - **可視性ミスマッチ alert(visibility literacy):internal 宣言なのに repo が Public**
+   (`internal/alertfix` / `internal/project` / `internal/scanner`)。「Public のまま公開
+   されてた!」を portfolio 単位で検出する。scanner は GitHub から repo の公開状態を観測して
+diff -ruN /tmp/pg9/prev/yagura-v0.35.0/internal/recovery/recovery.go yagura-v0.35.0/internal/recovery/recovery.go
+--- /tmp/pg9/prev/yagura-v0.35.0/internal/recovery/recovery.go	2026-06-05 09:23:03.000000000 +0000
++++ yagura-v0.35.0/internal/recovery/recovery.go	2026-06-09 04:14:47.600921030 +0000
+@@ -127,13 +127,15 @@
+ 		d.Action, d.Reason = ActionRepairArgs, "parameter/argument error — repair the call arguments, then retry"
+ 		return d
+ 	case ClassToolInit:
++		// exhausted を先に判定する: budget が 1 だと attempt 1 で既に使い切っており、
++		// optimistic な backoff retry を返すと budget を超えてループが回り続ける。
++		if exhausted {
++			return exhaust("tool keeps failing to initialize within budget")
 +		}
-+	}
-+	return "", false
- }
- 
- // Thresholds は alert 発火条件(調整可能)。
-@@ -181,6 +206,26 @@
- 		})
+ 		if attempt == 1 {
+ 			d.Action, d.Reason, d.RetryAfterSeconds = ActionBackoffRetry, "tool init failure on first attempt — may be transient; retry with backoff", backoff(attempt)
+ 			return d
+ 		}
+-		if exhausted {
+-			return exhaust("tool keeps failing to initialize within budget")
+-		}
+ 		d.Action, d.Reason = ActionSubstituteTool, "tool repeatedly fails to initialize — substitute an equivalent tool"
+ 		return d
+ 	case ClassToolError:
+@@ -165,13 +167,14 @@
+ 		d.Action, d.Reason = ActionReplan, "verifier rejected the output — replan the approach (do not just retry the same plan)"
+ 		return d
+ 	default: // unknown
++		// exhausted を先に判定する(budget 1 で attempt 1 の retry がループを溢れさせる)。
++		if exhausted {
++			return exhaust("unknown failure persisted through the recovery budget")
++		}
+ 		if attempt == 1 {
+ 			d.Action, d.Reason = ActionRetry, "unknown failure on first attempt — retry once before replanning"
+ 			return d
+ 		}
+-		if exhausted {
+-			return exhaust("unknown failure persisted through the recovery budget")
+-		}
+ 		d.Action, d.Reason = ActionReplan, "unknown failure persists — replan the approach"
+ 		return d
  	}
- 
-+	// ─── Visibility mismatch (visibility literacy) ──
-+	// 人間が internal/confidential 等を宣言した project の repo が実際には Public。
-+	// 「Public のまま公開されてた!」を portfolio 単位で検出する。
-+	if snap.RepoPublic {
-+		if tag, ok := hasSensitivityTag(snap.Tags); ok {
-+			alerts = append(alerts, Alert{
-+				ID:       buildID(snap.Slug, SourceVisibility, ""),
-+				Project:  snap.Slug,
-+				Source:   SourceVisibility,
-+				Severity: SevHigh,
-+				Title:    "Repository is PUBLIC despite a sensitivity tag",
-+				Description: fmt.Sprintf(
-+					"%s is tagged %q (declared internal/confidential) but its repository is public — anyone on the internet can read it.",
-+					snap.Slug, tag),
-+				Recommendation: "Confirm the repo's intended visibility. If it must stay internal, set the repository to Private on GitHub; otherwise remove the misleading sensitivity tag.",
-+				DetectedAt:     now(),
-+			})
-+		}
-+	}
-+
- 	// ─── Plan.md ───────────────────────────────────
- 	if snap.HasPlanMd && !snap.PlanIsHealthy {
- 		issues := strings.Join(snap.PlanIssues, "; ")
-diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/alertfix/visibility_test.go yagura-v0.35.0/internal/alertfix/visibility_test.go
---- /tmp/pg8/prev/yagura-v0.35.0/internal/alertfix/visibility_test.go	1970-01-01 00:00:00.000000000 +0000
-+++ yagura-v0.35.0/internal/alertfix/visibility_test.go	2026-06-09 04:04:29.876919779 +0000
-@@ -0,0 +1,70 @@
-+package alertfix
-+
-+import (
-+	"testing"
-+	"time"
-+)
-+
-+// Spec for the repository-visibility-mismatch rule (visibility literacy):
-+// a project whose human-declared sensitivity tag says "internal/confidential/
-+// private/secret" but whose repo is observed Public should raise an alert.
-+// Declared intent (tag, manual metadata) vs observed reality (RepoPublic,
-+// scanner-only sensor) — the mismatch is the signal.
-+
-+func visibilitySnap(public bool, tags ...string) ProjectSnapshot {
-+	return ProjectSnapshot{
-+		Slug:           "secretproj",
-+		CIStatus:       "passing",
-+		LatestActivity: fixedNow().Add(-1 * 24 * time.Hour), // recent → no stale alert
-+		RepoPublic:     public,
-+		Tags:           tags,
-+	}
-+}
-+
-+func findSource(as []Alert, src Source) (Alert, bool) {
-+	for _, a := range as {
-+		if a.Source == src {
-+			return a, true
-+		}
-+	}
-+	return Alert{}, false
-+}
-+
-+func TestEvaluate_PublicRepoWithSensitiveTag_Alerts(t *testing.T) {
-+	for _, tag := range []string{"internal", "confidential", "private", "secret"} {
-+		t.Run(tag, func(t *testing.T) {
-+			as := Evaluate(visibilitySnap(true, tag), thresholds())
-+			a, ok := findSource(as, SourceVisibility)
-+			if !ok {
-+				t.Fatalf("expected a visibility alert for tag %q, got %v", tag, as)
-+			}
-+			if a.Severity != SevHigh {
-+				t.Errorf("visibility alert should be HIGH, got %s", a.Severity)
-+			}
-+			if a.Project != "secretproj" {
-+				t.Errorf("alert project = %q", a.Project)
-+			}
-+		})
-+	}
-+}
-+
-+func TestEvaluate_PublicRepoSensitiveTag_CaseInsensitive(t *testing.T) {
-+	as := Evaluate(visibilitySnap(true, "Confidential"), thresholds())
-+	if _, ok := findSource(as, SourceVisibility); !ok {
-+		t.Errorf("tag match should be case-insensitive; got %v", as)
-+	}
-+}
-+
-+func TestEvaluate_PublicRepoWithoutSensitiveTag_NoAlert(t *testing.T) {
-+	as := Evaluate(visibilitySnap(true, "docs", "go"), thresholds())
-+	if _, ok := findSource(as, SourceVisibility); ok {
-+		t.Errorf("public repo without a sensitivity tag must not alert; got %v", as)
-+	}
-+}
-+
-+func TestEvaluate_PrivateRepoWithSensitiveTag_NoAlert(t *testing.T) {
-+	as := Evaluate(visibilitySnap(false, "internal"), thresholds())
-+	if _, ok := findSource(as, SourceVisibility); ok {
-+		t.Errorf("private repo is the correct state; must not alert; got %v", as)
-+	}
-+}
-diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools.go yagura-v0.35.0/internal/mcp/tools.go
---- /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools.go	2026-06-08 21:28:03.000000000 +0000
-+++ yagura-v0.35.0/internal/mcp/tools.go	2026-06-09 04:05:46.476919934 +0000
-@@ -1427,6 +1427,8 @@
- 		OpenIssues:     p.OpenIssues,
- 		OpenPRs:        p.OpenPRs,
- 		LatestActivity: p.LatestActivity,
-+		RepoPublic:     p.RepoPublic,
-+		Tags:           p.Tags,
+diff -ruN /tmp/pg9/prev/yagura-v0.35.0/internal/recovery/recovery_test.go yagura-v0.35.0/internal/recovery/recovery_test.go
+--- /tmp/pg9/prev/yagura-v0.35.0/internal/recovery/recovery_test.go	2026-06-05 09:22:55.000000000 +0000
++++ yagura-v0.35.0/internal/recovery/recovery_test.go	2026-06-09 04:14:28.324920991 +0000
+@@ -100,3 +100,46 @@
+ 		t.Error("Decide must be deterministic")
  	}
  }
- 
-diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools_helpers_test.go yagura-v0.35.0/internal/mcp/tools_helpers_test.go
---- /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools_helpers_test.go	2026-06-08 23:51:56.000000000 +0000
-+++ yagura-v0.35.0/internal/mcp/tools_helpers_test.go	2026-06-09 04:05:56.420919954 +0000
-@@ -150,11 +150,19 @@
- 		ScorecardScore: 7.5,
- 		OpenIssues:     4,
- 		OpenPRs:        1,
-+		RepoPublic:     true,
-+		Tags:           []string{"internal"},
- 	}
- 	snap := ProjectToSnapshot(p)
- 	if snap.Slug != "breeze" || snap.Repository != "o/breeze" {
- 		t.Errorf("identity fields not carried: %+v", snap)
- 	}
-+	if !snap.RepoPublic {
-+		t.Error("RepoPublic not carried into snapshot")
++
++// ─── convergence: a budget of 1 must never recommend a non-terminal retry ──
++//
++// Loop Engineering: a loop without a real termination condition runs forever.
++// With MaxAttempts==1 the budget is exhausted on the only attempt, so every
++// failure class must terminate (escalate, or degrade when low severity) rather
++// than tell the orchestrator to retry past its budget.
++
++func TestDecide_ToolInitBudgetOfOne_Terminates(t *testing.T) {
++	d := Decide(Event{Class: ClassToolInit, Attempt: 1, MaxAttempts: 1})
++	if !d.Terminal {
++		t.Errorf("tool_init with budget 1 must terminate, got non-terminal %+v", d)
 +	}
-+	if len(snap.Tags) != 1 || snap.Tags[0] != "internal" {
-+		t.Errorf("Tags not carried: %v", snap.Tags)
-+	}
- 	if snap.VulnCritical != 2 || snap.VulnHigh != 3 {
- 		t.Errorf("vuln fields wrong: %+v", snap)
- 	}
-diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools_test.go yagura-v0.35.0/internal/mcp/tools_test.go
---- /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools_test.go	2026-06-03 00:00:00.000000000 +0000
-+++ yagura-v0.35.0/internal/mcp/tools_test.go	2026-06-09 04:07:28.884920142 +0000
-@@ -390,6 +390,25 @@
- 
- // ─── yagura_update ───────────────────────────────────────────
- 
-+// Trust base: repo_public is a scanner-only sensor field. yagura_update must
-+// not let an MCP client forge it (the visibility-mismatch alert relies on it
-+// reflecting observed reality, not client claims).
-+func TestUpdate_CannotForgeRepoPublic(t *testing.T) {
-+	d := newDeps(t)
-+	_ = d.Registry.Add(sampleProject("sens"))
-+	tool := buildUpdateTool(d)
-+	// Slip an extra repo_public:true into the payload alongside a legit field.
-+	_ = mustCall(t, tool, map[string]any{
-+		"slug":        "sens",
-+		"notes":       "touch",
-+		"repo_public": true,
-+	})
-+	got, _ := d.Registry.Get("sens")
-+	if got.RepoPublic {
-+		t.Error("yagura_update must not be able to set the repo_public sensor field")
++	if d.Action == ActionBackoffRetry || d.Action == ActionRetry {
++		t.Errorf("budget-1 must not recommend a retry, got %s", d.Action)
 +	}
 +}
 +
- func TestUpdate_PartialFields(t *testing.T) {
- 	d := newDeps(t)
- 	p := sampleProject("upd")
-diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/project/project.go yagura-v0.35.0/internal/project/project.go
---- /tmp/pg8/prev/yagura-v0.35.0/internal/project/project.go	2026-06-03 00:00:00.000000000 +0000
-+++ yagura-v0.35.0/internal/project/project.go	2026-06-09 04:05:28.712919898 +0000
-@@ -104,6 +104,10 @@
- 	CIStatus       CIStatus  `json:"ci_status,omitempty"`
- 	TestCoverage   float64   `json:"test_coverage,omitempty"`
- 	StarCount      int       `json:"star_count,omitempty"`
-+	// RepoPublic は scanner が観測した repository の公開状態(sensor、scanner 専用)。
-+	// true = GitHub 上で Public。omitempty なので private/未観測(false)では出力されない。
-+	// trust base: MCP tool (yagura_update) からは設定不可。
-+	RepoPublic     bool      `json:"repo_public,omitempty"`
- 
- 	// Security health (S1.1 + S1.2). scanner が 24h 周期で更新する。
- 	// 取得失敗時はゼロ値のまま放置(graceful degradation)。
-diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/scanner/scanner.go yagura-v0.35.0/internal/scanner/scanner.go
---- /tmp/pg8/prev/yagura-v0.35.0/internal/scanner/scanner.go	2026-06-08 08:56:05.000000000 +0000
-+++ yagura-v0.35.0/internal/scanner/scanner.go	2026-06-09 04:05:34.780919911 +0000
-@@ -204,6 +204,7 @@
- 	current.OpenPRs = openPRs
- 	current.OpenIssues = openIssues
- 	current.StarCount = r.StargazersCount
-+	current.RepoPublic = !r.Private // observed visibility (sensor; drives the visibility-mismatch alert)
- 	current.CIStatus = mapCIStatus(ciStatus)
- 	if current.Language == "" && r.Language != "" {
- 		current.Language = r.Language
-diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/scanner/scanner_test.go yagura-v0.35.0/internal/scanner/scanner_test.go
---- /tmp/pg8/prev/yagura-v0.35.0/internal/scanner/scanner_test.go	2026-06-08 06:51:31.000000000 +0000
-+++ yagura-v0.35.0/internal/scanner/scanner_test.go	2026-06-09 04:08:36.956920279 +0000
-@@ -187,6 +187,10 @@
- 	if got.CIStatus == "" || got.CIStatus == project.CIStatusUnknown {
- 		t.Errorf("CIStatus not updated: %q", got.CIStatus)
- 	}
-+	// The fake repo omits "private" → public; scanner records observed visibility.
-+	if !got.RepoPublic {
-+		t.Errorf("RepoPublic should be true for a public repo, got %v", got.RepoPublic)
++func TestDecide_UnknownBudgetOfOne_Terminates(t *testing.T) {
++	d := Decide(Event{Class: "totally_unknown_class", Attempt: 1, MaxAttempts: 1})
++	if !d.Terminal {
++		t.Errorf("unknown failure with budget 1 must terminate, got %+v", d)
 +	}
- }
- 
- func TestScanner_ScanProject_PreservesManualFields(t *testing.T) {
++	if d.Action == ActionBackoffRetry || d.Action == ActionRetry {
++		t.Errorf("budget-1 must not recommend a retry, got %s", d.Action)
++	}
++}
++
++func TestDecide_BudgetOfOne_LowSeverityDegrades(t *testing.T) {
++	d := Decide(Event{Class: ClassToolInit, Attempt: 1, MaxAttempts: 1, Severity: "low"})
++	if d.Action != ActionDegrade || !d.Terminal {
++		t.Errorf("budget-1 low-severity should degrade terminally, got %+v", d)
++	}
++}
++
++// Regression: the normal multi-attempt path is unchanged — a tool_init failure
++// on attempt 1 of a 3-budget still does an optimistic backoff retry.
++func TestDecide_ToolInitFirstAttemptStillBacksOff(t *testing.T) {
++	d := Decide(Event{Class: ClassToolInit, Attempt: 1, MaxAttempts: 3})
++	if d.Action != ActionBackoffRetry || d.Terminal {
++		t.Errorf("tool_init attempt 1 of 3 should backoff_retry non-terminally, got %+v", d)
++	}
++}
