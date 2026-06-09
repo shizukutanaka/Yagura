@@ -1,56 +1,211 @@
-diff -ruN /tmp/pg6/prev/yagura-v0.35.0/CLAUDE.md yagura-v0.35.0/CLAUDE.md
---- /tmp/pg6/prev/yagura-v0.35.0/CLAUDE.md	2026-06-08 13:26:19.000000000 +0000
-+++ yagura-v0.35.0/CLAUDE.md	2026-06-09 02:46:58.306086110 +0000
-@@ -121,17 +121,43 @@
+diff -ruN /tmp/pg7/prev/yagura-v0.35.0/CHANGELOG.md yagura-v0.35.0/CHANGELOG.md
+--- /tmp/pg7/prev/yagura-v0.35.0/CHANGELOG.md	2026-06-08 21:29:54.000000000 +0000
++++ yagura-v0.35.0/CHANGELOG.md	2026-06-09 03:56:13.184918773 +0000
+@@ -15,6 +15,15 @@
  
- ## Workflows (典型的な開発フロー)
+ ### What's new
  
-+### 実装の進め方 — test-first(TDD を標準動作にする)
-+
-+機能追加・バグ修正は原則 **test-first**。自然言語の指示は解釈の幅があり、AI
-+(Claude Code 等)はその幅の中で「それっぽいもの」を生成してしまう。先にテストを
-+書くと、合否の判定者が人間の目視から **テストランナー(機械)** に変わり、仕様が
-+コードとして 1 つに凍結される。これが「越えてはいけない柵」になり、暴走と往復を防ぐ。
-+
-+1. **Red — 失敗するテストだけ書く**。実装は書かない。正常系・境界値・異常系を
-+   1 ケース 1 観点で分け、`go test ./internal/<topic>/` が **赤(未実装で fail)**
-+   になることまで確認する。緑になるはずのないテストが緑なら、テスト自体が壊れている。
-+2. **(レビュー)テストの妥当性を人間が確認するまで実装に進まない**。特に各
-+   `want`/期待値が本当に正しいかを 1 ケースずつ読む。テストが間違っていれば AI は
-+   間違った仕様を完璧に実装する(= TDD なしより危険、緑のお墨付きが付くため)。
-+   テストを読む時間は実装全体を読む時間より遥かに短い。
-+3. **Green — テストを通す最小実装**。**テストファイルは勝手に変更しない**(仕様を
-+   実装に合わせて書き換えるのは仕様が実装に負ける瞬間)。`go test -race` を実際に
-+   実行し、全件緑になるまで自分で直す。「通ったはず」の推測報告はしない。
-+4. **Refactor — 緑を保ったまま整える**。振る舞いを変えず、各ステップ後に test 緑を維持。
-+5. **バグ修正は再現テストから**。実装を触らず「そのバグで赤くなるテスト」を先に書き、
-+   赤を確認 → 実装を直して緑 → 全 test green。これで同じバグの regression を恒久的に塞ぐ。
-+
-+注: 厳密な三角測量までは不要。「実装より先に合格条件をコードで固定する」の 1 点で効果が出る。
-+本リポジトリは `make verify` の reproducible build + 全 package `-race` test がこの柵を担保している。
-+
- ### 新 MCP tool 追加
--1. `internal/<topic>/<topic>.go` で domain logic を書く(test cov ≥ 90% 目標)
--2. `internal/mcp/tools.go` に `build<X>Tool(d Deps) *Tool` を追加
--3. `RegisterDefaultTools` の末尾に `s.Register(build<X>Tool(d))` を追加
--4. `cmd/yagura/integration_test.go` の expected names list と tool 数 (`if len(...) != N`) を更新
--5. `internal/mcp/server_test.go` も同様
--6. CHANGELOG に entry 追加(必ず Synergy / What's not yet / Sources セクション含む)
--7. version bump (`cmd/yagura/main.go`, `cmd/yagura/main_test.go`,
-+1. **(Red)`internal/<topic>/<topic>_test.go` に domain logic の spec をテストで先に固定**
-+   (正常系・境界・異常系を 1 ケース 1 観点、赤を確認)。人間が期待値を確認してから次へ。
-+2. `internal/<topic>/<topic>.go` で domain logic を書く(test cov ≥ 90% 目標、テストを緑に)
-+3. `internal/mcp/tools.go` に `build<X>Tool(d Deps) *Tool` を追加
-+4. `RegisterDefaultTools` の末尾に `s.Register(build<X>Tool(d))` を追加
-+5. `cmd/yagura/integration_test.go` の expected names list と tool 数 (`if len(...) != N`) を更新
-+6. `internal/mcp/server_test.go` も同様
-+7. CHANGELOG に entry 追加(必ず Synergy / What's not yet / Sources セクション含む)
-+8. version bump (`cmd/yagura/main.go`, `cmd/yagura/main_test.go`,
-    `internal/dashboard/dashboard.go`, `README.md`)
--8. `make verify` で reproducible 確認
--9. tarball を `/mnt/user-data/outputs/yagura-vX.Y.Z-source.tar.gz` に出力
-+9. `make verify` で reproducible 確認
-+10. tarball を `/mnt/user-data/outputs/yagura-vX.Y.Z-source.tar.gz` に出力
++- **`tools/list` を name 昇順で決定論的に返す(client 側 prompt cache を保護)**
++  (`internal/mcp/server.go`)。MCP server の `tools/list` 応答は client(Claude Code 等)
++  が毎ターン送る *cache 可能な prefix* である。従来は Go map を直接 range していたため
++  呼出のたびに tool 順がランダムに変わり、client の prompt/KV cache(tools ブロック全体)を
++  毎回 invalidate していた — 入力トークンの静かなコスト増。token 削減手法調査(Caveman /
++  prompt caching / model routing / subagent 分離)の「ツール定義の順番を変える=キャッシュ
++  ミス」に直接対応。`handleToolsList` と `ToolNames()` を name 昇順 sort に変更(yagura の
++  Deterministic output ルールにも準拠)。test-first で固定:呼出間で順序が変わる回帰
++  テストが旧コードで赤→ sort 追加で緑(+stable across 20 calls)。zero-dep(stdlib `sort`)。
+ - **CLI direct mode**(`cmd/yagura/cli.go` / `cli_format.go`):top-level verb
+   - registry: `list` / `get` / `search` / `stats` / `register` / `update` /
+     `unregister`
+diff -ruN /tmp/pg7/prev/yagura-v0.35.0/internal/mcp/server.go yagura-v0.35.0/internal/mcp/server.go
+--- /tmp/pg7/prev/yagura-v0.35.0/internal/mcp/server.go	2026-06-03 00:00:00.000000000 +0000
++++ yagura-v0.35.0/internal/mcp/server.go	2026-06-09 03:55:50.132918727 +0000
+@@ -12,15 +12,16 @@
+ 	"net/http"
+ 	"os"
+ 	"runtime/debug"
++	"sort"
+ 	"strings"
+ 	"sync"
+ 	"sync/atomic"
+ 	"time"
  
- ### 新 sensor 統合
- 1. 既存 `internal/scanner` の 24h loop に hook
+ 	"github.com/shizukutanaka/yagura/internal/alertfix"
+-	"github.com/shizukutanaka/yagura/internal/hookreceiver"
+ 	"github.com/shizukutanaka/yagura/internal/audit"
+ 	"github.com/shizukutanaka/yagura/internal/dedupe"
++	"github.com/shizukutanaka/yagura/internal/hookreceiver"
+ )
+ 
+ const (
+@@ -80,8 +81,9 @@
+ // ToolStats は単一 tool の累積使用量を表す。
+ //
+ // 動機:
+-//   v0.16 で description / JSON を圧縮したが、効果を end-to-end で測定する手段が無かった。
+-//   各 tool の request/response byte 数を累積記録し、yagura_token_stats で取得可能にする。
++//
++//	v0.16 で description / JSON を圧縮したが、効果を end-to-end で測定する手段が無かった。
++//	各 tool の request/response byte 数を累積記録し、yagura_token_stats で取得可能にする。
+ //
+ // 計測単位は byte ベース(token ではない)。LLM の tokenizer は client 側で異なるため、
+ // yagura は generic な byte 数のみ report する。byte/token 比は概ね 3-4x なので
+@@ -228,6 +230,7 @@
+ 	for n := range s.tools {
+ 		names = append(names, n)
+ 	}
++	sort.Strings(names) // deterministic order (Deterministic output rule)
+ 	return names
+ }
+ 
+@@ -306,18 +309,28 @@
+ // handleToolsList returns the tools/list response, honoring opt-in compact mode.
+ //
+ // Compact mode (env YAGURA_MCP_COMPACT=1):
+-//   v0.22.0 で追加。Anthropic の Tool Search Tool / defer_loading が API-side 機能で
+-//   server から advertise できないため、server-internal の opt-in compact mode を提供。
+-//   - description を最小化 ([G]/[S] prefix のみ等)
+-//   - InputSchema は type + required のみに簡略化(properties detail を削除)
+-//   - tool 名から意味を推測する前提
+-//   client は yagura_tools_catalog を補完手段として呼べる。
++//
++//	v0.22.0 で追加。Anthropic の Tool Search Tool / defer_loading が API-side 機能で
++//	server から advertise できないため、server-internal の opt-in compact mode を提供。
++//	- description を最小化 ([G]/[S] prefix のみ等)
++//	- InputSchema は type + required のみに簡略化(properties detail を削除)
++//	- tool 名から意味を推測する前提
++//	client は yagura_tools_catalog を補完手段として呼べる。
+ func (s *Server) handleToolsList(w http.ResponseWriter, id json.RawMessage) {
+ 	s.mu.RLock()
+ 	defer s.mu.RUnlock()
+ 	compact := os.Getenv("YAGURA_MCP_COMPACT") == "1"
+-	list := make([]map[string]any, 0, len(s.tools))
++	// Emit in name-sorted order: tools/list is the cacheable prefix the client
++	// sends every turn, so a stable order keeps its prompt/KV cache warm
++	// (a randomized Go-map order would silently bust it). Also satisfies the
++	// Deterministic output rule.
++	ordered := make([]*Tool, 0, len(s.tools))
+ 	for _, t := range s.tools {
++		ordered = append(ordered, t)
++	}
++	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
++	list := make([]map[string]any, 0, len(ordered))
++	for _, t := range ordered {
+ 		entry := map[string]any{"name": t.Name}
+ 		if compact {
+ 			entry["description"] = compactDescription(t.Description)
+@@ -388,7 +401,7 @@
+ 	defer cancel()
+ 
+ 	var (
+-		result any
++		result  any
+ 		callErr error
+ 	)
+ 	func() {
+diff -ruN /tmp/pg7/prev/yagura-v0.35.0/internal/mcp/server_toolorder_test.go yagura-v0.35.0/internal/mcp/server_toolorder_test.go
+--- /tmp/pg7/prev/yagura-v0.35.0/internal/mcp/server_toolorder_test.go	1970-01-01 00:00:00.000000000 +0000
++++ yagura-v0.35.0/internal/mcp/server_toolorder_test.go	2026-06-09 03:53:11.360918405 +0000
+@@ -0,0 +1,102 @@
++package mcp
++
++import (
++	"encoding/json"
++	"sort"
++	"testing"
++)
++
++// These tests pin the spec that the tools/list response and ToolNames() are
++// emitted in a deterministic (name-sorted) order.
++//
++// Why it matters: an MCP server's tools/list response is the cacheable prefix
++// the client (e.g. Claude Code) sends on every turn. If the order changes
++// between calls, the client's prompt/KV cache for the whole tools block is
++// invalidated — a silent per-turn token-cost regression. It also violates
++// yagura's own "Deterministic output" rule (CLAUDE.md).
++
++// registerScrambled registers n tools with names in reverse-sorted order so a
++// raw Go-map iteration (randomized) is overwhelmingly unlikely to come out
++// sorted by luck.
++func registerScrambled(s *Server) []string {
++	names := []string{
++		"yagura_zeta", "yagura_yota", "yagura_xray", "yagura_whisky",
++		"yagura_victor", "yagura_uniform", "yagura_tango", "yagura_sierra",
++		"yagura_romeo", "yagura_quebec",
++	}
++	for _, n := range names {
++		s.Register(&Tool{Name: n, Description: "[S] " + n})
++	}
++	sorted := append([]string(nil), names...)
++	sort.Strings(sorted)
++	return sorted
++}
++
++func toolsListNames(t *testing.T, s *Server) []string {
++	t.Helper()
++	rec := httpRecorder()
++	s.handleToolsList(rec, []byte("1"))
++	var resp struct {
++		Result struct {
++			Tools []struct {
++				Name string `json:"name"`
++			} `json:"tools"`
++		} `json:"result"`
++	}
++	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
++		t.Fatalf("unmarshal tools/list: %v; body=%s", err, rec.Body.String())
++	}
++	out := make([]string, len(resp.Result.Tools))
++	for i, tl := range resp.Result.Tools {
++		out[i] = tl.Name
++	}
++	return out
++}
++
++func TestToolsList_DeterministicSortedOrder(t *testing.T) {
++	s := New("", nil)
++	want := registerScrambled(s)
++
++	got := toolsListNames(t, s)
++	if len(got) != len(want) {
++		t.Fatalf("got %d tools, want %d", len(got), len(want))
++	}
++	for i := range want {
++		if got[i] != want[i] {
++			t.Fatalf("tools/list not name-sorted at %d: got %v, want %v", i, got, want)
++		}
++	}
++}
++
++func TestToolsList_StableAcrossCalls(t *testing.T) {
++	s := New("", nil)
++	registerScrambled(s)
++
++	first := toolsListNames(t, s)
++	for i := 0; i < 20; i++ {
++		next := toolsListNames(t, s)
++		for j := range first {
++			if next[j] != first[j] {
++				t.Fatalf("tools/list order changed between calls (cache-busting): "+
++					"call0=%v callN=%v", first, next)
++			}
++		}
++	}
++}
++
++func TestToolNames_SortedAndStable(t *testing.T) {
++	s := New("", nil)
++	want := registerScrambled(s)
++
++	for i := 0; i < 20; i++ {
++		got := s.ToolNames()
++		if len(got) != len(want) {
++			t.Fatalf("ToolNames len %d, want %d", len(got), len(want))
++		}
++		for j := range want {
++			if got[j] != want[j] {
++				t.Fatalf("ToolNames not sorted/stable: got %v, want %v", got, want)
++			}
++		}
++	}
++}
