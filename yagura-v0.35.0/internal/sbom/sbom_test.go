@@ -2,6 +2,7 @@ package sbom
 
 import (
 	"encoding/json"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -278,5 +279,78 @@ func TestSummarize_RuntimeFallback(t *testing.T) {
 	s := bom.Summarize()
 	if s.GoVersion == "" {
 		t.Error("GoVersion should fall back to runtime.Version(), not be empty")
+	}
+}
+
+// ─── depComponents (supply-chain logic, synthetic deps) ──────
+
+func TestDepComponents_Empty(t *testing.T) {
+	comps, refs := depComponents(nil)
+	if comps != nil || refs != nil {
+		t.Errorf("zero deps should yield nil slices, got %v / %v", comps, refs)
+	}
+}
+
+func TestDepComponents_SkipsNilAndEmptyPath(t *testing.T) {
+	comps, refs := depComponents([]*debug.Module{
+		nil,
+		{Path: "", Version: "v1.0.0"},
+	})
+	if len(comps) != 0 || len(refs) != 0 {
+		t.Errorf("nil / empty-path deps must be skipped, got %v / %v", comps, refs)
+	}
+}
+
+func TestDepComponents_BasicDepWithChecksum(t *testing.T) {
+	comps, refs := depComponents([]*debug.Module{
+		{Path: "github.com/x/dep", Version: "v1.2.3", Sum: "h1:abc123="},
+	})
+	if len(comps) != 1 || len(refs) != 1 {
+		t.Fatalf("expected 1 component, got %d / %d", len(comps), len(refs))
+	}
+	c := comps[0]
+	if c.Name != "dep" || c.Version != "v1.2.3" || c.Type != "library" || c.Scope != "required" {
+		t.Errorf("component fields wrong: %+v", c)
+	}
+	if c.BomRef != refs[0] || c.PackageURL != c.BomRef {
+		t.Errorf("BomRef / PackageURL / ref must agree: %+v vs %q", c, refs[0])
+	}
+	if len(c.Hashes) != 1 || c.Hashes[0].Alg != "Go-Module-Sum" || c.Hashes[0].Content != "h1:abc123=" {
+		t.Errorf("checksum not attached: %+v", c.Hashes)
+	}
+}
+
+func TestDepComponents_NoChecksumNoHashes(t *testing.T) {
+	comps, _ := depComponents([]*debug.Module{
+		{Path: "github.com/x/nosum", Version: "v0.1.0"},
+	})
+	if len(comps) != 1 {
+		t.Fatal("expected 1 component")
+	}
+	if comps[0].Hashes != nil {
+		t.Errorf("dep without Sum must have no Hashes, got %+v", comps[0].Hashes)
+	}
+}
+
+func TestDepComponents_ResolvesReplacementChain(t *testing.T) {
+	// dep → replaced by fork → replaced again by local pin: the final module in
+	// the chain is what actually got linked, so the SBOM must record it.
+	final := &debug.Module{Path: "github.com/fork/final", Version: "v2.0.0", Sum: "h1:final="}
+	mid := &debug.Module{Path: "github.com/fork/mid", Version: "v1.5.0", Replace: final}
+	comps, refs := depComponents([]*debug.Module{
+		{Path: "github.com/orig/dep", Version: "v1.0.0", Replace: mid},
+	})
+	if len(comps) != 1 {
+		t.Fatal("expected 1 component")
+	}
+	c := comps[0]
+	if c.Name != "final" || c.Version != "v2.0.0" {
+		t.Errorf("replacement chain not followed to the end: %+v", c)
+	}
+	if !strings.Contains(refs[0], "fork/final") {
+		t.Errorf("ref should point at the final replacement, got %q", refs[0])
+	}
+	if len(c.Hashes) != 1 || c.Hashes[0].Content != "h1:final=" {
+		t.Errorf("checksum must come from the final module: %+v", c.Hashes)
 	}
 }
