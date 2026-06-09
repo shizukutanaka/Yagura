@@ -1,111 +1,134 @@
-diff -ruN /tmp/pg9/prev/yagura-v0.35.0/CHANGELOG.md yagura-v0.35.0/CHANGELOG.md
---- /tmp/pg9/prev/yagura-v0.35.0/CHANGELOG.md	2026-06-09 04:10:51.000000000 +0000
-+++ yagura-v0.35.0/CHANGELOG.md	2026-06-09 04:16:16.596921210 +0000
-@@ -15,6 +15,17 @@
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/CHANGELOG.md yagura-v0.35.0/CHANGELOG.md
+--- /tmp/pgA/prev/yagura-v0.35.0/CHANGELOG.md	2026-06-09 04:16:16.000000000 +0000
++++ yagura-v0.35.0/CHANGELOG.md	2026-06-09 04:28:43.674641632 +0000
+@@ -15,6 +15,15 @@
  
  ### What's new
  
-+- **fix(recovery): budget 1 で retry を返さない収束ガード(loop engineering)**
-+  (`internal/recovery`)。recovery kernel は失敗を retry/replan/escalate に決定論的に
-+  振り分け、budget(MaxAttempts、既定 3)を使い切ると terminal escalate/degrade する設計。
-+  しかし `tool_init` と unknown(default)の 2 分岐だけ「attempt==1 なら optimistic に
-+  1 回 retry」を `exhausted` 判定より *前* に置いていたため、`MaxAttempts==1`(= retry の
-+  余地ゼロ)でも attempt 1 で非 terminal な `backoff_retry`/`retry` を返していた — budget を
-+  超えてループが回り続ける、Loop Engineering でいう「終了条件のないループ」。`tool_error`
-+  分岐は正しく `exhausted` を先に見ており、この 2 つだけが逸脱していた。両分岐で `exhausted`
-+  を先に判定するよう修正(budget 1 は即 escalate、low severity は degrade で terminate)。
-+  通常の multi-attempt path(attempt 1 of 3 は backoff retry のまま)は不変。test-first:
-+  budget-1 が terminal になる spec を先に固定(赤)→ 並べ替えで緑、既存 10 ケースも全 green。
- - **可視性ミスマッチ alert(visibility literacy):internal 宣言なのに repo が Public**
-   (`internal/alertfix` / `internal/project` / `internal/scanner`)。「Public のまま公開
-   されてた!」を portfolio 単位で検出する。scanner は GitHub から repo の公開状態を観測して
-diff -ruN /tmp/pg9/prev/yagura-v0.35.0/internal/recovery/recovery.go yagura-v0.35.0/internal/recovery/recovery.go
---- /tmp/pg9/prev/yagura-v0.35.0/internal/recovery/recovery.go	2026-06-05 09:23:03.000000000 +0000
-+++ yagura-v0.35.0/internal/recovery/recovery.go	2026-06-09 04:14:47.600921030 +0000
-@@ -127,13 +127,15 @@
- 		d.Action, d.Reason = ActionRepairArgs, "parameter/argument error — repair the call arguments, then retry"
- 		return d
- 	case ClassToolInit:
-+		// exhausted を先に判定する: budget が 1 だと attempt 1 で既に使い切っており、
-+		// optimistic な backoff retry を返すと budget を超えてループが回り続ける。
-+		if exhausted {
-+			return exhaust("tool keeps failing to initialize within budget")
-+		}
- 		if attempt == 1 {
- 			d.Action, d.Reason, d.RetryAfterSeconds = ActionBackoffRetry, "tool init failure on first attempt — may be transient; retry with backoff", backoff(attempt)
- 			return d
++- **gha_audit: zizmor パリティ継続で supply-chain 検査を 11→12 に拡張(bot-conditions)**
++  (`internal/ghaaudit`)。`if: github.actor == 'dependabot[bot]'` のように `github.actor` を
++  bot login と比較する security gate を検出(zizmor: bot-conditions、MEDIUM)。`github.actor`
++  は spoof 可能なため bot 判定の信頼できる根拠にならず、特権ステップの gate に使うと bypass
++  されうる。actor が左右どちらでも(`==`/`!=`)検出し、推奨される robust signal
++  (`github.event.pull_request.user.login` / `github.event.sender.type == 'Bot'`)は flag
++  しない(false positive 削減)。`github.actor == 'octocat'`(非 bot)も対象外。tool
++  description / package doc / MCP_TOOLS.md を 12 に更新。test-first:検出 4 形 + 非 bot
++  クリーン + pull_request.user.login クリーンを先に固定(赤)→ 実装で緑。zero-dep。
+ - **fix(recovery): budget 1 で retry を返さない収束ガード(loop engineering)**
+   (`internal/recovery`)。recovery kernel は失敗を retry/replan/escalate に決定論的に
+   振り分け、budget(MaxAttempts、既定 3)を使い切ると terminal escalate/degrade する設計。
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/docs/MCP_TOOLS.md yagura-v0.35.0/docs/MCP_TOOLS.md
+--- /tmp/pgA/prev/yagura-v0.35.0/docs/MCP_TOOLS.md	2026-06-08 15:19:34.000000000 +0000
++++ yagura-v0.35.0/docs/MCP_TOOLS.md	2026-06-09 04:28:32.766641610 +0000
+@@ -720,7 +720,7 @@
+ 
+ ### `yagura_gha_audit`
+ 
+-[G] GHA workflow audit: 9 supply-chain risk patterns.
++[G] GHA workflow audit: 12 supply-chain risk patterns.
+ 
+ **Arguments:**
+ 
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go yagura-v0.35.0/internal/ghaaudit/ghaaudit.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go	2026-06-08 21:26:09.000000000 +0000
++++ yagura-v0.35.0/internal/ghaaudit/ghaaudit.go	2026-06-09 04:27:06.042641434 +0000
+@@ -5,7 +5,7 @@
+ //   - zizmor 風の audit を zero-dep で実装(ADR-0001 維持)
+ //   - YAML 完全パースは行わず、line-based prefix + regex で必要箇所を抽出
+ //     (GHA workflow YAML は十分構造化されているので line-based で実用充分)
+-//   - 検出ルール 11 種類は OWASP / zizmor / GitHub Actions security roadmap
++//   - 検出ルール 12 種類は OWASP / zizmor / GitHub Actions security roadmap
+ //     から導出
+ //
+ // 検出ルール(2026 年現在の supply chain attack 例から逆算):
+@@ -20,6 +20,7 @@
+ //   - R9 self-hosted-runner: 隔離困難な self-hosted runner
+ //   - R10 artipacked      : actions/checkout が Git 認証情報をディスクに残す (zizmor parity)
+ //   - R11 envfile-injection: ユーザー操作値を $GITHUB_ENV / $GITHUB_OUTPUT / $GITHUB_PATH へ流す
++//   - R12 bot-conditions  : github.actor を bot login と比較する spoofable な gate (zizmor parity)
+ //
+ // 参考:
+ //   - https://github.com/zizmorcore/zizmor (Rust 実装、本実装の参考)
+@@ -214,6 +215,19 @@
+ 				Suggestion:  "Sanitize or reject user-controlled values; never echo untrusted data directly into $GITHUB_ENV/$GITHUB_OUTPUT/$GITHUB_PATH.",
+ 			})
  		}
--		if exhausted {
--			return exhaust("tool keeps failing to initialize within budget")
--		}
- 		d.Action, d.Reason = ActionSubstituteTool, "tool repeatedly fails to initialize — substitute an equivalent tool"
- 		return d
- 	case ClassToolError:
-@@ -165,13 +167,14 @@
- 		d.Action, d.Reason = ActionReplan, "verifier rejected the output — replan the approach (do not just retry the same plan)"
- 		return d
- 	default: // unknown
-+		// exhausted を先に判定する(budget 1 で attempt 1 の retry がループを溢れさせる)。
-+		if exhausted {
-+			return exhaust("unknown failure persisted through the recovery budget")
++
++		// R12 bot-conditions: github.actor を bot login と比較する spoofable な gate(zizmor parity)
++		if reBotCondition.MatchString(raw) {
++			findings = append(findings, Finding{
++				RuleID:      "bot-conditions",
++				Description: "Security gate compares github.actor to a bot login — github.actor is spoofable, so this is an unreliable bot check",
++				Severity:    SeverityMedium,
++				File:        filePath,
++				Line:        lineNum,
++				Snippet:     stripped,
++				Suggestion:  "Gate on a robust signal instead, e.g. github.event.pull_request.user.login or github.event.sender.type == 'Bot'.",
++			})
 +		}
- 		if attempt == 1 {
- 			d.Action, d.Reason = ActionRetry, "unknown failure on first attempt — retry once before replanning"
- 			return d
- 		}
--		if exhausted {
--			return exhaust("unknown failure persisted through the recovery budget")
--		}
- 		d.Action, d.Reason = ActionReplan, "unknown failure persists — replan the approach"
- 		return d
  	}
-diff -ruN /tmp/pg9/prev/yagura-v0.35.0/internal/recovery/recovery_test.go yagura-v0.35.0/internal/recovery/recovery_test.go
---- /tmp/pg9/prev/yagura-v0.35.0/internal/recovery/recovery_test.go	2026-06-05 09:22:55.000000000 +0000
-+++ yagura-v0.35.0/internal/recovery/recovery_test.go	2026-06-09 04:14:28.324920991 +0000
-@@ -100,3 +100,46 @@
- 		t.Error("Decide must be deterministic")
+ 
+ 	// R3 no-permissions: workflow に top-level permissions: 無し
+@@ -332,6 +346,11 @@
+ 	// secrets.* は repo owner 管理なので対象外(false positive 削減)。
+ 	reEnvFileSink        = regexp.MustCompile(`>>\s*\$GITHUB_(ENV|OUTPUT|PATH)\b`)
+ 	reUserControlledExpr = regexp.MustCompile(`\$\{\{\s*github\.(event\.[a-zA-Z_]+|head_ref\b)`)
++
++	// R12 bot-conditions: `github.actor` を bot login(`...[bot]`)と比較する
++	// security gate(zizmor parity)。github.actor は spoof 可能なため、bot 判定の
++	// 信頼できる根拠にならない。両方の順序(actor 左/右)+ ==/!= を検出。
++	reBotCondition = regexp.MustCompile(`github\.actor\s*[=!]=\s*['"][^'"]*\[bot\]['"]|['"][^'"]*\[bot\]['"]\s*[=!]=\s*github\.actor`)
+ )
+ 
+ // reTriggerKey は trigger 名を YAML key として検出する正規表現を返す。
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go	2026-06-08 21:27:41.000000000 +0000
++++ yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go	2026-06-09 04:25:50.130641281 +0000
+@@ -692,3 +692,35 @@
+ 		t.Error("steps.*.outputs.* must not be flagged by envfile-injection")
  	}
  }
 +
-+// ─── convergence: a budget of 1 must never recommend a non-terminal retry ──
-+//
-+// Loop Engineering: a loop without a real termination condition runs forever.
-+// With MaxAttempts==1 the budget is exhausted on the only attempt, so every
-+// failure class must terminate (escalate, or degrade when low severity) rather
-+// than tell the orchestrator to retry past its budget.
++// ─── R12 bot-conditions (zizmor parity) ──────────────────────
 +
-+func TestDecide_ToolInitBudgetOfOne_Terminates(t *testing.T) {
-+	d := Decide(Event{Class: ClassToolInit, Attempt: 1, MaxAttempts: 1})
-+	if !d.Terminal {
-+		t.Errorf("tool_init with budget 1 must terminate, got non-terminal %+v", d)
-+	}
-+	if d.Action == ActionBackoffRetry || d.Action == ActionRetry {
-+		t.Errorf("budget-1 must not recommend a retry, got %s", d.Action)
++func TestAuditFile_BotConditions_FlaggedActorEqualsBot(t *testing.T) {
++	for _, line := range []string{
++		`    if: github.actor == 'dependabot[bot]'`,
++		`    if: github.actor == "renovate[bot]"`,
++		`    if: 'dependabot[bot]' == github.actor`,
++		`    if: github.actor != 'dependabot[bot]'`,
++	} {
++		wf := "on: pull_request_target\npermissions: {}\njobs:\n  b:\n    runs-on: ubuntu-latest\n" + line + "\n    steps:\n      - run: echo hi\n"
++		if !hasRule(New().AuditFile("w.yml", wf), "bot-conditions") {
++			t.Errorf("expected bot-conditions finding for %q", line)
++		}
 +	}
 +}
 +
-+func TestDecide_UnknownBudgetOfOne_Terminates(t *testing.T) {
-+	d := Decide(Event{Class: "totally_unknown_class", Attempt: 1, MaxAttempts: 1})
-+	if !d.Terminal {
-+		t.Errorf("unknown failure with budget 1 must terminate, got %+v", d)
-+	}
-+	if d.Action == ActionBackoffRetry || d.Action == ActionRetry {
-+		t.Errorf("budget-1 must not recommend a retry, got %s", d.Action)
++func TestAuditFile_BotConditions_PlainActorCheckIsClean(t *testing.T) {
++	// Comparing github.actor to a human login (no [bot]) is not this rule.
++	wf := "on: [push]\npermissions: {}\njobs:\n  b:\n    runs-on: ubuntu-latest\n    if: github.actor == 'octocat'\n    steps:\n      - run: echo hi\n"
++	if hasRule(New().AuditFile("w.yml", wf), "bot-conditions") {
++		t.Error("actor compared to a non-bot login must not trip bot-conditions")
 +	}
 +}
 +
-+func TestDecide_BudgetOfOne_LowSeverityDegrades(t *testing.T) {
-+	d := Decide(Event{Class: ClassToolInit, Attempt: 1, MaxAttempts: 1, Severity: "low"})
-+	if d.Action != ActionDegrade || !d.Terminal {
-+		t.Errorf("budget-1 low-severity should degrade terminally, got %+v", d)
++func TestAuditFile_BotConditions_PRUserLoginIsClean(t *testing.T) {
++	// The recommended robust signal (pull_request.user.login) must not be flagged.
++	wf := "on: pull_request_target\npermissions: {}\njobs:\n  b:\n    runs-on: ubuntu-latest\n    if: github.event.pull_request.user.login == 'dependabot[bot]'\n    steps:\n      - run: echo hi\n"
++	if hasRule(New().AuditFile("w.yml", wf), "bot-conditions") {
++		t.Error("pull_request.user.login is the robust signal; must not be flagged")
 +	}
 +}
-+
-+// Regression: the normal multi-attempt path is unchanged — a tool_init failure
-+// on attempt 1 of a 3-budget still does an optimistic backoff retry.
-+func TestDecide_ToolInitFirstAttemptStillBacksOff(t *testing.T) {
-+	d := Decide(Event{Class: ClassToolInit, Attempt: 1, MaxAttempts: 3})
-+	if d.Action != ActionBackoffRetry || d.Terminal {
-+		t.Errorf("tool_init attempt 1 of 3 should backoff_retry non-terminally, got %+v", d)
-+	}
-+}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/tools.go yagura-v0.35.0/internal/mcp/tools.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/tools.go	2026-06-09 04:05:46.000000000 +0000
++++ yagura-v0.35.0/internal/mcp/tools.go	2026-06-09 04:27:22.958641469 +0000
+@@ -472,7 +472,7 @@
+ func buildGhaAuditTool(d Deps) *Tool {
+ 	return &Tool{
+ 		Name:        "yagura_gha_audit",
+-		Description: "[G] GHA workflow audit: 11 supply-chain risk patterns.",
++		Description: "[G] GHA workflow audit: 12 supply-chain risk patterns.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
