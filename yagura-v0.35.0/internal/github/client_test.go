@@ -293,3 +293,91 @@ func TestGetTagSHA_NotFound(t *testing.T) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
+
+// ─── NewClient default BaseURL ─────────────────────────────────
+
+func TestNewClient_DefaultBaseURL(t *testing.T) {
+	// When BaseURL is empty, the client should use the GitHub API default.
+	c := NewClient(Config{Token: "ghp_test_token"})
+	if c == nil {
+		t.Fatal("NewClient returned nil")
+	}
+	// The default base is set internally; verify the client is operational.
+	if c.baseURL == "" {
+		t.Error("expected non-empty baseURL after default assignment")
+	}
+}
+
+// ─── CountOpenItems partial failure ───────────────────────────
+
+func TestCountOpenItems_IssuesError(t *testing.T) {
+	// PR query succeeds; issues query returns 500 → error propagated.
+	_, c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		if strings.Contains(q, "is:pr") {
+			fmt.Fprintln(w, `{"total_count": 3}`)
+		} else {
+			http.Error(w, "server error", http.StatusInternalServerError)
+		}
+	})
+	_, _, err := c.CountOpenItems(context.Background(), "x", "r")
+	if err == nil {
+		t.Error("expected error when issues query fails")
+	}
+}
+
+// ─── LatestRelease non-404 error ───────────────────────────────
+
+func TestLatestRelease_ServerError(t *testing.T) {
+	_, c := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	})
+	_, err := c.LatestRelease(context.Background(), "x", "r")
+	if err == nil {
+		t.Error("expected error for 500 from LatestRelease")
+	}
+}
+
+// ─── LatestCIStatus non-404 error ─────────────────────────────
+
+func TestLatestCIStatus_ServerError(t *testing.T) {
+	_, c := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	})
+	_, err := c.LatestCIStatus(context.Background(), "x", "r", "main")
+	if err == nil {
+		t.Error("expected error for 500 from LatestCIStatus")
+	}
+}
+
+// ─── doJSON unexpected HTTP status ────────────────────────────
+
+func TestDoJSON_UnexpectedStatus(t *testing.T) {
+	// Status 429 without X-RateLimit-Remaining header → unexpected status error.
+	_, c := testServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprintln(w, `{"message":"rate limited"}`)
+	})
+	_, err := c.GetRepository(context.Background(), "x", "r")
+	if err == nil {
+		t.Error("expected error for unexpected 429 status")
+	}
+}
+
+// ─── GetTagSHA annotated tag dereference error ─────────────────
+
+func TestGetTagSHA_AnnotatedDereferenceError(t *testing.T) {
+	// First call returns annotated tag, second call (dereference) returns 404.
+	_, c := testServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/org/repo/git/ref/tags/v1.0":
+			fmt.Fprintln(w, `{"object":{"sha":"tag-obj-sha","type":"tag"}}`)
+		default:
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+		}
+	})
+	_, err := c.GetTagSHA(context.Background(), "org", "repo", "v1.0")
+	if err == nil {
+		t.Error("expected error when annotated tag dereference fails")
+	}
+}
