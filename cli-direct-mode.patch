@@ -976,6 +976,141 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/tools_pindrift_test.go /home
 +		t.Errorf("expected pindrift.Summary, got %T", res)
 +	}
 +}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/projectgraph/graph.go /home/user/Yagura/yagura-v0.35.0/internal/projectgraph/graph.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/projectgraph/graph.go	2026-06-03 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/projectgraph/graph.go	2026-06-09 08:00:31.568327346 +0000
+@@ -1,11 +1,12 @@
+ // Package projectgraph は portfolio の depends_on 関係を graph として扱う。
+ //
+ // 動機 (v0.18.0):
+-//   cortex/aircloset の "Product Graph" 構想を yagura に翻訳。
+-//   project.DependsOn は既に v0.x から存在していたが、検索可能な graph として
+-//   公開する MCP tool が無かった。
+-//   "プロジェクト X を変更したら何が影響を受けるか?" "X が依存している全 transitive deps は?"
+-//   といった問いに 1 回の MCP 呼出で答えられる土台を提供する。
++//
++//	cortex/aircloset の "Product Graph" 構想を yagura に翻訳。
++//	project.DependsOn は既に v0.x から存在していたが、検索可能な graph として
++//	公開する MCP tool が無かった。
++//	"プロジェクト X を変更したら何が影響を受けるか?" "X が依存している全 transitive deps は?"
++//	といった問いに 1 回の MCP 呼出で答えられる土台を提供する。
+ //
+ // 設計判断:
+ //   - ゼロ依存(ADR-0001)、隣接リスト map[slug][]slug の素朴実装
+@@ -83,17 +84,25 @@
+ 		g.slugs = append(g.slugs, s)
+ 	}
+ 	sort.Strings(g.slugs)
++	// dangling も (From, To) で sort して deterministic output(他の list と同様、
++	// 呼出側の project 順序に依存させない)。
++	sort.Slice(g.dangling, func(i, j int) bool {
++		if g.dangling[i].From != g.dangling[j].From {
++			return g.dangling[i].From < g.dangling[j].From
++		}
++		return g.dangling[i].To < g.dangling[j].To
++	})
+ 	return g
+ }
+ 
+ // NeighborsResult は graph_neighbors の戻り値。
+ type NeighborsResult struct {
+-	Slug              string            `json:"slug"`
+-	DirectDeps        []string          `json:"direct_deps,omitempty"`         // 直接依存先
+-	DirectDependents  []string          `json:"direct_dependents,omitempty"`   // 直接依存元
+-	TransitiveDeps    []string          `json:"transitive_deps,omitempty"`     // depth N までの全依存先
+-	TransitiveDependents []string       `json:"transitive_dependents,omitempty"` // depth N までの全依存元
+-	Depth             int               `json:"depth"`
++	Slug                 string   `json:"slug"`
++	DirectDeps           []string `json:"direct_deps,omitempty"`           // 直接依存先
++	DirectDependents     []string `json:"direct_dependents,omitempty"`     // 直接依存元
++	TransitiveDeps       []string `json:"transitive_deps,omitempty"`       // depth N までの全依存先
++	TransitiveDependents []string `json:"transitive_dependents,omitempty"` // depth N までの全依存元
++	Depth                int      `json:"depth"`
+ }
+ 
+ // Neighbors は slug から depth 階層まで graph を BFS で探索する。
+@@ -156,12 +165,12 @@
+ // 「このプロジェクトを変更したら、どこに波及するか」を提供する。
+ // AI レビュアー(cortex Auto Review 相当)が PR の影響範囲を把握するために使う。
+ type ImpactResult struct {
+-	Slug              string   `json:"slug"`
+-	DirectImpact      []string `json:"direct_impact,omitempty"`      // 直接依存元
+-	TransitiveImpact  []string `json:"transitive_impact,omitempty"`  // 全 transitive 依存元
+-	ImpactCount       int      `json:"impact_count"`
+-	HasCycle          bool     `json:"has_cycle"`
+-	CyclePath         []string `json:"cycle_path,omitempty"`
++	Slug             string   `json:"slug"`
++	DirectImpact     []string `json:"direct_impact,omitempty"`     // 直接依存元
++	TransitiveImpact []string `json:"transitive_impact,omitempty"` // 全 transitive 依存元
++	ImpactCount      int      `json:"impact_count"`
++	HasCycle         bool     `json:"has_cycle"`
++	CyclePath        []string `json:"cycle_path,omitempty"`
+ }
+ 
+ // Impact は slug を変更した時に影響を受けるプロジェクトを列挙する。
+@@ -233,15 +242,15 @@
+ 
+ // Summary は portfolio 全体の graph 統計を返す。
+ type Summary struct {
+-	NodeCount       int `json:"node_count"`
+-	EdgeCount       int `json:"edge_count"`
+-	RootCount       int `json:"root_count"`        // 誰にも依存されていない node
+-	LeafCount       int `json:"leaf_count"`        // 何にも依存しない node
+-	IsolatedCount   int `json:"isolated_count"`    // 入次数=出次数=0
+-	MaxFanOut       int `json:"max_fan_out"`       // 最大依存先数
+-	MaxFanIn        int `json:"max_fan_in"`        // 最大依存元数
+-	MostDependedOn  string `json:"most_depended_on,omitempty"`
+-	DanglingCount   int `json:"dangling_count"`
++	NodeCount      int    `json:"node_count"`
++	EdgeCount      int    `json:"edge_count"`
++	RootCount      int    `json:"root_count"`     // 誰にも依存されていない node
++	LeafCount      int    `json:"leaf_count"`     // 何にも依存しない node
++	IsolatedCount  int    `json:"isolated_count"` // 入次数=出次数=0
++	MaxFanOut      int    `json:"max_fan_out"`    // 最大依存先数
++	MaxFanIn       int    `json:"max_fan_in"`     // 最大依存元数
++	MostDependedOn string `json:"most_depended_on,omitempty"`
++	DanglingCount  int    `json:"dangling_count"`
+ }
+ 
+ // Stats は graph の集計統計を返す。
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/projectgraph/graph_test.go /home/user/Yagura/yagura-v0.35.0/internal/projectgraph/graph_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/projectgraph/graph_test.go	2026-06-03 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/projectgraph/graph_test.go	2026-06-09 08:00:06.072327930 +0000
+@@ -147,6 +147,34 @@
+ 	}
+ }
+ 
++// TestDangling_DeterministicOrder pins that Dangling() is sorted by (From, To)
++// regardless of input project order. Every other list Build produces (forwards,
++// reverses, slugs) is explicitly sorted; dangling must be too so the output does
++// not depend on the caller's project ordering (Deterministic output rule).
++func TestDangling_DeterministicOrder(t *testing.T) {
++	// Projects deliberately given out of slug order, each with multiple missing
++	// deps in non-sorted declaration order.
++	g := Build([]Project{
++		{Slug: "zeta", DependsOn: []string{"miss-y", "miss-x"}},
++		{Slug: "alpha", DependsOn: []string{"miss-b", "miss-a"}},
++	})
++	d := g.Dangling()
++	want := []DanglingDep{
++		{From: "alpha", To: "miss-a"},
++		{From: "alpha", To: "miss-b"},
++		{From: "zeta", To: "miss-x"},
++		{From: "zeta", To: "miss-y"},
++	}
++	if len(d) != len(want) {
++		t.Fatalf("dangling count: got %d, want %d (%+v)", len(d), len(want), d)
++	}
++	for i := range want {
++		if d[i] != want[i] {
++			t.Errorf("dangling[%d] = %+v, want %+v (full: %+v)", i, d[i], want[i], d)
++		}
++	}
++}
++
+ // ─── Stats(集計)───────────────────────────────────────────
+ 
+ func TestStats_MostDependedOn(t *testing.T) {
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go /home/user/Yagura/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go
 --- /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go	2026-06-08 05:37:32.000000000 +0000
 +++ /home/user/Yagura/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go	2026-06-09 07:43:51.985010667 +0000
