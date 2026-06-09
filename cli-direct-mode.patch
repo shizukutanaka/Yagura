@@ -1337,6 +1337,39 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/dashboard/dashboard_test.go /hom
  func TestStaleClass(t *testing.T) {
  	cases := []struct {
  		days int
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/dedupe/dedupe_test.go /home/user/Yagura/yagura-v0.35.0/internal/dedupe/dedupe_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/dedupe/dedupe_test.go	2026-06-08 14:07:14.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/dedupe/dedupe_test.go	2026-06-09 10:46:04.066665409 +0000
+@@ -1,6 +1,7 @@
+ package dedupe
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 	"os"
+ 	"sync"
+@@ -129,6 +130,21 @@
+ 	}
+ }
+ 
++// TestStats_FreshCacheHitRateIsZeroNotNaN pins the h+m==0 boundary: a cache that
++// has never been accessed must report HitRate 0, not NaN. NaN would make Stats
++// fail json.Marshal (json: unsupported value: NaN), breaking yagura_dedupe_stats
++// on every cold start.
++func TestStats_FreshCacheHitRateIsZeroNotNaN(t *testing.T) {
++	c := New(10, time.Minute)
++	s := c.Stats()
++	if s.HitRate != 0 {
++		t.Errorf("fresh cache HitRate = %v, want 0", s.HitRate)
++	}
++	if _, err := json.Marshal(s); err != nil {
++		t.Errorf("fresh Stats must be JSON-marshalable (no NaN/Inf): %v", err)
++	}
++}
++
+ func TestStats_BytesSavedAccumulates(t *testing.T) {
+ 	c := New(10, time.Minute)
+ 	c.Set("k", []byte("0123456789")) // 10 bytes
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go /home/user/Yagura/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go
 --- /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go	2026-06-08 21:26:09.000000000 +0000
 +++ /home/user/Yagura/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go	2026-06-09 04:27:06.042641434 +0000
@@ -2584,3 +2617,22 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.g
 +		}
 +	}
 +}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go /home/user/Yagura/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go	2026-06-08 02:09:54.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go	2026-06-09 10:46:14.110665817 +0000
+@@ -85,6 +85,15 @@
+ 	if s.Events != 0 || s.ToolInvocations != 0 || s.Summary == "" {
+ 		t.Errorf("empty summary: %+v", s)
+ 	}
++	// ToolInvocations==0 must leave ErrorRate at 0, not NaN. NaN would make the
++	// summary fail json.Marshal, breaking yagura_session_summary for an idle
++	// session with no tool calls.
++	if s.ErrorRate != 0 {
++		t.Errorf("empty session ErrorRate = %v, want 0 (not NaN)", s.ErrorRate)
++	}
++	if _, err := json.Marshal(s); err != nil {
++		t.Errorf("empty summary must be JSON-marshalable (no NaN/Inf): %v", err)
++	}
+ }
+ 
+ func TestSummarize_Deterministic(t *testing.T) {
