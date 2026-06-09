@@ -1,0 +1,541 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/shizukutanaka/yagura/internal/alertfix"
+	"github.com/shizukutanaka/yagura/internal/dedupe"
+	"github.com/shizukutanaka/yagura/internal/plantracker"
+	"github.com/shizukutanaka/yagura/internal/project"
+)
+
+// callErr invokes a tool and returns (result, error) without fataling.
+func callErr(t *testing.T, tool *Tool, args any) (any, error) {
+	t.Helper()
+	b, _ := json.Marshal(args)
+	return tool.Handler(context.Background(), b)
+}
+
+// newAlertFixStore creates a real alertfix store backed by a temp file.
+func newAlertFixStore(t *testing.T) *alertfix.Store {
+	t.Helper()
+	st, err := alertfix.NewStore(filepath.Join(t.TempDir(), "alerts.jsonl"))
+	if err != nil {
+		t.Fatalf("alertfix.NewStore: %v", err)
+	}
+	return st
+}
+
+// writePlanMd creates a minimal Plan.md in dir.
+func writePlanMd(t *testing.T, dir string) {
+	t.Helper()
+	content := `# Plan
+## Purpose
+Test project purpose.
+## Scope
+In: everything
+## Phase 1
+- [x] design
+- [x] prototype
+## フェーズ 2
+- [ ] build
+- [ ] ship
+## 完了定義
+- [ ] all tests green
+`
+	if err := os.WriteFile(filepath.Join(dir, "Plan.md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("writePlanMd: %v", err)
+	}
+}
+
+// ─── yagura_harness_coverage ──────────────────────────────────
+
+func TestHarnessCoverage_ReturnsMatrix(t *testing.T) {
+	d := newDeps(t)
+	tool := buildHarnessCoverageTool(d)
+	r := mustCall(t, tool, struct{}{}).(map[string]any)
+	matrix, ok := r["matrix"].(map[string]map[string][]string)
+	if !ok {
+		t.Fatalf("matrix missing or wrong type: %T", r["matrix"])
+	}
+	if _, hasGuide := matrix["guide"]; !hasGuide {
+		t.Error("matrix should have 'guide' axis")
+	}
+	if _, hasSensor := matrix["sensor"]; !hasSensor {
+		t.Error("matrix should have 'sensor' axis")
+	}
+	counts, ok := r["counts"].(map[string]int)
+	if !ok {
+		t.Fatalf("counts missing or wrong type: %T", r["counts"])
+	}
+	if counts["guide_computational"] == 0 {
+		t.Error("guide_computational count should be > 0")
+	}
+}
+
+func TestHarnessCoverage_JSONMarshalable(t *testing.T) {
+	d := newDeps(t)
+	tool := buildHarnessCoverageTool(d)
+	r := mustCall(t, tool, struct{}{})
+	if _, err := json.Marshal(r); err != nil {
+		t.Errorf("result must be JSON-marshalable: %v", err)
+	}
+}
+
+// ─── yagura_test_audit ───────────────────────────────────────
+
+func TestTestAudit_Basic(t *testing.T) {
+	d := newDeps(t)
+	tool := buildTestAuditTool(d)
+	files := map[string]string{
+		"pkg/foo.go":      "package pkg\nfunc Foo() {}",
+		"pkg/foo_test.go": "package pkg\nimport \"testing\"\nfunc TestFoo(t *testing.T) {}",
+		"pkg/bar.go":      "package pkg\nfunc Bar() {}",
+	}
+	r := mustCall(t, tool, map[string]any{"files": files}).(map[string]any)
+	if r["source_files"].(int) < 2 {
+		t.Errorf("source_files = %v, want >= 2", r["source_files"])
+	}
+	if r["test_files"].(int) < 1 {
+		t.Errorf("test_files = %v, want >= 1", r["test_files"])
+	}
+}
+
+func TestTestAudit_EmptyFilesError(t *testing.T) {
+	d := newDeps(t)
+	tool := buildTestAuditTool(d)
+	_, err := callErr(t, tool, map[string]any{"files": map[string]string{}})
+	if err == nil {
+		t.Error("empty files should return an error")
+	}
+}
+
+func TestTestAudit_MissingFilesError(t *testing.T) {
+	d := newDeps(t)
+	tool := buildTestAuditTool(d)
+	_, err := callErr(t, tool, struct{}{})
+	if err == nil {
+		t.Error("missing files field should return an error")
+	}
+}
+
+func TestTestAudit_UntestedOnlyFlag(t *testing.T) {
+	d := newDeps(t)
+	tool := buildTestAuditTool(d)
+	files := map[string]string{
+		"a.go": "package a",
+		"b.go": "package b",
+	}
+	r := mustCall(t, tool, map[string]any{"files": files, "untested_only": true}).(map[string]any)
+	// untested_only filters result; coverage_ratio should be accessible
+	if _, ok := r["coverage_ratio"]; !ok {
+		t.Error("coverage_ratio field missing")
+	}
+}
+
+// ─── yagura_feature_list ─────────────────────────────────────
+
+func TestFeatureList_Basic(t *testing.T) {
+	dir := t.TempDir()
+	writePlanMd(t, dir)
+	d := newDeps(t)
+	p := sampleProject("demo", func(p *project.Project) { p.LocalPath = dir })
+	_ = d.Registry.Add(p)
+
+	tool := buildFeatureListTool(d)
+	r := mustCall(t, tool, map[string]any{"slug": "demo"}).(map[string]any)
+	if r["slug"] != "demo" {
+		t.Errorf("slug = %q, want demo", r["slug"])
+	}
+	if r["feature_list"] == nil {
+		t.Error("feature_list should not be nil")
+	}
+	stats, ok := r["stats"]
+	if !ok || stats == nil {
+		t.Error("stats field missing")
+	}
+}
+
+func TestFeatureList_Write(t *testing.T) {
+	dir := t.TempDir()
+	writePlanMd(t, dir)
+	d := newDeps(t)
+	p := sampleProject("writeproj", func(p *project.Project) { p.LocalPath = dir })
+	_ = d.Registry.Add(p)
+
+	tool := buildFeatureListTool(d)
+	r := mustCall(t, tool, map[string]any{"slug": "writeproj", "write": true}).(map[string]any)
+	if r["written_to"] == nil {
+		t.Error("written_to should be set when write=true")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "feature-list.json")); err != nil {
+		t.Errorf("feature-list.json not created: %v", err)
+	}
+}
+
+func TestFeatureList_UnknownSlug(t *testing.T) {
+	d := newDeps(t)
+	tool := buildFeatureListTool(d)
+	_, err := callErr(t, tool, map[string]any{"slug": "nope"})
+	if err == nil {
+		t.Error("unknown slug should return error")
+	}
+}
+
+func TestFeatureList_NoLocalPath(t *testing.T) {
+	d := newDeps(t)
+	p := sampleProject("nolp")
+	_ = d.Registry.Add(p)
+	tool := buildFeatureListTool(d)
+	_, err := callErr(t, tool, map[string]any{"slug": "nolp"})
+	if err == nil {
+		t.Error("missing local_path should return error")
+	}
+}
+
+func TestFeatureList_NoPlanMd(t *testing.T) {
+	dir := t.TempDir() // empty dir — no Plan.md
+	d := newDeps(t)
+	p := sampleProject("noplan", func(p *project.Project) { p.LocalPath = dir })
+	_ = d.Registry.Add(p)
+	tool := buildFeatureListTool(d)
+	_, err := callErr(t, tool, map[string]any{"slug": "noplan"})
+	if err == nil {
+		t.Error("missing Plan.md should return error")
+	}
+}
+
+func TestFeatureList_EmptySlug(t *testing.T) {
+	d := newDeps(t)
+	tool := buildFeatureListTool(d)
+	_, err := callErr(t, tool, map[string]any{"slug": ""})
+	if err == nil {
+		t.Error("empty slug should return error")
+	}
+}
+
+// ─── yagura_agents_md ────────────────────────────────────────
+
+func TestAgentsMd_Basic(t *testing.T) {
+	d := newDeps(t)
+	p := sampleProject("myproj", func(p *project.Project) { p.Language = "Go" })
+	_ = d.Registry.Add(p)
+
+	tool := buildAgentsMdTool(d)
+	r := mustCall(t, tool, map[string]any{"slug": "myproj"}).(map[string]any)
+	if r["slug"] != "myproj" {
+		t.Errorf("slug = %q, want myproj", r["slug"])
+	}
+	body, _ := r["body"].(string)
+	if body == "" {
+		t.Error("body should not be empty")
+	}
+	if r["filename"] != "AGENTS.md" {
+		t.Errorf("filename = %q, want AGENTS.md", r["filename"])
+	}
+}
+
+func TestAgentsMd_WithPlanMd(t *testing.T) {
+	dir := t.TempDir()
+	writePlanMd(t, dir)
+	d := newDeps(t)
+	p := sampleProject("withplan", func(p *project.Project) { p.LocalPath = dir })
+	_ = d.Registry.Add(p)
+
+	tool := buildAgentsMdTool(d)
+	r := mustCall(t, tool, map[string]any{"slug": "withplan"}).(map[string]any)
+	body, _ := r["body"].(string)
+	if body == "" {
+		t.Error("body should not be empty when Plan.md exists")
+	}
+}
+
+func TestAgentsMd_Write(t *testing.T) {
+	dir := t.TempDir()
+	d := newDeps(t)
+	p := sampleProject("writeagent", func(p *project.Project) { p.LocalPath = dir })
+	_ = d.Registry.Add(p)
+
+	tool := buildAgentsMdTool(d)
+	r := mustCall(t, tool, map[string]any{"slug": "writeagent", "write": true}).(map[string]any)
+	if r["written_to"] == nil {
+		t.Error("written_to should be set when write=true")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err != nil {
+		t.Errorf("AGENTS.md not created: %v", err)
+	}
+}
+
+func TestAgentsMd_UnknownSlug(t *testing.T) {
+	d := newDeps(t)
+	tool := buildAgentsMdTool(d)
+	_, err := callErr(t, tool, map[string]any{"slug": "ghost"})
+	if err == nil {
+		t.Error("unknown slug should return error")
+	}
+}
+
+func TestAgentsMd_EmptySlug(t *testing.T) {
+	d := newDeps(t)
+	tool := buildAgentsMdTool(d)
+	_, err := callErr(t, tool, map[string]any{"slug": ""})
+	if err == nil {
+		t.Error("empty slug should return error")
+	}
+}
+
+// ─── yagura_init_sh ──────────────────────────────────────────
+
+func TestInitSh_Posix(t *testing.T) {
+	d := newDeps(t)
+	p := sampleProject("goapp", func(p *project.Project) { p.Language = "Go" })
+	_ = d.Registry.Add(p)
+
+	tool := buildInitShTool(d)
+	r := mustCall(t, tool, map[string]any{"slug": "goapp"}).(map[string]any)
+	if r["filename"] != "init.sh" {
+		t.Errorf("filename = %q, want init.sh", r["filename"])
+	}
+	body, _ := r["body"].(string)
+	if !strings.Contains(body, "go") && !strings.Contains(body, "#!/") {
+		t.Error("posix init script should reference go or have shebang")
+	}
+}
+
+func TestInitSh_PowerShell(t *testing.T) {
+	d := newDeps(t)
+	p := sampleProject("winapp", func(p *project.Project) { p.Language = "python" })
+	_ = d.Registry.Add(p)
+
+	tool := buildInitShTool(d)
+	r := mustCall(t, tool, map[string]any{"slug": "winapp", "target": "powershell"}).(map[string]any)
+	if r["filename"] != "init.ps1" {
+		t.Errorf("filename = %q, want init.ps1", r["filename"])
+	}
+}
+
+func TestInitSh_Write(t *testing.T) {
+	dir := t.TempDir()
+	d := newDeps(t)
+	p := sampleProject("writeinit", func(p *project.Project) {
+		p.Language = "rust"
+		p.LocalPath = dir
+	})
+	_ = d.Registry.Add(p)
+
+	tool := buildInitShTool(d)
+	r := mustCall(t, tool, map[string]any{"slug": "writeinit", "write": true}).(map[string]any)
+	if r["written_to"] == nil {
+		t.Error("written_to should be set when write=true and local_path set")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "init.sh")); err != nil {
+		t.Errorf("init.sh not created: %v", err)
+	}
+}
+
+func TestInitSh_UnknownTarget(t *testing.T) {
+	d := newDeps(t)
+	p := sampleProject("tp")
+	_ = d.Registry.Add(p)
+	tool := buildInitShTool(d)
+	_, err := callErr(t, tool, map[string]any{"slug": "tp", "target": "zsh-please"})
+	if err == nil {
+		t.Error("unknown target should return error")
+	}
+}
+
+func TestInitSh_UnknownSlug(t *testing.T) {
+	d := newDeps(t)
+	tool := buildInitShTool(d)
+	_, err := callErr(t, tool, map[string]any{"slug": "ghost"})
+	if err == nil {
+		t.Error("unknown slug should return error")
+	}
+}
+
+func TestInitSh_EmptySlug(t *testing.T) {
+	d := newDeps(t)
+	tool := buildInitShTool(d)
+	_, err := callErr(t, tool, map[string]any{"slug": ""})
+	if err == nil {
+		t.Error("empty slug should return error")
+	}
+}
+
+// ─── yagura_alert_fix ────────────────────────────────────────
+
+func TestAlertFix_EmptyRegistry(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	store := newAlertFixStore(t)
+	tool := buildAlertFixTool(d, cache, store)
+	r := mustCall(t, tool, struct{}{}).(map[string]any)
+	if r["total"].(int) != 0 {
+		t.Errorf("empty registry should have 0 alerts, got %v", r["total"])
+	}
+	if r["projects_scanned"].(int) != 0 {
+		t.Errorf("empty registry: projects_scanned = %v, want 0", r["projects_scanned"])
+	}
+}
+
+func TestAlertFix_VulnerableProject(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	store := newAlertFixStore(t)
+	p := sampleProject("vulnproj", func(p *project.Project) {
+		p.VulnCritical = 5
+		p.CIStatus = project.CIStatus("failing")
+	})
+	_ = d.Registry.Add(p)
+
+	tool := buildAlertFixTool(d, cache, store)
+	r := mustCall(t, tool, struct{}{}).(map[string]any)
+	if r["total"].(int) == 0 {
+		t.Error("vulnerable project should produce alerts")
+	}
+	if !r["has_critical"].(bool) {
+		t.Error("critical vuln should set has_critical=true")
+	}
+}
+
+func TestAlertFix_SlugFilter(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	store := newAlertFixStore(t)
+	for _, slug := range []string{"a", "b"} {
+		p := sampleProject(slug, func(p *project.Project) {
+			p.VulnCritical = 1
+		})
+		_ = d.Registry.Add(p)
+	}
+
+	tool := buildAlertFixTool(d, cache, store)
+	r := mustCall(t, tool, map[string]any{"slug": "a"}).(map[string]any)
+	if r["projects_scanned"].(int) != 1 {
+		t.Errorf("slug filter: projects_scanned = %v, want 1", r["projects_scanned"])
+	}
+}
+
+func TestAlertFix_SlugNotFound(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	store := newAlertFixStore(t)
+	tool := buildAlertFixTool(d, cache, store)
+	_, err := callErr(t, tool, map[string]any{"slug": "ghost"})
+	if err == nil {
+		t.Error("unknown slug should return error")
+	}
+}
+
+func TestAlertFix_SeverityMinFilter(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	store := newAlertFixStore(t)
+	p := sampleProject("sp", func(p *project.Project) {
+		p.VulnCritical = 1
+		p.VulnHigh = 2
+	})
+	_ = d.Registry.Add(p)
+
+	tool := buildAlertFixTool(d, cache, store)
+	rAll := mustCall(t, tool, struct{}{}).(map[string]any)
+	rCrit := mustCall(t, tool, map[string]any{"severity_min": "critical"}).(map[string]any)
+	if rCrit["total"].(int) > rAll["total"].(int) {
+		t.Error("critical filter should not return more alerts than unfiltered")
+	}
+}
+
+func TestAlertFix_NilStore(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	tool := buildAlertFixTool(d, cache, nil)
+	r := mustCall(t, tool, struct{}{}).(map[string]any)
+	if _, hasLifecycle := r["lifecycle_stats"]; hasLifecycle {
+		t.Error("lifecycle_stats should not appear when store is nil")
+	}
+}
+
+// ─── yagura_release_radar ────────────────────────────────────
+
+func TestReleaseRadar_EmptyRegistry(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	tool := buildReleaseRadarTool(d, cache)
+	r := mustCall(t, tool, struct{}{}).(map[string]any)
+	if r["total_projects"].(int) != 0 {
+		t.Errorf("empty registry: total_projects = %v, want 0", r["total_projects"])
+	}
+}
+
+func TestReleaseRadar_SkipsNoLocalPath(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	// Projects without local_path are skipped (no Plan.md to parse).
+	for _, s := range []string{"a", "b", "c"} {
+		_ = d.Registry.Add(sampleProject(s))
+	}
+	tool := buildReleaseRadarTool(d, cache)
+	r := mustCall(t, tool, struct{}{}).(map[string]any)
+	if r["total_projects"].(int) != 3 {
+		t.Errorf("total_projects = %v, want 3", r["total_projects"])
+	}
+	if r["projects_scored"].(int) != 0 {
+		t.Errorf("projects without local_path should not be scored, got %v", r["projects_scored"])
+	}
+}
+
+func TestReleaseRadar_WithPlanMd(t *testing.T) {
+	dir := t.TempDir()
+	writePlanMd(t, dir)
+	d := newDeps(t)
+	p := sampleProject("ready", func(p *project.Project) {
+		p.LocalPath = dir
+		p.CIStatus = project.CIStatus("passing")
+	})
+	_ = d.Registry.Add(p)
+
+	cache := dedupe.New(0, 0)
+	tool := buildReleaseRadarTool(d, cache)
+	r := mustCall(t, tool, struct{}{}).(map[string]any)
+	if r["projects_scored"].(int) != 1 {
+		t.Errorf("project with Plan.md should be scored, got %v", r["projects_scored"])
+	}
+	ranked, _ := r["ranked"].([]plantracker.RankedProject)
+	if len(ranked) != 1 {
+		t.Errorf("ranked len = %d, want 1", len(ranked))
+	}
+}
+
+func TestReleaseRadar_LimitApplied(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	for i := 0; i < 5; i++ {
+		dir := t.TempDir()
+		writePlanMd(t, dir)
+		slug := []string{"aa", "bb", "cc", "dd", "ee"}[i]
+		p := sampleProject(slug, func(p *project.Project) { p.LocalPath = dir })
+		_ = d.Registry.Add(p)
+	}
+	tool := buildReleaseRadarTool(d, cache)
+	r := mustCall(t, tool, map[string]any{"limit": 2}).(map[string]any)
+	ranked, _ := r["ranked"].([]plantracker.RankedProject)
+	if len(ranked) > 2 {
+		t.Errorf("limit=2 should cap results, got %d", len(ranked))
+	}
+}
+
+func TestReleaseRadar_DefaultLimit(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	// limit=0 should default to 10 (doesn't panic on empty)
+	tool := buildReleaseRadarTool(d, cache)
+	r := mustCall(t, tool, map[string]any{"limit": 0}).(map[string]any)
+	if r["total_projects"] == nil {
+		t.Error("total_projects should be present even with limit=0 (defaults to 10)")
+	}
+}
