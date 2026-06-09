@@ -501,6 +501,44 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit_test.go /ho
 +		t.Errorf("expected a source issue for malformed source object, got %v", r.Issues)
 +	}
 +}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/hookreceiver/receiver_test.go /home/user/Yagura/yagura-v0.35.0/internal/hookreceiver/receiver_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/hookreceiver/receiver_test.go	2026-06-08 08:56:33.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/hookreceiver/receiver_test.go	2026-06-09 07:46:40.209006819 +0000
+@@ -278,6 +278,34 @@
+ 	}
+ }
+ 
++// TestTopTools_NonPositiveNDefaultsAndDoesNotPanic guards the n<=0 contract:
++// TopTools defaults a non-positive n to 10 (so `out[:n]` never sees a negative
++// index), and with fewer tools than the default it returns the full sorted list.
++// This pins the existing guard so a future refactor can't reintroduce a
++// negative-index slice panic on either the global or per-slug path.
++func TestTopTools_NonPositiveNDefaultsAndDoesNotPanic(t *testing.T) {
++	r, _ := newRcv(t)
++	send := func(cwd, tool string) {
++		body, _ := json.Marshal(map[string]any{
++			"hook_event_name": "PreToolUse", "cwd": cwd, "tool_name": tool,
++		})
++		r.Handle(httptest.NewRecorder(), httptest.NewRequest("POST", "/h", bytes.NewReader(body)))
++	}
++	send("/home/m/breeze", "Bash")
++	send("/home/m/breeze", "Read")
++
++	// global path and per-slug path both must default n and stay panic-free.
++	if got := r.TopTools("", -1); len(got) != 2 {
++		t.Errorf("global TopTools(-1): expected full list (2), got %d", len(got))
++	}
++	if got := r.TopTools("breeze", -1); len(got) != 2 {
++		t.Errorf("per-slug TopTools(-1): expected full list (2), got %d", len(got))
++	}
++	if got := r.TopTools("", 0); len(got) != 2 {
++		t.Errorf("global TopTools(0): expected full list (2), got %d", len(got))
++	}
++}
++
+ func TestAllStats(t *testing.T) {
+ 	r, _ := newRcv(t)
+ 	body := `{"hook_event_name":"Stop","cwd":"/home/m/breeze"}`
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/server_infra_test.go /home/user/Yagura/yagura-v0.35.0/internal/mcp/server_infra_test.go
 --- /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/server_infra_test.go	1970-01-01 00:00:00.000000000 +0000
 +++ /home/user/Yagura/yagura-v0.35.0/internal/mcp/server_infra_test.go	2026-06-09 04:53:48.725813845 +0000
