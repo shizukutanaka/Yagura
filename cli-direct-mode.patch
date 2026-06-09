@@ -1,30 +1,158 @@
-diff -ruN /tmp/pg2/prev/yagura-v0.35.0/internal/atomicfile/atomicfile_test.go yagura-v0.35.0/internal/atomicfile/atomicfile_test.go
---- /tmp/pg2/prev/yagura-v0.35.0/internal/atomicfile/atomicfile_test.go	2026-06-05 07:09:32.000000000 +0000
-+++ yagura-v0.35.0/internal/atomicfile/atomicfile_test.go	2026-06-08 23:54:17.612908656 +0000
-@@ -113,6 +113,26 @@
- 	noTempLeak(t, dir)
- }
- 
-+func TestWrite_ErrorWhenTargetIsDir_CleansTemp(t *testing.T) {
-+	// path が既存ディレクトリだと最終 Rename が失敗する。これは temp file を
-+	// 作成した *後* の error path なので、defer os.Remove によるクリーンアップが
-+	// 効いていること(=残骸ゼロ)を確認する。MkdirAll-fail ケースとは別経路。
-+	dir := t.TempDir()
-+	target := filepath.Join(dir, "iamadir")
-+	if err := os.Mkdir(target, 0o755); err != nil {
-+		t.Fatal(err)
+diff -ruN /tmp/pg3/prev/yagura-v0.35.0/internal/mcp/tools_introspect_test.go yagura-v0.35.0/internal/mcp/tools_introspect_test.go
+--- /tmp/pg3/prev/yagura-v0.35.0/internal/mcp/tools_introspect_test.go	1970-01-01 00:00:00.000000000 +0000
++++ yagura-v0.35.0/internal/mcp/tools_introspect_test.go	2026-06-09 01:28:40.174943552 +0000
+@@ -0,0 +1,154 @@
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++)
++
++// ─── yagura_token_stats ──────────────────────────────────────
++
++func TestTokenStats_Aggregates(t *testing.T) {
++	stats := []ToolStats{
++		{Name: "a", Calls: 2, RequestBytes: 100, ResponseBytes: 300, ErrorCount: 1},
++		{Name: "b", Calls: 3, RequestBytes: 50, ResponseBytes: 70, ErrorCount: 0},
 +	}
-+	if err := Write(target, []byte("data"), 0o644); err == nil {
-+		t.Error("expected rename error when target is an existing directory, got nil")
++	tool := buildTokenStatsTool(func() []ToolStats { return stats })
++	out := mustCall(t, tool, map[string]any{}).(map[string]any)
++
++	per, ok := out["per_tool"].([]ToolStats)
++	if !ok || len(per) != 2 {
++		t.Fatalf("per_tool = %v", out["per_tool"])
 +	}
-+	// temp file は作られたが defer で消えているはず。
-+	noTempLeak(t, dir)
-+	// 既存ディレクトリは壊されていないこと。
-+	if info, err := os.Stat(target); err != nil || !info.IsDir() {
-+		t.Errorf("target dir damaged: info=%v err=%v", info, err)
++	totals := out["totals"].(map[string]any)
++	if totals["calls"].(uint64) != 5 {
++		t.Errorf("calls = %v, want 5", totals["calls"])
++	}
++	if totals["request_bytes"].(uint64) != 150 {
++		t.Errorf("request_bytes = %v, want 150", totals["request_bytes"])
++	}
++	if totals["response_bytes"].(uint64) != 370 {
++		t.Errorf("response_bytes = %v, want 370", totals["response_bytes"])
++	}
++	if totals["errors"].(uint64) != 1 {
++		t.Errorf("errors = %v, want 1", totals["errors"])
 +	}
 +}
 +
- func TestWrite_ConcurrentAtomic(t *testing.T) {
- 	dir := t.TempDir()
- 	p := filepath.Join(dir, "shared")
++func TestTokenStats_NilProvider(t *testing.T) {
++	tool := buildTokenStatsTool(nil)
++	if _, err := tool.Handler(context.Background(), json.RawMessage(`{}`)); !IsCode(err, "unavailable") {
++		t.Errorf("expected unavailable with nil provider, got %v", err)
++	}
++}
++
++func TestTokenStats_Empty(t *testing.T) {
++	tool := buildTokenStatsTool(func() []ToolStats { return nil })
++	out := mustCall(t, tool, map[string]any{}).(map[string]any)
++	totals := out["totals"].(map[string]any)
++	if totals["calls"].(uint64) != 0 {
++		t.Errorf("empty stats should total 0 calls, got %v", totals["calls"])
++	}
++}
++
++// ─── yagura_tools_catalog ────────────────────────────────────
++
++func catalogServer() *Server {
++	s := New("", nil)
++	s.Register(&Tool{Name: "yagura_alpha", Description: "[G] first thing"})
++	s.Register(&Tool{Name: "yagura_beta", Description: "[S] second SENSOR thing"})
++	s.Register(&Tool{Name: "yagura_gamma", Description: "[G] third"})
++	return s
++}
++
++func TestToolsCatalog_ByName(t *testing.T) {
++	tool := buildToolsCatalogTool(catalogServer())
++	out := mustCall(t, tool, map[string]any{"name": "yagura_beta"}).(map[string]any)
++	if out["name"] != "yagura_beta" {
++		t.Errorf("name = %v", out["name"])
++	}
++	if out["description"] != "[S] second SENSOR thing" {
++		t.Errorf("description = %v", out["description"])
++	}
++	if _, ok := out["inputSchema"]; !ok {
++		t.Error("inputSchema key missing for single-tool lookup")
++	}
++}
++
++func TestToolsCatalog_ByNameNotFound(t *testing.T) {
++	tool := buildToolsCatalogTool(catalogServer())
++	b, _ := json.Marshal(map[string]any{"name": "yagura_nope"})
++	if _, err := tool.Handler(context.Background(), b); !IsCode(err, "not_found") {
++		t.Errorf("expected not_found, got %v", err)
++	}
++}
++
++func TestToolsCatalog_QuerySortedMatches(t *testing.T) {
++	tool := buildToolsCatalogTool(catalogServer())
++	// query matches name substring "yagura_" → all three, sorted by name
++	out := mustCall(t, tool, map[string]any{"query": "yagura_"}).(map[string]any)
++	if out["count"].(int) != 3 {
++		t.Fatalf("count = %v, want 3", out["count"])
++	}
++	matches := out["matches"].([]map[string]any)
++	want := []string{"yagura_alpha", "yagura_beta", "yagura_gamma"}
++	for i, w := range want {
++		if matches[i]["name"] != w {
++			t.Errorf("match %d = %v, want %s (sort order)", i, matches[i]["name"], w)
++		}
++	}
++}
++
++func TestToolsCatalog_QueryMatchesDescription(t *testing.T) {
++	tool := buildToolsCatalogTool(catalogServer())
++	// "sensor" only appears in beta's description (case-insensitive)
++	out := mustCall(t, tool, map[string]any{"query": "sensor"}).(map[string]any)
++	if out["count"].(int) != 1 {
++		t.Fatalf("count = %v, want 1", out["count"])
++	}
++	matches := out["matches"].([]map[string]any)
++	if matches[0]["name"] != "yagura_beta" {
++		t.Errorf("matched %v, want yagura_beta", matches[0]["name"])
++	}
++}
++
++func TestToolsCatalog_EmptyQueryReturnsAll(t *testing.T) {
++	tool := buildToolsCatalogTool(catalogServer())
++	out := mustCall(t, tool, map[string]any{}).(map[string]any)
++	if out["count"].(int) != 3 {
++		t.Errorf("empty query should return all, count = %v", out["count"])
++	}
++}
++
++// ─── yagura_dedupe_stats ─────────────────────────────────────
++
++func TestDedupeStats_ReflectsCacheActivity(t *testing.T) {
++	s := New("", nil)
++	tool := buildDedupeStatsTool(s)
++
++	// Prime the cache: one set, one hit, one miss.
++	s.Cache().Set("k", []byte("v"))
++	if _, ok := s.Cache().Get("k"); !ok {
++		t.Fatal("expected hit after set")
++	}
++	if _, ok := s.Cache().Get("absent"); ok {
++		t.Fatal("expected miss for absent key")
++	}
++
++	out := mustCall(t, tool, map[string]any{})
++	// CacheStats returns dedupe.Stats (a struct); assert via re-marshal.
++	b, _ := json.Marshal(out)
++	var got struct {
++		Hits   uint64 `json:"hits"`
++		Misses uint64 `json:"misses"`
++	}
++	if err := json.Unmarshal(b, &got); err != nil {
++		t.Fatalf("unmarshal stats: %v", err)
++	}
++	if got.Hits != 1 {
++		t.Errorf("hits = %d, want 1", got.Hits)
++	}
++	if got.Misses != 1 {
++		t.Errorf("misses = %d, want 1", got.Misses)
++	}
++}
