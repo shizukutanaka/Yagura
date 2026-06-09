@@ -1,10 +1,25 @@
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/CHANGELOG.md /home/user/Yagura/yagura-v0.35.0/CHANGELOG.md
 --- /tmp/pgA/prev/yagura-v0.35.0/CHANGELOG.md	2026-06-09 04:16:16.000000000 +0000
-+++ /home/user/Yagura/yagura-v0.35.0/CHANGELOG.md	2026-06-09 08:16:39.676305204 +0000
-@@ -15,6 +15,34 @@
++++ /home/user/Yagura/yagura-v0.35.0/CHANGELOG.md	2026-06-09 08:47:59.404000926 +0000
+@@ -15,6 +15,49 @@
  
  ### What's new
  
++- **claudemd-audit: CLAUDE.md の構造を決定論的に監査(汎用ハーネス強化)**
++  (`internal/harness.AuditClaudeMd` + CLI `claudemd-audit`)。Claude Code memory ガイドの
++  構造原則を lint 化:4 セクション(Why=背景/禁止理由、Map=ファイル地図、Rules=コードから
++  推論不可能なルール、Workflows=常用コマンド)の有無、H1 タイトル、命令(箇条書き/番号付き)
++  総数の予算(150-200 が上限、超過で重要ルールが埋もれる Lost in the Middle)。減点式 0-100 +
++  欠落セクション一覧 + 命令数 + remediation を返す。`## Why — 背景` のような em-dash 見出しも
++  検出。CLI は `claudemd-audit [file] --json --min-score N`(CI gate、既定 ./CLAUDE.md)。
++  既存 skill-audit / settings-audit / mcp-audit と同じ shape(Score + Issues + Suggestions)。
++  生成器 `internal/agentmd`(CLAUDE.md を作る)に対し、こちらは既存 CLAUDE.md を採点する監査器で
++  重複しない。test-first:正常 + 各異常系 10 ケースを先に固定(赤)→ 実装で緑。zero-dep。
++  新 MCP tool は追加せず(tool 数 62 維持)、新パッケージも増やさない(harness 内に追加)。
++  Synergy: cc-security がプロジェクト全体の姿勢を見るのに対し、claudemd-audit は中核設定
++  ファイル 1 枚の質を見る。両者で harness としての汎用監査カバレッジが広がる。
++  What's not yet: 「推論できることを書いていないか」の意味的判定(原理的に困難)、rules/ 分割提案。
++  Sources: Claude Code memory ガイド、CLAUDE.md 設計原則(150-200 命令上限 / Lost in the Middle)。
 +- **cc-security: Claude Code プロジェクトの「最低限のセキュリティ対策」姿勢を決定論的に監査**
 +  (`internal/ccsecurity` + CLI `cc-security`)。初心者向けセキュリティ対策の定番のうち、
 +  ファイル構成・設定から機械判定できる部分集合を rule-based でスコア化する:
@@ -81,7 +96,7 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/README.md /home/user/Yagura/yagura-v0.35.
  │   ├── scanner/             # Background sensor loop (24 h)
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli.go
 --- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli.go	2026-06-07 23:57:43.000000000 +0000
-+++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli.go	2026-06-09 08:13:52.400309030 +0000
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli.go	2026-06-09 08:45:34.000004252 +0000
 @@ -37,6 +37,7 @@
  	"time"
  
@@ -90,25 +105,28 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli.go /home/user/Yagura/yagur
  	"github.com/shizukutanaka/yagura/internal/config"
  	"github.com/shizukutanaka/yagura/internal/ghaaudit"
  	"github.com/shizukutanaka/yagura/internal/github"
-@@ -68,7 +69,7 @@
+@@ -68,7 +69,8 @@
  	"skill-audit": true, "workflow-audit": true, "settings-audit": true,
  	"agent-config-audit": true, "plugin-audit": true, "publicity-scan": true,
  	"mcp-audit": true, "vex-audit": true, "self-improve-history": true,
 -	"path-policy": true, "inject-scan": true,
 +	"path-policy": true, "inject-scan": true, "cc-security": true,
++	"claudemd-audit": true,
  }
  
  // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
-@@ -119,6 +120,8 @@
+@@ -119,6 +121,10 @@
  		err = cliPathPolicy(args, stdout, stderr)
  	case "inject-scan":
  		err = cliInjectScan(args, stdout, stderr)
 +	case "cc-security":
 +		err = cliCCSecurity(args, stdout, stderr)
++	case "claudemd-audit":
++		err = cliClaudeMdAudit(args, stdout, stderr)
  	default:
  		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
  		return 2
-@@ -1344,6 +1347,113 @@
+@@ -1344,6 +1350,146 @@
  	return minScoreGate(*minScore, scored)
  }
  
@@ -206,6 +224,39 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli.go /home/user/Yagura/yagur
 +		}
 +	}
 +	return in, nil
++}
++
++// cliClaudeMdAudit は CLAUDE.md の構造(4 セクション / 命令数 / Lost in the Middle)
++// を監査する。引数省略時は ./CLAUDE.md を対象にする。
++func cliClaudeMdAudit(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("claudemd-audit", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	file := fs.String("file", "CLAUDE.md", "path to the CLAUDE.md to audit")
++	minScore := fs.Int("min-score", 0, "exit non-zero if score < N (0=off, for CI gates)")
++	rest, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	target := *file
++	if len(rest) > 0 {
++		target = rest[0]
++	}
++	data, err := os.ReadFile(target)
++	if err != nil {
++		return fmt.Errorf("read %s: %w", target, err)
++	}
++	res := harness.AuditClaudeMd(string(data))
++	if *jsonOut {
++		if err := emitJSON(stdout, res); err != nil {
++			return err
++		}
++	} else {
++		humanClaudeMdAudit(stdout, target, res)
++	}
++	if *minScore > 0 && res.Score < *minScore {
++		return fmt.Errorf("claudemd-audit score %d is below --min-score %d", res.Score, *minScore)
++	}
++	return nil
 +}
 +
 +// countMCPServers は settings.json の mcpServers エントリ数を返す(失敗時 0)。
@@ -336,9 +387,94 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_ccsecurity_test.go /home/u
 +		t.Error("expected an error message on stderr for a missing dir")
 +	}
 +}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_claudemd_test.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_claudemd_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_claudemd_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_claudemd_test.go	2026-06-09 08:46:31.616002934 +0000
+@@ -0,0 +1,81 @@
++package main
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/harness"
++)
++
++func TestCLI_ClaudeMdAudit_WellFormed(t *testing.T) {
++	dir := t.TempDir()
++	good := "# P CLAUDE.md\n\n## Why\nx\n## Map\n- a\n## Rules\n- r\n## Workflows\n- test: make test\n"
++	writeFile(t, dir, "CLAUDE.md", good)
++
++	code, out, errOut := runCLICapture(t, "claudemd-audit", "--file", filepath.Join(dir, "CLAUDE.md"))
++	if code != 0 {
++		t.Fatalf("well-formed should exit 0, got %d (stderr %s)", code, errOut)
++	}
++	if !strings.Contains(out, "score:") || !strings.Contains(out, "title: yes") {
++		t.Errorf("unexpected output:\n%s", out)
++	}
++}
++
++func TestCLI_ClaudeMdAudit_MissingSectionsJSON(t *testing.T) {
++	dir := t.TempDir()
++	writeFile(t, dir, "CLAUDE.md", "# P\n\n## Why\nx\n## Rules\n- r\n") // no Map/Workflows
++
++	code, out, _ := runCLICapture(t, "claudemd-audit", "--file", filepath.Join(dir, "CLAUDE.md"), "--json")
++	if code != 0 {
++		t.Fatalf("audit exit 0 expected, got %d", code)
++	}
++	var res harness.ClaudeMdAuditResult
++	if err := json.Unmarshal([]byte(out), &res); err != nil {
++		t.Fatalf("not valid ClaudeMdAuditResult JSON: %v\n%s", err, out)
++	}
++	if len(res.MissingSections) != 2 {
++		t.Errorf("expected 2 missing sections, got %v", res.MissingSections)
++	}
++}
++
++func TestCLI_ClaudeMdAudit_MinScoreGate(t *testing.T) {
++	dir := t.TempDir()
++	writeFile(t, dir, "CLAUDE.md", "just text, no structure\n")
++
++	code, _, errOut := runCLICapture(t, "claudemd-audit", "--file", filepath.Join(dir, "CLAUDE.md"), "--min-score", "90")
++	if code != 1 {
++		t.Fatalf("low score with --min-score 90 should exit 1, got %d", code)
++	}
++	if !strings.Contains(errOut, "below --min-score") {
++		t.Errorf("stderr should explain the gate failure: %s", errOut)
++	}
++}
++
++func TestCLI_ClaudeMdAudit_MissingFile(t *testing.T) {
++	code, _, errOut := runCLICapture(t, "claudemd-audit", "--file", filepath.Join(t.TempDir(), "nope.md"))
++	if code != 1 {
++		t.Fatalf("missing file should exit 1, got %d", code)
++	}
++	if errOut == "" {
++		t.Error("expected an error message for a missing file")
++	}
++}
++
++func TestCLI_ClaudeMdAudit_DefaultsToCLAUDEmd(t *testing.T) {
++	// Positional arg overrides the default; verify positional path works.
++	dir := t.TempDir()
++	p := filepath.Join(dir, "OTHER.md")
++	if err := os.WriteFile(p, []byte("# x\n## Why\na\n## Map\nb\n## Rules\nc\n## Workflows\nd\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	code, out, _ := runCLICapture(t, "claudemd-audit", p)
++	if code != 0 {
++		t.Fatalf("positional path should work, got exit %d", code)
++	}
++	if !strings.Contains(out, "OTHER.md") {
++		t.Errorf("output should name the audited file: %s", out)
++	}
++}
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_format.go
 --- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format.go	2026-06-07 23:57:50.000000000 +0000
-+++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_format.go	2026-06-09 08:14:09.892308629 +0000
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_format.go	2026-06-09 08:45:40.856004095 +0000
 @@ -18,6 +18,7 @@
  	"time"
  
@@ -347,7 +483,7 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format.go /home/user/Yagur
  	"github.com/shizukutanaka/yagura/internal/ghaaudit"
  	"github.com/shizukutanaka/yagura/internal/harness"
  	"github.com/shizukutanaka/yagura/internal/pathpolicy"
-@@ -557,6 +558,39 @@
+@@ -557,6 +558,57 @@
  	}
  }
  
@@ -381,6 +517,24 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format.go /home/user/Yagur
 +		for _, m := range r.ManualPractices {
 +			fmt.Fprintf(w, "  [ ] %s  (%s)\n", m.Title, m.ID)
 +		}
++	}
++}
++
++// ─── claudemd-audit ──────────────────────────────────────────
++
++func humanClaudeMdAudit(w io.Writer, path string, r harness.ClaudeMdAuditResult) {
++	fmt.Fprintf(w, "%s\n", path)
++	fmt.Fprintf(w, "score: %d/100   title: %s   sections: %s   instructions: %d\n",
++		r.Score, yesNo(r.HasTitle),
++		dash(strings.Join(r.SectionsFound, "+")), r.InstructionCount)
++	if len(r.MissingSections) > 0 {
++		fmt.Fprintf(w, "missing sections: %s\n", strings.Join(r.MissingSections, ", "))
++	}
++	for _, iss := range r.Issues {
++		fmt.Fprintf(w, "  issue: %s\n", iss)
++	}
++	for _, s := range r.Suggestions {
++		fmt.Fprintf(w, "  suggest: %s\n", s)
 +	}
 +}
 +
@@ -543,12 +697,13 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format_test.go /home/user/
 +}
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/main.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/main.go
 --- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/main.go	2026-06-08 14:06:14.000000000 +0000
-+++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/main.go	2026-06-09 08:14:28.924308194 +0000
-@@ -150,6 +150,7 @@
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/main.go	2026-06-09 08:45:46.536003965 +0000
+@@ -150,6 +150,8 @@
    yagura self-improve-history              Show the recorded RSI self-assessment trajectory
    yagura path-policy [paths…]              Gate changed paths against .yagura/paths.json (--strict for CI)
    yagura inject-scan [path]                Scan untrusted content for indirect prompt injection (--strict)
 +  yagura cc-security [dir]                 Audit a project's Claude Code security posture (--min-score for CI)
++  yagura claudemd-audit [file]             Audit CLAUDE.md structure (4 sections, instruction budget)
    Add --json to any of the above for machine-readable output.
    pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
  
@@ -1271,6 +1426,321 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go /home/
 +	wf := "on: pull_request_target\npermissions: {}\njobs:\n  b:\n    runs-on: ubuntu-latest\n    if: github.event.pull_request.user.login == 'dependabot[bot]'\n    steps:\n      - run: echo hi\n"
 +	if hasRule(New().AuditFile("w.yml", wf), "bot-conditions") {
 +		t.Error("pull_request.user.login is the robust signal; must not be flagged")
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/claudemd_audit.go /home/user/Yagura/yagura-v0.35.0/internal/harness/claudemd_audit.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/claudemd_audit.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/claudemd_audit.go	2026-06-09 08:44:31.268005686 +0000
+@@ -0,0 +1,147 @@
++// claudemd_audit.go: CLAUDE.md の構造 heuristic 評価。
++//
++// Anthropic の Claude Code memory ガイド + 運用知見の構造ルールを lint にする:
++//
++//   - 4 セクション構造(Why / Map / Rules / Workflows)を持つ。Why=背景と禁止理由、
++//     Map=重要ファイル地図、Rules=コードから推論不可能なルール、Workflows=常用コマンド。
++//   - 命令(箇条書き / 番号付き)の総数は 150-200 が上限。超えると重要ルールが
++//     ノイズに埋もれる(Lost in the Middle)。150-200 は警告、200 超は finding。
++//   - H1 タイトルを持つ。
++//   - 大量の命令を持つのに見出し構造が無い「壁」状態を避ける。
++//
++// AuditSkill / AuditSettings / AuditWorkflow と同じ shape(Score + Issues +
++// Suggestions)。stdlib のみ(ADR-0001)。出力は決定論的(セクションは canonical 順)。
++package harness
++
++import (
++	"regexp"
++	"sort"
++	"strings"
++)
++
++// ClaudeMdAuditResult は CLAUDE.md 構造評価結果。
++//
++// Score は 0-100:
++//
++//	90+ : 4 セクション + 適切な命令量。新 Claude が迷わない。
++//	70-89: 構造はあるが欠けたセクション or 命令過多の傾向。
++//	<70 : 構造欠如 or 命令過多で重要ルールが埋もれる。
++type ClaudeMdAuditResult struct {
++	Score            int      `json:"score"`
++	HasTitle         bool     `json:"has_title"`
++	SectionsFound    []string `json:"sections_found,omitempty"`
++	MissingSections  []string `json:"missing_sections,omitempty"`
++	InstructionCount int      `json:"instruction_count"`
++	Issues           []string `json:"issues,omitempty"`
++	Suggestions      []string `json:"suggestions,omitempty"`
++}
++
++// canonicalSections は CLAUDE.md が持つべき 4 セクション(canonical 順)。
++var canonicalSections = []string{"Why", "Map", "Rules", "Workflows"}
++
++// 命令数の上限・警告閾値(Lost in the Middle 対策)。
++const (
++	instructionHardLimit = 200
++	instructionWarnLimit = 150
++)
++
++var (
++	reH1          = regexp.MustCompile(`(?m)^#\s+\S`)
++	reH2          = regexp.MustCompile(`(?m)^##\s+(.+?)\s*$`)
++	reListItem    = regexp.MustCompile(`(?m)^\s*(?:[-*]|\d+\.)\s+\S`)
++	reSectionWord = map[string]*regexp.Regexp{
++		"Why":       regexp.MustCompile(`(?i)\bwhy\b`),
++		"Map":       regexp.MustCompile(`(?i)\bmap\b`),
++		"Rules":     regexp.MustCompile(`(?i)\brules?\b`),
++		"Workflows": regexp.MustCompile(`(?i)\bworkflows?\b`),
++	}
++)
++
++// AuditClaudeMd は CLAUDE.md の content を構造 heuristic で評価する。
++func AuditClaudeMd(content string) ClaudeMdAuditResult {
++	r := ClaudeMdAuditResult{Score: 100}
++
++	if strings.TrimSpace(content) == "" {
++		return ClaudeMdAuditResult{
++			Score:  0,
++			Issues: []string{"empty CLAUDE.md — Claude Code has no project-level guidance to load"},
++			Suggestions: []string{
++				"add Why / Map / Rules / Workflows sections (see the Claude Code memory guide)",
++			},
++		}
++	}
++
++	// H1 タイトル。
++	r.HasTitle = reH1.MatchString(content)
++	if !r.HasTitle {
++		r.Score -= 10
++		r.Issues = append(r.Issues, "no H1 title — start with `# <ProjectName> CLAUDE.md`")
++	}
++
++	// H2 見出しを収集して canonical セクションを照合。
++	var headings []string
++	for _, m := range reH2.FindAllStringSubmatch(content, -1) {
++		headings = append(headings, m[1])
++	}
++	foundSet := map[string]bool{}
++	for _, sec := range canonicalSections {
++		re := reSectionWord[sec]
++		for _, h := range headings {
++			if re.MatchString(h) {
++				foundSet[sec] = true
++				break
++			}
++		}
++	}
++	for _, sec := range canonicalSections {
++		if foundSet[sec] {
++			r.SectionsFound = append(r.SectionsFound, sec)
++		} else {
++			r.MissingSections = append(r.MissingSections, sec)
++			r.Score -= 10
++			r.Issues = append(r.Issues, "missing the '"+sec+"' section — "+sectionPurpose(sec))
++		}
++	}
++
++	// 命令(箇条書き / 番号付き)数。
++	r.InstructionCount = len(reListItem.FindAllString(content, -1))
++	switch {
++	case r.InstructionCount > instructionHardLimit:
++		r.Score -= 20
++		r.Issues = append(r.Issues,
++			"over 200 instructions — split into .claude/rules/ or Skills; excess buries key rules (Lost in the Middle)")
++	case r.InstructionCount >= instructionWarnLimit:
++		r.Score -= 8
++		r.Suggestions = append(r.Suggestions,
++			"approaching the 150-200 instruction limit — keep the most important rules at the top and bottom")
++	}
++
++	// 大量命令なのに見出し構造が無い「壁」状態。
++	if len(headings) < 2 && r.InstructionCount > 40 {
++		r.Score -= 10
++		r.Issues = append(r.Issues,
++			"many instructions but almost no section structure — group them under headings")
++	}
++
++	if score := r.Score; score < 0 {
++		r.Score = 0
++	}
++
++	sort.Strings(r.MissingSections)
++	return r
++}
++
++// sectionPurpose は各 canonical セクションの役割(remediation 用)。
++func sectionPurpose(sec string) string {
++	switch sec {
++	case "Why":
++		return "background, constraints, and the reason behind prohibitions"
++	case "Map":
++		return "a map of key directories/files so a new Claude does not get lost"
++	case "Rules":
++		return "rules that cannot be inferred from code (quantified)"
++	case "Workflows":
++		return "the commands you run every time (test, build, migrate)"
++	}
++	return ""
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/claudemd_audit_test.go /home/user/Yagura/yagura-v0.35.0/internal/harness/claudemd_audit_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/claudemd_audit_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/claudemd_audit_test.go	2026-06-09 08:43:45.028006744 +0000
+@@ -0,0 +1,160 @@
++package harness
++
++import (
++	"strings"
++	"testing"
++)
++
++func cmIssue(issues []string, substr string) bool {
++	for _, i := range issues {
++		if strings.Contains(i, substr) {
++			return true
++		}
++	}
++	return false
++}
++
++// マンデート準拠の理想的な CLAUDE.md: H1 + 4 セクション + 適度な命令数。
++const goodClaudeMd = `# MyProject CLAUDE.md
++
++## Why
++このプロジェクトが存在する理由。
++
++## Map
++- src/auth/  # 認証
++- src/api/   # API
++
++## Rules
++- キャッシュ TTL は 300 秒固定
++- user_id は UUID 移行予定
++
++## Workflows
++- テスト: make test
++- ビルド: make build
++`
++
++func TestAuditClaudeMd_WellFormedScoresHigh(t *testing.T) {
++	r := AuditClaudeMd(goodClaudeMd)
++	if !r.HasTitle {
++		t.Error("H1 title should be detected")
++	}
++	if len(r.MissingSections) != 0 {
++		t.Errorf("all 4 sections present, got missing=%v", r.MissingSections)
++	}
++	if r.Score < 90 {
++		t.Errorf("well-formed CLAUDE.md should score >=90, got %d (issues %v)", r.Score, r.Issues)
++	}
++}
++
++func TestAuditClaudeMd_EmptyIsZero(t *testing.T) {
++	r := AuditClaudeMd("")
++	if r.Score != 0 {
++		t.Errorf("empty content should score 0, got %d", r.Score)
++	}
++	if !cmIssue(r.Issues, "empty") {
++		t.Errorf("empty should report an empty issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditClaudeMd_DetectsFourSections(t *testing.T) {
++	r := AuditClaudeMd(goodClaudeMd)
++	for _, want := range []string{"Why", "Map", "Rules", "Workflows"} {
++		found := false
++		for _, s := range r.SectionsFound {
++			if s == want {
++				found = true
++			}
++		}
++		if !found {
++			t.Errorf("section %q should be detected, got %v", want, r.SectionsFound)
++		}
++	}
++}
++
++func TestAuditClaudeMd_SectionWithEmDashHeader(t *testing.T) {
++	// yagura 自身の "## Why — ..." 形式も検出できること。
++	content := "# P\n\n## Why — 背景\nx\n## Map — 地図\ny\n## Rules\nz\n## Workflows\nw\n"
++	r := AuditClaudeMd(content)
++	if len(r.MissingSections) != 0 {
++		t.Errorf("em-dash headers should be detected, missing=%v", r.MissingSections)
++	}
++}
++
++func TestAuditClaudeMd_MissingSectionsFlagged(t *testing.T) {
++	content := "# P\n\n## Why\nx\n## Rules\ny\n" // Map と Workflows が無い
++	r := AuditClaudeMd(content)
++	if len(r.MissingSections) != 2 {
++		t.Fatalf("expected 2 missing sections, got %v", r.MissingSections)
++	}
++	if !cmIssue(r.Issues, "Map") || !cmIssue(r.Issues, "Workflows") {
++		t.Errorf("missing Map/Workflows should be reported, got %v", r.Issues)
++	}
++	if r.Score >= 90 {
++		t.Errorf("missing 2 sections should drop score, got %d", r.Score)
++	}
++}
++
++func TestAuditClaudeMd_NoTitleWarns(t *testing.T) {
++	content := "## Why\nx\n## Map\ny\n## Rules\nz\n## Workflows\nw\n"
++	r := AuditClaudeMd(content)
++	if r.HasTitle {
++		t.Error("no H1 should set HasTitle=false")
++	}
++	if !cmIssue(r.Issues, "title") {
++		t.Errorf("missing H1 should be reported, got %v", r.Issues)
++	}
++}
++
++func TestAuditClaudeMd_InstructionCount(t *testing.T) {
++	var sb strings.Builder
++	sb.WriteString("# P\n## Why\nx\n## Map\ny\n## Rules\n")
++	for i := 0; i < 10; i++ {
++		sb.WriteString("- rule\n")
++	}
++	sb.WriteString("## Workflows\n")
++	for i := 0; i < 5; i++ {
++		sb.WriteString("1. step\n")
++	}
++	r := AuditClaudeMd(sb.String())
++	if r.InstructionCount != 15 {
++		t.Errorf("instruction count = %d, want 15 (10 bullets + 5 numbered)", r.InstructionCount)
++	}
++}
++
++func TestAuditClaudeMd_TooManyInstructionsFails(t *testing.T) {
++	var sb strings.Builder
++	sb.WriteString("# P\n## Why\na\n## Map\nb\n## Rules\n")
++	for i := 0; i < 205; i++ {
++		sb.WriteString("- rule\n")
++	}
++	sb.WriteString("## Workflows\nc\n")
++	r := AuditClaudeMd(sb.String())
++	if !cmIssue(r.Issues, "200") {
++		t.Errorf("over-200 instructions should be flagged (Lost in the Middle), got %v", r.Issues)
++	}
++	if r.Score >= 90 {
++		t.Errorf("over-limit should drop score, got %d", r.Score)
++	}
++}
++
++func TestAuditClaudeMd_ApproachingLimitWarns(t *testing.T) {
++	var sb strings.Builder
++	sb.WriteString("# P\n## Why\na\n## Map\nb\n## Rules\n")
++	for i := 0; i < 160; i++ {
++		sb.WriteString("- rule\n")
++	}
++	sb.WriteString("## Workflows\nc\n")
++	r := AuditClaudeMd(sb.String())
++	// 150-200 は警告(suggestion)だが fail ではない。
++	if len(r.Suggestions) == 0 {
++		t.Errorf("150-200 instructions should produce a suggestion, got none")
++	}
++}
++
++func TestAuditClaudeMd_Deterministic(t *testing.T) {
++	a := AuditClaudeMd(goodClaudeMd)
++	b := AuditClaudeMd(goodClaudeMd)
++	if a.Score != b.Score || strings.Join(a.MissingSections, ",") != strings.Join(b.MissingSections, ",") {
++		t.Error("AuditClaudeMd must be deterministic")
 +	}
 +}
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/mcp_audit.go /home/user/Yagura/yagura-v0.35.0/internal/harness/mcp_audit.go
