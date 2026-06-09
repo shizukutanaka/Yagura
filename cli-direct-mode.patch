@@ -120,6 +120,121 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go /home/
 +		t.Error("pull_request.user.login is the robust signal; must not be flagged")
 +	}
 +}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit.go /home/user/Yagura/yagura-v0.35.0/internal/harness/plugin_audit.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit.go	2026-06-05 00:12:50.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/plugin_audit.go	2026-06-09 07:11:38.453491369 +0000
+@@ -125,27 +125,36 @@
+ 		r.NameValid = true
+ 	}
+ 
+-	// owner.name 必須。
++	// owner.name 必須。owner が object でない(string 等)場合は malformed として
++	// "required" とは区別する — 誤診断(値はあるのに「欠落」と言う)を避ける。
+ 	ownerName := ""
+ 	if raw, ok := top["owner"]; ok {
+ 		var o struct {
+ 			Name string `json:"name"`
+ 		}
+-		_ = json.Unmarshal(raw, &o)
+-		ownerName = o.Name
++		if err := json.Unmarshal(raw, &o); err != nil {
++			r.Score -= 15
++			r.Issues = append(r.Issues, "owner is malformed — must be an object {name, email?, url?}")
++		} else {
++			ownerName = o.Name
++		}
+ 	}
+-	if ownerName == "" {
++	if ownerName == "" && !plgIssueHas(r.Issues, "owner is malformed") {
+ 		r.Score -= 15
+ 		r.Issues = append(r.Issues, "owner.name is required")
+ 	}
+ 
++	// plugins は配列必須。配列でない(string/object 等)場合は malformed として
++	// "empty" とは区別する — 壊れている manifest を「空」と誤報しない。
+ 	var plugins []struct {
+ 		Name        string          `json:"name"`
+ 		Source      json.RawMessage `json:"source"`
+ 		Description string          `json:"description"`
+ 	}
+-	_ = json.Unmarshal(top["plugins"], &plugins)
+-	if len(plugins) == 0 {
++	if err := json.Unmarshal(top["plugins"], &plugins); err != nil {
++		r.Score -= 20
++		r.Issues = append(r.Issues, "plugins is malformed — must be a JSON array of plugin entries")
++	} else if len(plugins) == 0 {
+ 		r.Score -= 20
+ 		r.Issues = append(r.Issues, "plugins[] is empty — a marketplace lists at least one plugin")
+ 	}
+@@ -182,6 +191,17 @@
+ 
+ // ─── helpers ───
+ 
++// plgIssueHas は既出 issue に substr を含むものがあるかを返す
++// (同じ欠陥を二重報告しないためのガード)。
++func plgIssueHas(issues []string, substr string) bool {
++	for _, s := range issues {
++		if strings.Contains(s, substr) {
++			return true
++		}
++	}
++	return false
++}
++
+ // jsonString は RawMessage を string として読む(失敗時 "")。
+ func jsonString(raw json.RawMessage) string {
+ 	if len(raw) == 0 {
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit_test.go /home/user/Yagura/yagura-v0.35.0/internal/harness/plugin_audit_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit_test.go	2026-06-05 00:12:45.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/plugin_audit_test.go	2026-06-09 07:10:59.881492251 +0000
+@@ -122,3 +122,47 @@
+ 		t.Errorf("github source with repo should be clean, got %d: %v", githubOK.Score, githubOK.Issues)
+ 	}
+ }
++
++// TestAuditMarketplace_MalformedPluginsNotReportedAsEmpty pins the fix for a
++// misleading diagnosis: when "plugins" is present but is not a JSON array
++// (e.g. a string or object), the unmarshal used to be silently ignored and the
++// audit reported "plugins[] is empty" — which is wrong. A malformed plugins
++// value is a different (worse) problem than an empty array, so the issue text
++// must say it is malformed and must NOT claim the list is empty.
++func TestAuditMarketplace_MalformedPluginsNotReportedAsEmpty(t *testing.T) {
++	r := AuditPluginManifest(`{"name":"m","owner":{"name":"o"},"plugins":"oops"}`)
++	if r.Kind != "marketplace" {
++		t.Fatalf("should still detect marketplace, got %q", r.Kind)
++	}
++	if plgIssue(r.Issues, "empty") {
++		t.Errorf("malformed plugins must not be reported as empty: %v", r.Issues)
++	}
++	if !plgIssue(r.Issues, "malformed") {
++		t.Errorf("expected a 'malformed' issue for non-array plugins, got %v", r.Issues)
++	}
++}
++
++// TestAuditMarketplace_MalformedOwnerDistinctFromMissing pins that an owner
++// value that is present but not an object (e.g. a bare string) is reported as
++// malformed rather than the generic "owner.name is required".
++func TestAuditMarketplace_MalformedOwnerDistinctFromMissing(t *testing.T) {
++	r := AuditPluginManifest(`{"name":"m","owner":"someone","plugins":[{"name":"p","source":"./p"}]}`)
++	if !plgIssue(r.Issues, "owner") {
++		t.Fatalf("expected an owner-related issue, got %v", r.Issues)
++	}
++	if !plgIssue(r.Issues, "malformed") {
++		t.Errorf("expected 'malformed' owner issue (owner is a string, not an object), got %v", r.Issues)
++	}
++}
++
++// TestAuditMarketplace_MalformedSourceObjectReported pins that a plugin whose
++// source is an object but is malformed JSON-shaped (wrong types) is flagged
++// rather than silently passing.
++func TestAuditMarketplace_MalformedSourceObjectReported(t *testing.T) {
++	// source is an object but "repo" has the wrong type (number) under a github
++	// source — the object unmarshal fails and must be surfaced, not ignored.
++	r := AuditPluginManifest(`{"name":"m","owner":{"name":"o"},"plugins":[{"name":"p","source":{"source":"github","repo":12345}}]}`)
++	if !plgIssue(r.Issues, "source") {
++		t.Errorf("expected a source issue for malformed source object, got %v", r.Issues)
++	}
++}
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/server_infra_test.go /home/user/Yagura/yagura-v0.35.0/internal/mcp/server_infra_test.go
 --- /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/server_infra_test.go	1970-01-01 00:00:00.000000000 +0000
 +++ /home/user/Yagura/yagura-v0.35.0/internal/mcp/server_infra_test.go	2026-06-09 04:53:48.725813845 +0000
