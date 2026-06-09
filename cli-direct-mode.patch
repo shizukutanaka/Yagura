@@ -1,211 +1,269 @@
-diff -ruN /tmp/pg7/prev/yagura-v0.35.0/CHANGELOG.md yagura-v0.35.0/CHANGELOG.md
---- /tmp/pg7/prev/yagura-v0.35.0/CHANGELOG.md	2026-06-08 21:29:54.000000000 +0000
-+++ yagura-v0.35.0/CHANGELOG.md	2026-06-09 03:56:13.184918773 +0000
-@@ -15,6 +15,15 @@
+diff -ruN /tmp/pg8/prev/yagura-v0.35.0/CHANGELOG.md yagura-v0.35.0/CHANGELOG.md
+--- /tmp/pg8/prev/yagura-v0.35.0/CHANGELOG.md	2026-06-09 03:56:13.000000000 +0000
++++ yagura-v0.35.0/CHANGELOG.md	2026-06-09 04:10:51.664920552 +0000
+@@ -15,6 +15,19 @@
  
  ### What's new
  
-+- **`tools/list` を name 昇順で決定論的に返す(client 側 prompt cache を保護)**
-+  (`internal/mcp/server.go`)。MCP server の `tools/list` 応答は client(Claude Code 等)
-+  が毎ターン送る *cache 可能な prefix* である。従来は Go map を直接 range していたため
-+  呼出のたびに tool 順がランダムに変わり、client の prompt/KV cache(tools ブロック全体)を
-+  毎回 invalidate していた — 入力トークンの静かなコスト増。token 削減手法調査(Caveman /
-+  prompt caching / model routing / subagent 分離)の「ツール定義の順番を変える=キャッシュ
-+  ミス」に直接対応。`handleToolsList` と `ToolNames()` を name 昇順 sort に変更(yagura の
-+  Deterministic output ルールにも準拠)。test-first で固定:呼出間で順序が変わる回帰
-+  テストが旧コードで赤→ sort 追加で緑(+stable across 20 calls)。zero-dep(stdlib `sort`)。
- - **CLI direct mode**(`cmd/yagura/cli.go` / `cli_format.go`):top-level verb
-   - registry: `list` / `get` / `search` / `stats` / `register` / `update` /
-     `unregister`
-diff -ruN /tmp/pg7/prev/yagura-v0.35.0/internal/mcp/server.go yagura-v0.35.0/internal/mcp/server.go
---- /tmp/pg7/prev/yagura-v0.35.0/internal/mcp/server.go	2026-06-03 00:00:00.000000000 +0000
-+++ yagura-v0.35.0/internal/mcp/server.go	2026-06-09 03:55:50.132918727 +0000
-@@ -12,15 +12,16 @@
- 	"net/http"
- 	"os"
- 	"runtime/debug"
-+	"sort"
- 	"strings"
- 	"sync"
- 	"sync/atomic"
- 	"time"
- 
- 	"github.com/shizukutanaka/yagura/internal/alertfix"
--	"github.com/shizukutanaka/yagura/internal/hookreceiver"
- 	"github.com/shizukutanaka/yagura/internal/audit"
- 	"github.com/shizukutanaka/yagura/internal/dedupe"
-+	"github.com/shizukutanaka/yagura/internal/hookreceiver"
++- **可視性ミスマッチ alert(visibility literacy):internal 宣言なのに repo が Public**
++  (`internal/alertfix` / `internal/project` / `internal/scanner`)。「Public のまま公開
++  されてた!」を portfolio 単位で検出する。scanner は GitHub から repo の公開状態を観測して
++  いた(`Repository.Private`)が、これまで捨てていた。これを `project.RepoPublic`(sensor、
++  scanner 専用)として保存し、alertfix に新ルール `visibility`(HIGH)を追加:project に
++  人間が宣言した sensitivity tag(`internal`/`confidential`/`private`/`secret`、
++  case-insensitive)が付いているのに repo が Public なら alert する。**宣言された意図(tag=
++  manual metadata)と観測された現実(RepoPublic=sensor)の不一致**を信号にする設計で、trust
++  base に整合(`yagura_update` は RepoPublic を設定不可 — 回帰テストで固定)。alert は既存の
++  health sweep → dashboard banner → `yagura_portfolio_alerts{severity}` /metrics 経路に
++  そのまま乗る。test-first:alertfix の発火/非発火(public+tag / private+tag / public+no-tag /
++  case-insensitive)を先に固定(赤)→ 実装で緑、scanner の観測マッピングと snapshot 伝播、
++  trust-base 不可侵も assert。zero-dep。
+ - **`tools/list` を name 昇順で決定論的に返す(client 側 prompt cache を保護)**
+   (`internal/mcp/server.go`)。MCP server の `tools/list` 応答は client(Claude Code 等)
+   が毎ターン送る *cache 可能な prefix* である。従来は Go map を直接 range していたため
+diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/alertfix/alertfix.go yagura-v0.35.0/internal/alertfix/alertfix.go
+--- /tmp/pg8/prev/yagura-v0.35.0/internal/alertfix/alertfix.go	2026-06-03 00:00:00.000000000 +0000
++++ yagura-v0.35.0/internal/alertfix/alertfix.go	2026-06-09 04:05:09.412919859 +0000
+@@ -54,6 +54,7 @@
+ 	SourceStale      Source = "stale"
+ 	SourceScorecard  Source = "scorecard"
+ 	SourceOpenIssues Source = "open_issues"
++	SourceVisibility Source = "visibility"
  )
  
- const (
-@@ -80,8 +81,9 @@
- // ToolStats は単一 tool の累積使用量を表す。
- //
- // 動機:
--//   v0.16 で description / JSON を圧縮したが、効果を end-to-end で測定する手段が無かった。
--//   各 tool の request/response byte 数を累積記録し、yagura_token_stats で取得可能にする。
-+//
-+//	v0.16 で description / JSON を圧縮したが、効果を end-to-end で測定する手段が無かった。
-+//	各 tool の request/response byte 数を累積記録し、yagura_token_stats で取得可能にする。
- //
- // 計測単位は byte ベース(token ではない)。LLM の tokenizer は client 側で異なるため、
- // yagura は generic な byte 数のみ report する。byte/token 比は概ね 3-4x なので
-@@ -228,6 +230,7 @@
- 	for n := range s.tools {
- 		names = append(names, n)
- 	}
-+	sort.Strings(names) // deterministic order (Deterministic output rule)
- 	return names
+ // Alert は 1 つの actionable issue。
+@@ -103,6 +104,30 @@
+ 	PlanProgressPct   int
+ 	PlanIssues        []string
+ 	HasPlanMd         bool
++	// visibility literacy: RepoPublic は scanner が観測した実際の公開状態
++	// (sensor、MCP からは詐称不可)。Tags は人間が宣言した分類(manual metadata)。
++	// 両者の不一致(sensitivity tag つきなのに Public)を Evaluate が alert する。
++	RepoPublic        bool
++	Tags              []string
++}
++
++// sensitivityTags は「本来 private であるべき」ことを示す宣言タグ群。
++// これらの tag が付いた project の repo が Public だと visibility mismatch。
++var sensitivityTags = map[string]bool{
++	"internal":     true,
++	"confidential": true,
++	"private":      true,
++	"secret":       true,
++}
++
++// hasSensitivityTag は tags に sensitivity tag が含まれるか(case-insensitive)。
++func hasSensitivityTag(tags []string) (string, bool) {
++	for _, t := range tags {
++		if sensitivityTags[strings.ToLower(strings.TrimSpace(t))] {
++			return t, true
++		}
++	}
++	return "", false
  }
  
-@@ -306,18 +309,28 @@
- // handleToolsList returns the tools/list response, honoring opt-in compact mode.
- //
- // Compact mode (env YAGURA_MCP_COMPACT=1):
--//   v0.22.0 で追加。Anthropic の Tool Search Tool / defer_loading が API-side 機能で
--//   server から advertise できないため、server-internal の opt-in compact mode を提供。
--//   - description を最小化 ([G]/[S] prefix のみ等)
--//   - InputSchema は type + required のみに簡略化(properties detail を削除)
--//   - tool 名から意味を推測する前提
--//   client は yagura_tools_catalog を補完手段として呼べる。
-+//
-+//	v0.22.0 で追加。Anthropic の Tool Search Tool / defer_loading が API-side 機能で
-+//	server から advertise できないため、server-internal の opt-in compact mode を提供。
-+//	- description を最小化 ([G]/[S] prefix のみ等)
-+//	- InputSchema は type + required のみに簡略化(properties detail を削除)
-+//	- tool 名から意味を推測する前提
-+//	client は yagura_tools_catalog を補完手段として呼べる。
- func (s *Server) handleToolsList(w http.ResponseWriter, id json.RawMessage) {
- 	s.mu.RLock()
- 	defer s.mu.RUnlock()
- 	compact := os.Getenv("YAGURA_MCP_COMPACT") == "1"
--	list := make([]map[string]any, 0, len(s.tools))
-+	// Emit in name-sorted order: tools/list is the cacheable prefix the client
-+	// sends every turn, so a stable order keeps its prompt/KV cache warm
-+	// (a randomized Go-map order would silently bust it). Also satisfies the
-+	// Deterministic output rule.
-+	ordered := make([]*Tool, 0, len(s.tools))
- 	for _, t := range s.tools {
-+		ordered = append(ordered, t)
-+	}
-+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
-+	list := make([]map[string]any, 0, len(ordered))
-+	for _, t := range ordered {
- 		entry := map[string]any{"name": t.Name}
- 		if compact {
- 			entry["description"] = compactDescription(t.Description)
-@@ -388,7 +401,7 @@
- 	defer cancel()
+ // Thresholds は alert 発火条件(調整可能)。
+@@ -181,6 +206,26 @@
+ 		})
+ 	}
  
- 	var (
--		result any
-+		result  any
- 		callErr error
- 	)
- 	func() {
-diff -ruN /tmp/pg7/prev/yagura-v0.35.0/internal/mcp/server_toolorder_test.go yagura-v0.35.0/internal/mcp/server_toolorder_test.go
---- /tmp/pg7/prev/yagura-v0.35.0/internal/mcp/server_toolorder_test.go	1970-01-01 00:00:00.000000000 +0000
-+++ yagura-v0.35.0/internal/mcp/server_toolorder_test.go	2026-06-09 03:53:11.360918405 +0000
-@@ -0,0 +1,102 @@
-+package mcp
++	// ─── Visibility mismatch (visibility literacy) ──
++	// 人間が internal/confidential 等を宣言した project の repo が実際には Public。
++	// 「Public のまま公開されてた!」を portfolio 単位で検出する。
++	if snap.RepoPublic {
++		if tag, ok := hasSensitivityTag(snap.Tags); ok {
++			alerts = append(alerts, Alert{
++				ID:       buildID(snap.Slug, SourceVisibility, ""),
++				Project:  snap.Slug,
++				Source:   SourceVisibility,
++				Severity: SevHigh,
++				Title:    "Repository is PUBLIC despite a sensitivity tag",
++				Description: fmt.Sprintf(
++					"%s is tagged %q (declared internal/confidential) but its repository is public — anyone on the internet can read it.",
++					snap.Slug, tag),
++				Recommendation: "Confirm the repo's intended visibility. If it must stay internal, set the repository to Private on GitHub; otherwise remove the misleading sensitivity tag.",
++				DetectedAt:     now(),
++			})
++		}
++	}
++
+ 	// ─── Plan.md ───────────────────────────────────
+ 	if snap.HasPlanMd && !snap.PlanIsHealthy {
+ 		issues := strings.Join(snap.PlanIssues, "; ")
+diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/alertfix/visibility_test.go yagura-v0.35.0/internal/alertfix/visibility_test.go
+--- /tmp/pg8/prev/yagura-v0.35.0/internal/alertfix/visibility_test.go	1970-01-01 00:00:00.000000000 +0000
++++ yagura-v0.35.0/internal/alertfix/visibility_test.go	2026-06-09 04:04:29.876919779 +0000
+@@ -0,0 +1,70 @@
++package alertfix
 +
 +import (
-+	"encoding/json"
-+	"sort"
 +	"testing"
++	"time"
 +)
 +
-+// These tests pin the spec that the tools/list response and ToolNames() are
-+// emitted in a deterministic (name-sorted) order.
-+//
-+// Why it matters: an MCP server's tools/list response is the cacheable prefix
-+// the client (e.g. Claude Code) sends on every turn. If the order changes
-+// between calls, the client's prompt/KV cache for the whole tools block is
-+// invalidated — a silent per-turn token-cost regression. It also violates
-+// yagura's own "Deterministic output" rule (CLAUDE.md).
++// Spec for the repository-visibility-mismatch rule (visibility literacy):
++// a project whose human-declared sensitivity tag says "internal/confidential/
++// private/secret" but whose repo is observed Public should raise an alert.
++// Declared intent (tag, manual metadata) vs observed reality (RepoPublic,
++// scanner-only sensor) — the mismatch is the signal.
 +
-+// registerScrambled registers n tools with names in reverse-sorted order so a
-+// raw Go-map iteration (randomized) is overwhelmingly unlikely to come out
-+// sorted by luck.
-+func registerScrambled(s *Server) []string {
-+	names := []string{
-+		"yagura_zeta", "yagura_yota", "yagura_xray", "yagura_whisky",
-+		"yagura_victor", "yagura_uniform", "yagura_tango", "yagura_sierra",
-+		"yagura_romeo", "yagura_quebec",
++func visibilitySnap(public bool, tags ...string) ProjectSnapshot {
++	return ProjectSnapshot{
++		Slug:           "secretproj",
++		CIStatus:       "passing",
++		LatestActivity: fixedNow().Add(-1 * 24 * time.Hour), // recent → no stale alert
++		RepoPublic:     public,
++		Tags:           tags,
 +	}
-+	for _, n := range names {
-+		s.Register(&Tool{Name: n, Description: "[S] " + n})
-+	}
-+	sorted := append([]string(nil), names...)
-+	sort.Strings(sorted)
-+	return sorted
 +}
 +
-+func toolsListNames(t *testing.T, s *Server) []string {
-+	t.Helper()
-+	rec := httpRecorder()
-+	s.handleToolsList(rec, []byte("1"))
-+	var resp struct {
-+		Result struct {
-+			Tools []struct {
-+				Name string `json:"name"`
-+			} `json:"tools"`
-+		} `json:"result"`
-+	}
-+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-+		t.Fatalf("unmarshal tools/list: %v; body=%s", err, rec.Body.String())
-+	}
-+	out := make([]string, len(resp.Result.Tools))
-+	for i, tl := range resp.Result.Tools {
-+		out[i] = tl.Name
-+	}
-+	return out
-+}
-+
-+func TestToolsList_DeterministicSortedOrder(t *testing.T) {
-+	s := New("", nil)
-+	want := registerScrambled(s)
-+
-+	got := toolsListNames(t, s)
-+	if len(got) != len(want) {
-+		t.Fatalf("got %d tools, want %d", len(got), len(want))
-+	}
-+	for i := range want {
-+		if got[i] != want[i] {
-+			t.Fatalf("tools/list not name-sorted at %d: got %v, want %v", i, got, want)
++func findSource(as []Alert, src Source) (Alert, bool) {
++	for _, a := range as {
++		if a.Source == src {
++			return a, true
 +		}
 +	}
++	return Alert{}, false
 +}
 +
-+func TestToolsList_StableAcrossCalls(t *testing.T) {
-+	s := New("", nil)
-+	registerScrambled(s)
-+
-+	first := toolsListNames(t, s)
-+	for i := 0; i < 20; i++ {
-+		next := toolsListNames(t, s)
-+		for j := range first {
-+			if next[j] != first[j] {
-+				t.Fatalf("tools/list order changed between calls (cache-busting): "+
-+					"call0=%v callN=%v", first, next)
++func TestEvaluate_PublicRepoWithSensitiveTag_Alerts(t *testing.T) {
++	for _, tag := range []string{"internal", "confidential", "private", "secret"} {
++		t.Run(tag, func(t *testing.T) {
++			as := Evaluate(visibilitySnap(true, tag), thresholds())
++			a, ok := findSource(as, SourceVisibility)
++			if !ok {
++				t.Fatalf("expected a visibility alert for tag %q, got %v", tag, as)
 +			}
-+		}
-+	}
-+}
-+
-+func TestToolNames_SortedAndStable(t *testing.T) {
-+	s := New("", nil)
-+	want := registerScrambled(s)
-+
-+	for i := 0; i < 20; i++ {
-+		got := s.ToolNames()
-+		if len(got) != len(want) {
-+			t.Fatalf("ToolNames len %d, want %d", len(got), len(want))
-+		}
-+		for j := range want {
-+			if got[j] != want[j] {
-+				t.Fatalf("ToolNames not sorted/stable: got %v, want %v", got, want)
++			if a.Severity != SevHigh {
++				t.Errorf("visibility alert should be HIGH, got %s", a.Severity)
 +			}
-+		}
++			if a.Project != "secretproj" {
++				t.Errorf("alert project = %q", a.Project)
++			}
++		})
 +	}
 +}
++
++func TestEvaluate_PublicRepoSensitiveTag_CaseInsensitive(t *testing.T) {
++	as := Evaluate(visibilitySnap(true, "Confidential"), thresholds())
++	if _, ok := findSource(as, SourceVisibility); !ok {
++		t.Errorf("tag match should be case-insensitive; got %v", as)
++	}
++}
++
++func TestEvaluate_PublicRepoWithoutSensitiveTag_NoAlert(t *testing.T) {
++	as := Evaluate(visibilitySnap(true, "docs", "go"), thresholds())
++	if _, ok := findSource(as, SourceVisibility); ok {
++		t.Errorf("public repo without a sensitivity tag must not alert; got %v", as)
++	}
++}
++
++func TestEvaluate_PrivateRepoWithSensitiveTag_NoAlert(t *testing.T) {
++	as := Evaluate(visibilitySnap(false, "internal"), thresholds())
++	if _, ok := findSource(as, SourceVisibility); ok {
++		t.Errorf("private repo is the correct state; must not alert; got %v", as)
++	}
++}
+diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools.go yagura-v0.35.0/internal/mcp/tools.go
+--- /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools.go	2026-06-08 21:28:03.000000000 +0000
++++ yagura-v0.35.0/internal/mcp/tools.go	2026-06-09 04:05:46.476919934 +0000
+@@ -1427,6 +1427,8 @@
+ 		OpenIssues:     p.OpenIssues,
+ 		OpenPRs:        p.OpenPRs,
+ 		LatestActivity: p.LatestActivity,
++		RepoPublic:     p.RepoPublic,
++		Tags:           p.Tags,
+ 	}
+ }
+ 
+diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools_helpers_test.go yagura-v0.35.0/internal/mcp/tools_helpers_test.go
+--- /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools_helpers_test.go	2026-06-08 23:51:56.000000000 +0000
++++ yagura-v0.35.0/internal/mcp/tools_helpers_test.go	2026-06-09 04:05:56.420919954 +0000
+@@ -150,11 +150,19 @@
+ 		ScorecardScore: 7.5,
+ 		OpenIssues:     4,
+ 		OpenPRs:        1,
++		RepoPublic:     true,
++		Tags:           []string{"internal"},
+ 	}
+ 	snap := ProjectToSnapshot(p)
+ 	if snap.Slug != "breeze" || snap.Repository != "o/breeze" {
+ 		t.Errorf("identity fields not carried: %+v", snap)
+ 	}
++	if !snap.RepoPublic {
++		t.Error("RepoPublic not carried into snapshot")
++	}
++	if len(snap.Tags) != 1 || snap.Tags[0] != "internal" {
++		t.Errorf("Tags not carried: %v", snap.Tags)
++	}
+ 	if snap.VulnCritical != 2 || snap.VulnHigh != 3 {
+ 		t.Errorf("vuln fields wrong: %+v", snap)
+ 	}
+diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools_test.go yagura-v0.35.0/internal/mcp/tools_test.go
+--- /tmp/pg8/prev/yagura-v0.35.0/internal/mcp/tools_test.go	2026-06-03 00:00:00.000000000 +0000
++++ yagura-v0.35.0/internal/mcp/tools_test.go	2026-06-09 04:07:28.884920142 +0000
+@@ -390,6 +390,25 @@
+ 
+ // ─── yagura_update ───────────────────────────────────────────
+ 
++// Trust base: repo_public is a scanner-only sensor field. yagura_update must
++// not let an MCP client forge it (the visibility-mismatch alert relies on it
++// reflecting observed reality, not client claims).
++func TestUpdate_CannotForgeRepoPublic(t *testing.T) {
++	d := newDeps(t)
++	_ = d.Registry.Add(sampleProject("sens"))
++	tool := buildUpdateTool(d)
++	// Slip an extra repo_public:true into the payload alongside a legit field.
++	_ = mustCall(t, tool, map[string]any{
++		"slug":        "sens",
++		"notes":       "touch",
++		"repo_public": true,
++	})
++	got, _ := d.Registry.Get("sens")
++	if got.RepoPublic {
++		t.Error("yagura_update must not be able to set the repo_public sensor field")
++	}
++}
++
+ func TestUpdate_PartialFields(t *testing.T) {
+ 	d := newDeps(t)
+ 	p := sampleProject("upd")
+diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/project/project.go yagura-v0.35.0/internal/project/project.go
+--- /tmp/pg8/prev/yagura-v0.35.0/internal/project/project.go	2026-06-03 00:00:00.000000000 +0000
++++ yagura-v0.35.0/internal/project/project.go	2026-06-09 04:05:28.712919898 +0000
+@@ -104,6 +104,10 @@
+ 	CIStatus       CIStatus  `json:"ci_status,omitempty"`
+ 	TestCoverage   float64   `json:"test_coverage,omitempty"`
+ 	StarCount      int       `json:"star_count,omitempty"`
++	// RepoPublic は scanner が観測した repository の公開状態(sensor、scanner 専用)。
++	// true = GitHub 上で Public。omitempty なので private/未観測(false)では出力されない。
++	// trust base: MCP tool (yagura_update) からは設定不可。
++	RepoPublic     bool      `json:"repo_public,omitempty"`
+ 
+ 	// Security health (S1.1 + S1.2). scanner が 24h 周期で更新する。
+ 	// 取得失敗時はゼロ値のまま放置(graceful degradation)。
+diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/scanner/scanner.go yagura-v0.35.0/internal/scanner/scanner.go
+--- /tmp/pg8/prev/yagura-v0.35.0/internal/scanner/scanner.go	2026-06-08 08:56:05.000000000 +0000
++++ yagura-v0.35.0/internal/scanner/scanner.go	2026-06-09 04:05:34.780919911 +0000
+@@ -204,6 +204,7 @@
+ 	current.OpenPRs = openPRs
+ 	current.OpenIssues = openIssues
+ 	current.StarCount = r.StargazersCount
++	current.RepoPublic = !r.Private // observed visibility (sensor; drives the visibility-mismatch alert)
+ 	current.CIStatus = mapCIStatus(ciStatus)
+ 	if current.Language == "" && r.Language != "" {
+ 		current.Language = r.Language
+diff -ruN /tmp/pg8/prev/yagura-v0.35.0/internal/scanner/scanner_test.go yagura-v0.35.0/internal/scanner/scanner_test.go
+--- /tmp/pg8/prev/yagura-v0.35.0/internal/scanner/scanner_test.go	2026-06-08 06:51:31.000000000 +0000
++++ yagura-v0.35.0/internal/scanner/scanner_test.go	2026-06-09 04:08:36.956920279 +0000
+@@ -187,6 +187,10 @@
+ 	if got.CIStatus == "" || got.CIStatus == project.CIStatusUnknown {
+ 		t.Errorf("CIStatus not updated: %q", got.CIStatus)
+ 	}
++	// The fake repo omits "private" → public; scanner records observed visibility.
++	if !got.RepoPublic {
++		t.Errorf("RepoPublic should be true for a public repo, got %v", got.RepoPublic)
++	}
+ }
+ 
+ func TestScanner_ScanProject_PreservesManualFields(t *testing.T) {
