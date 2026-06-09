@@ -120,6 +120,73 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go /home/
 +		t.Error("pull_request.user.login is the robust signal; must not be flagged")
 +	}
 +}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/mcp_audit.go /home/user/Yagura/yagura-v0.35.0/internal/harness/mcp_audit.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/mcp_audit.go	2026-06-05 14:04:18.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/mcp_audit.go	2026-06-09 07:14:21.545487639 +0000
+@@ -73,7 +73,13 @@
+ 		Env     map[string]string `json:"env"`
+ 		Headers map[string]string `json:"headers"`
+ 	}
+-	_ = json.Unmarshal(top["mcpServers"], &servers)
++	if err := json.Unmarshal(top["mcpServers"], &servers); err != nil {
++		// 値はあるが object でない(string/array 等)→ 壊れた config。
++		// 「見つからない」ではなく malformed として報告する。
++		r.Score -= 10
++		r.Issues = append(r.Issues, "mcpServers is malformed — must be an object of {name: server} entries")
++		return r
++	}
+ 	if len(servers) == 0 {
+ 		r.Score -= 10
+ 		r.Issues = append(r.Issues, "no mcpServers found (not an MCP server config?)")
+@@ -121,7 +127,12 @@
+ 		Name        string `json:"name"`
+ 		Description string `json:"description"`
+ 	}
+-	_ = json.Unmarshal(top["tools"], &tools)
++	if err := json.Unmarshal(top["tools"], &tools); err != nil {
++		// 値はあるが array でない → 壊れた tools 宣言。empty と区別する。
++		r.Score -= 5
++		r.Issues = append(r.Issues, "tools is malformed — must be a JSON array of {name, description}")
++		return r
++	}
+ 	r.ToolCount = len(tools)
+ 	if r.ToolCount == 0 {
+ 		r.Score -= 5
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/mcp_audit_test.go /home/user/Yagura/yagura-v0.35.0/internal/harness/mcp_audit_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/mcp_audit_test.go	2026-06-05 14:04:46.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/mcp_audit_test.go	2026-06-09 07:13:43.997488497 +0000
+@@ -100,3 +100,31 @@
+ 		t.Errorf("invalid JSON → score 0, got %+v", r)
+ 	}
+ }
++
++// TestAuditMCP_MalformedMcpServersNotReportedAsAbsent pins that a present but
++// non-object "mcpServers" value is reported as malformed rather than the
++// misleading "no mcpServers found (not an MCP server config?)".
++func TestAuditMCP_MalformedMcpServersNotReportedAsAbsent(t *testing.T) {
++	r := AuditMCPConfig(`{"mcpServers":"oops"}`)
++	if mcpIssue(r.Issues, "no mcpServers found") {
++		t.Errorf("malformed mcpServers must not be reported as absent: %v", r.Issues)
++	}
++	if !mcpIssue(r.Issues, "malformed") {
++		t.Errorf("expected a 'malformed' issue for non-object mcpServers, got %v", r.Issues)
++	}
++}
++
++// TestAuditMCP_MalformedToolsNotReportedAsEmpty pins that a present but
++// non-array "tools" value is reported as malformed rather than "tools[] is empty".
++func TestAuditMCP_MalformedToolsNotReportedAsEmpty(t *testing.T) {
++	r := AuditMCPConfig(`{"tools":"oops"}`)
++	if r.Kind != "mcp-tools" {
++		t.Fatalf("should still detect mcp-tools branch, got %q", r.Kind)
++	}
++	if mcpIssue(r.Issues, "empty") {
++		t.Errorf("malformed tools must not be reported as empty: %v", r.Issues)
++	}
++	if !mcpIssue(r.Issues, "malformed") {
++		t.Errorf("expected a 'malformed' issue for non-array tools, got %v", r.Issues)
++	}
++}
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit.go /home/user/Yagura/yagura-v0.35.0/internal/harness/plugin_audit.go
 --- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit.go	2026-06-05 00:12:50.000000000 +0000
 +++ /home/user/Yagura/yagura-v0.35.0/internal/harness/plugin_audit.go	2026-06-09 07:11:38.453491369 +0000
