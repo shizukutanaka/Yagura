@@ -318,3 +318,36 @@ func TestEnvBool_FalseValues(t *testing.T) {
 		}
 	}
 }
+
+// ─── isPublicBind ────────────────────────────────────────────
+
+func TestIsPublicBind_AllCases(t *testing.T) {
+	cases := []struct {
+		addr   string
+		public bool
+	}{
+		{"127.0.0.1:8080", false},
+		{"localhost:8080", false},
+		{"[::1]:8080", false},
+		{":8080", true},
+		{"0.0.0.0:8080", true},
+		{"[::]:8080", true},
+		{"192.168.1.1:8080", true},  // LAN IP → public
+		{"not-valid", false},        // SplitHostPort error → false
+	}
+	for _, tc := range cases {
+		got := isPublicBind(tc.addr)
+		if got != tc.public {
+			t.Errorf("isPublicBind(%q) = %v, want %v", tc.addr, got, tc.public)
+		}
+	}
+}
+
+// ─── validateAddr whitespace host ────────────────────────────
+
+func TestValidateAddr_WhitespaceHost(t *testing.T) {
+	err := validateAddr("127.0.0 1:8080")
+	if err == nil {
+		t.Error("host with space should return error")
+	}
+}
