@@ -351,3 +351,88 @@ func TestValidateAddr_WhitespaceHost(t *testing.T) {
 		t.Error("host with space should return error")
 	}
 }
+
+// ─── isPublicBind: custom loopback IP ────────────────────────
+
+func TestIsPublicBind_CustomLoopback(t *testing.T) {
+	// 127.0.0.2 is in 127.0.0.0/8 loopback range; not in the literal switch,
+	// so it hits net.ParseIP + IsLoopback() path and must return false.
+	if got := isPublicBind("127.0.0.2:8090"); got {
+		t.Error("127.0.0.2 is loopback → isPublicBind should return false")
+	}
+}
+
+// ─── Load: ScanTimeout validation ────────────────────────────
+
+func TestLoad_ScanTimeoutTooShort(t *testing.T) {
+	clearAll(t)
+	t.Setenv("YAGURA_GITHUB_TOKEN", "ghp_testtesttesttest")
+	t.Setenv("YAGURA_STATE_DIR", "/tmp/x")
+	t.Setenv("YAGURA_SCAN_TIMEOUT", "500ms") // < 1s
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "too short") {
+		t.Errorf("expected too-short timeout error, got %v", err)
+	}
+}
+
+func TestLoad_ScanTimeoutInvalid(t *testing.T) {
+	clearAll(t)
+	t.Setenv("YAGURA_GITHUB_TOKEN", "ghp_testtesttesttest")
+	t.Setenv("YAGURA_STATE_DIR", "/tmp/x")
+	t.Setenv("YAGURA_SCAN_TIMEOUT", "not-a-duration")
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "YAGURA_SCAN_TIMEOUT") {
+		t.Errorf("expected scan-timeout parse error, got %v", err)
+	}
+}
+
+// ─── Load: SecurityScanInterval validation ───────────────────
+
+func TestLoad_SecurityScanIntervalTooShort(t *testing.T) {
+	clearAll(t)
+	t.Setenv("YAGURA_GITHUB_TOKEN", "ghp_testtesttesttest")
+	t.Setenv("YAGURA_STATE_DIR", "/tmp/x")
+	t.Setenv("YAGURA_SECURITY_SCAN_INTERVAL", "30m") // < 1h
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "1h") {
+		t.Errorf("expected security-interval too-short error, got %v", err)
+	}
+}
+
+func TestLoad_SecurityScanIntervalInvalid(t *testing.T) {
+	clearAll(t)
+	t.Setenv("YAGURA_GITHUB_TOKEN", "ghp_testtesttesttest")
+	t.Setenv("YAGURA_STATE_DIR", "/tmp/x")
+	t.Setenv("YAGURA_SECURITY_SCAN_INTERVAL", "garbage")
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "YAGURA_SECURITY_SCAN_INTERVAL") {
+		t.Errorf("expected security-interval parse error, got %v", err)
+	}
+}
+
+// ─── Load: per-owner token validation failure ────────────────
+
+func TestLoad_PerOwnerTokenInvalidFormat(t *testing.T) {
+	clearAll(t)
+	t.Setenv("YAGURA_GITHUB_TOKEN", "ghp_testtesttesttest")
+	t.Setenv("YAGURA_STATE_DIR", "/tmp/x")
+	// Per-owner token with bad format → Load should fail
+	t.Setenv("YAGURA_GITHUB_TOKEN_MYORG", "not-a-token-format")
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "YAGURA_GITHUB_TOKEN_MYORG") {
+		t.Errorf("expected per-owner token format error, got %v", err)
+	}
+}
+
+// ─── Load: GitHubBase validation ─────────────────────────────
+
+func TestLoad_GitHubBaseInvalidScheme(t *testing.T) {
+	clearAll(t)
+	t.Setenv("YAGURA_GITHUB_TOKEN", "ghp_testtesttesttest")
+	t.Setenv("YAGURA_STATE_DIR", "/tmp/x")
+	t.Setenv("YAGURA_GITHUB_BASE", "ftp://api.github.com") // not http or https
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "YAGURA_GITHUB_BASE") {
+		t.Errorf("expected github-base scheme error, got %v", err)
+	}
+}

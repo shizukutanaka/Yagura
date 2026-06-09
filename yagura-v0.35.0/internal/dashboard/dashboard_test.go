@@ -505,3 +505,145 @@ func TestSetAgentStatusProvider(t *testing.T) {
 		t.Errorf("ServeHTTP after nil provider: code = %d", w.Code)
 	}
 }
+
+// ─── /dashboard/activity and /dashboard/alerts routes ────────
+
+func TestServeHTTP_ActivityRoute(t *testing.T) {
+	h, _ := setupHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/activity", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("/dashboard/activity: code = %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("/dashboard/activity: Content-Type = %q", ct)
+	}
+}
+
+func TestServeHTTP_ActivityRoute_WithSlug(t *testing.T) {
+	h, reg := setupHandler(t)
+	_ = reg.Add(&project.Project{
+		Slug:        "alpha",
+		DisplayName: "Alpha",
+		Repository:  "o/alpha",
+		Stage:       project.StageActive,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/activity?slug=alpha", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("/dashboard/activity?slug=alpha: code = %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Alpha") {
+		t.Errorf("activity detail should include display name")
+	}
+}
+
+func TestServeHTTP_AlertsRoute(t *testing.T) {
+	h, _ := setupHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/dashboard/alerts", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("/dashboard/alerts: code = %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("/dashboard/alerts: Content-Type = %q", ct)
+	}
+}
+
+// ─── ServeHTTP with hook/agent providers ─────────────────────
+
+// stubHookProvider is a minimal HookActivityProvider for tests.
+type stubHookProvider struct {
+	activity HookActivity
+	detail   ActivityDetail
+}
+
+func (s *stubHookProvider) ProjectActivity(slug string) (HookActivity, bool) {
+	if s.activity.Total > 0 {
+		return s.activity, true
+	}
+	return HookActivity{}, false
+}
+
+func (s *stubHookProvider) ProjectActivityDetail(slug string) (ActivityDetail, bool) {
+	return s.detail, false
+}
+
+func TestServeHTTP_WithHookProvider(t *testing.T) {
+	h, reg := setupHandler(t)
+	_ = reg.Add(&project.Project{
+		Slug: "breeze", DisplayName: "Breeze", Repository: "o/breeze",
+		Stage: project.StageActive,
+	})
+	h.SetHookActivityProvider(&stubHookProvider{
+		activity: HookActivity{Total: 5, TopTool: "Edit"},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("code = %d", w.Code)
+	}
+}
+
+// stubAgentStatus is a minimal AgentStatusProvider for tests.
+type stubAgentStatus struct{}
+
+func (s *stubAgentStatus) AllStatuses() map[quotamonitor.Agent]quotamonitor.AgentStatus {
+	return map[quotamonitor.Agent]quotamonitor.AgentStatus{
+		quotamonitor.AgentClaudeCode: {
+			Agent:            quotamonitor.AgentClaudeCode,
+			State:            quotamonitor.StateActive,
+			RemainingPercent: 75.0,
+		},
+	}
+}
+
+func (s *stubAgentStatus) Recommend() (quotamonitor.Agent, string) {
+	return quotamonitor.AgentClaudeCode, "higher remaining quota"
+}
+
+func (s *stubAgentStatus) AnyStale(idleTimeout time.Duration) []quotamonitor.Agent {
+	return nil
+}
+
+func (s *stubAgentStatus) AllUsageSummaries() map[quotamonitor.Agent]quotamonitor.UsageSummary {
+	return map[quotamonitor.Agent]quotamonitor.UsageSummary{
+		quotamonitor.AgentClaudeCode: {TotalReports: 3},
+	}
+}
+
+func TestServeHTTP_WithAgentPanel(t *testing.T) {
+	h, _ := setupHandler(t)
+	h.SetAgentStatusProvider(&stubAgentStatus{})
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("code = %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "claude-code") &&
+		!strings.Contains(w.Body.String(), "claude_code") &&
+		!strings.Contains(w.Body.String(), "claude") {
+		t.Errorf("agent panel should mention claude in output")
+	}
+}
+
+// ─── stageColor and stageOrder unknown stage ─────────────────
+
+func TestStageColor_Unknown(t *testing.T) {
+	// Unknown stage should return empty string (default branch)
+	if got := stageColor(project.Stage("unknown-x")); got != "" {
+		t.Errorf("stageColor(unknown) = %q, want empty", got)
+	}
+}
+
+func TestStageOrder_Unknown(t *testing.T) {
+	// Unknown stage should return 99 (lowest priority)
+	if got := stageOrder(project.Stage("unknown-x")); got != 99 {
+		t.Errorf("stageOrder(unknown) = %d, want 99", got)
+	}
+}

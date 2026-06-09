@@ -539,3 +539,179 @@ func TestReleaseRadar_DefaultLimit(t *testing.T) {
 		t.Error("total_projects should be present even with limit=0 (defaults to 10)")
 	}
 }
+
+// ─── yagura_plan_status ──────────────────────────────────────
+
+func TestPlanStatus_EmptySlug(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	tool := buildPlanStatusTool(d, cache)
+	_, err := callErr(t, tool, map[string]any{"slug": ""})
+	if err == nil {
+		t.Error("empty slug should return error")
+	}
+}
+
+func TestPlanStatus_UnknownSlug(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	tool := buildPlanStatusTool(d, cache)
+	_, err := callErr(t, tool, map[string]any{"slug": "ghost"})
+	if err == nil {
+		t.Error("unknown slug should return error")
+	}
+}
+
+func TestPlanStatus_NoLocalPath_ReturnsError(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	p := sampleProject("nolp")
+	_ = d.Registry.Add(p)
+	tool := buildPlanStatusTool(d, cache)
+	// no local_path → returns map with "error" key, not a Go error
+	r := mustCall(t, tool, map[string]any{"slug": "nolp"}).(map[string]any)
+	if r["error"] == nil || r["error"] == "" {
+		t.Errorf("no local_path should set error field: %+v", r)
+	}
+}
+
+func TestPlanStatus_NoPlanMd_ReturnsError(t *testing.T) {
+	dir := t.TempDir() // empty dir, no Plan.md
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	p := sampleProject("noplan", func(p *project.Project) { p.LocalPath = dir })
+	_ = d.Registry.Add(p)
+	tool := buildPlanStatusTool(d, cache)
+	r := mustCall(t, tool, map[string]any{"slug": "noplan"}).(map[string]any)
+	if r["error"] == nil || r["error"] == "" {
+		t.Errorf("missing Plan.md should set error field: %+v", r)
+	}
+}
+
+func TestPlanStatus_WithPlanMd(t *testing.T) {
+	dir := t.TempDir()
+	writePlanMd(t, dir)
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	p := sampleProject("planproj", func(p *project.Project) { p.LocalPath = dir })
+	_ = d.Registry.Add(p)
+	tool := buildPlanStatusTool(d, cache)
+	r := mustCall(t, tool, map[string]any{"slug": "planproj"}).(map[string]any)
+	if r["slug"] != "planproj" {
+		t.Errorf("slug = %v, want planproj", r["slug"])
+	}
+	if r["plan_md"] == nil || r["plan_md"] == "" {
+		t.Error("plan_md path should be set")
+	}
+	if r["state"] == nil {
+		t.Error("state should be present")
+	}
+	if r["summary"] == nil {
+		t.Error("summary should be present")
+	}
+}
+
+func TestPlanStatus_InvalidJSON(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	tool := buildPlanStatusTool(d, cache)
+	b := []byte(`not json`)
+	_, err := tool.Handler(nil, b)
+	if err == nil {
+		t.Error("invalid JSON args should return error")
+	}
+}
+
+// ─── yagura_progress_file ────────────────────────────────────
+
+func TestProgressFile_EmptySlug(t *testing.T) {
+	d := newDeps(t)
+	s := newServerForProgressTest(t)
+	tool := buildProgressFileTool(d, s)
+	_, err := callErr(t, tool, map[string]any{"slug": ""})
+	if err == nil {
+		t.Error("empty slug should return error")
+	}
+}
+
+func TestProgressFile_UnknownSlug(t *testing.T) {
+	d := newDeps(t)
+	s := newServerForProgressTest(t)
+	tool := buildProgressFileTool(d, s)
+	_, err := callErr(t, tool, map[string]any{"slug": "ghost"})
+	if err == nil {
+		t.Error("unknown slug should return error")
+	}
+}
+
+func TestProgressFile_NoLocalPath(t *testing.T) {
+	d := newDeps(t)
+	s := newServerForProgressTest(t)
+	p := sampleProject("nolp")
+	_ = d.Registry.Add(p)
+	tool := buildProgressFileTool(d, s)
+	r := mustCall(t, tool, map[string]any{"slug": "nolp"}).(map[string]any)
+	if r["body"] == nil {
+		t.Error("body should be present even without local_path")
+	}
+	if r["slug"] != "nolp" {
+		t.Errorf("slug = %v, want nolp", r["slug"])
+	}
+}
+
+func TestProgressFile_WithPlanMd(t *testing.T) {
+	dir := t.TempDir()
+	writePlanMd(t, dir)
+	d := newDeps(t)
+	s := newServerForProgressTest(t)
+	p := sampleProject("progproj", func(p *project.Project) { p.LocalPath = dir })
+	_ = d.Registry.Add(p)
+	tool := buildProgressFileTool(d, s)
+	r := mustCall(t, tool, map[string]any{"slug": "progproj"}).(map[string]any)
+	if r["slug"] != "progproj" {
+		t.Errorf("slug = %v, want progproj", r["slug"])
+	}
+	body, _ := r["body"].(string)
+	if body == "" {
+		t.Error("body should not be empty when Plan.md exists")
+	}
+	if r["filename"] != "claude-progress.txt" {
+		t.Errorf("filename = %v, want claude-progress.txt", r["filename"])
+	}
+}
+
+func TestProgressFile_WriteFlag(t *testing.T) {
+	dir := t.TempDir()
+	writePlanMd(t, dir)
+	d := newDeps(t)
+	s := newServerForProgressTest(t)
+	p := sampleProject("writeprog", func(p *project.Project) { p.LocalPath = dir })
+	_ = d.Registry.Add(p)
+	tool := buildProgressFileTool(d, s)
+	r := mustCall(t, tool, map[string]any{"slug": "writeprog", "write": true}).(map[string]any)
+	if r["written_to"] == nil {
+		t.Error("written_to should be set when write=true and local_path set")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "claude-progress.txt")); err != nil {
+		t.Errorf("claude-progress.txt not created: %v", err)
+	}
+}
+
+func TestProgressFile_InvalidJSON(t *testing.T) {
+	d := newDeps(t)
+	s := newServerForProgressTest(t)
+	tool := buildProgressFileTool(d, s)
+	b := []byte(`bad json`)
+	_, err := tool.Handler(nil, b)
+	if err == nil {
+		t.Error("invalid JSON args should return error")
+	}
+}
+
+// newServerForProgressTest returns a minimal *Server for progress file tests
+// (no hook receiver, no alert store — exercises nil-guard branches).
+func newServerForProgressTest(t *testing.T) *Server {
+	t.Helper()
+	s, _ := newServerForTest(t, "")
+	return s
+}
