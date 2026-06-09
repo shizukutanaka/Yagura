@@ -183,6 +183,51 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/docs/MCP_TOOLS.md /home/user/Yagura/yagur
  
  **Arguments:**
  
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/dashboard/dashboard.go /home/user/Yagura/yagura-v0.35.0/internal/dashboard/dashboard.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/dashboard/dashboard.go	2026-06-08 09:19:53.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/dashboard/dashboard.go	2026-06-09 07:43:46.861010784 +0000
+@@ -518,6 +518,9 @@
+ }
+ 
+ func truncate(s string, n int) string {
++	if n <= 0 {
++		return "" // nothing fits — avoid r[:n-1] negative index
++	}
+ 	r := []rune(s)
+ 	if len(r) <= n {
+ 		return s
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/dashboard/dashboard_test.go /home/user/Yagura/yagura-v0.35.0/internal/dashboard/dashboard_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/dashboard/dashboard_test.go	2026-06-03 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/dashboard/dashboard_test.go	2026-06-09 07:44:13.589010173 +0000
+@@ -119,6 +119,28 @@
+ 	}
+ }
+ 
++// TestTruncate_SmallWidthsDoNotPanic pins the boundary: a non-empty string with
++// n=0 used to compute r[:n-1] = r[:-1] and panic. n<=0 must yield "" and n=1
++// must yield just the ellipsis, never panic.
++func TestTruncate_SmallWidthsDoNotPanic(t *testing.T) {
++	cases := []struct {
++		in   string
++		n    int
++		want string
++	}{
++		{"hello", 0, ""},  // n=0 → nothing fits (was a panic)
++		{"hello", -1, ""}, // negative → "" (was a panic)
++		{"hello", 1, "…"}, // only the ellipsis fits
++		{"", 0, ""},       // empty stays empty
++	}
++	for _, c := range cases {
++		got := truncate(c.in, c.n)
++		if got != c.want {
++			t.Errorf("truncate(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
++		}
++	}
++}
++
+ func TestStaleClass(t *testing.T) {
+ 	cases := []struct {
+ 		days int
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go /home/user/Yagura/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go
 --- /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go	2026-06-08 21:26:09.000000000 +0000
 +++ /home/user/Yagura/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go	2026-06-09 04:27:06.042641434 +0000
@@ -891,5 +936,54 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/tools_pindrift_test.go /home
 +	// summary_only returns a pindrift.Summary, not the results map.
 +	if _, ok := res.(pindrift.Summary); !ok {
 +		t.Errorf("expected pindrift.Summary, got %T", res)
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go /home/user/Yagura/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go	2026-06-08 05:37:32.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go	2026-06-09 07:43:51.985010667 +0000
+@@ -482,6 +482,14 @@
+ 	if len(trimmed) <= maxLen {
+ 		return trimmed
+ 	}
++	// maxLen < 3 has no room for the "..." suffix; truncate plainly instead of
++	// computing trimmed[:maxLen-3] (a negative index that would panic).
++	if maxLen <= 3 {
++		if maxLen <= 0 {
++			return ""
++		}
++		return trimmed[:maxLen]
++	}
+ 	return trimmed[:maxLen-3] + "..."
+ }
+ 
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go /home/user/Yagura/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go	2026-06-08 05:40:10.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go	2026-06-09 07:44:13.589010173 +0000
+@@ -569,3 +569,27 @@
+ 		t.Errorf("custom rule should flag console.log: %+v", findings)
+ 	}
+ }
++
++// TestTruncateExcerpt_SmallMaxDoesNotPanic pins the boundary: when maxLen < 3
++// and the line is longer than maxLen, the old code computed trimmed[:maxLen-3]
++// which is a negative index and panics. Small maxLen must truncate without the
++// "..." suffix and never panic.
++func TestTruncateExcerpt_SmallMaxDoesNotPanic(t *testing.T) {
++	cases := []struct {
++		line   string
++		maxLen int
++		want   string
++	}{
++		{"hello world", 2, "he"},       // <3 → no ellipsis room (was a panic)
++		{"hello world", 0, ""},         // 0 → empty (was a panic)
++		{"hello world", -1, ""},        // negative → empty (was a panic)
++		{"abc", 5, "abc"},              // shorter than max → unchanged
++		{"hello world", 8, "hello..."}, // normal path: 5 chars + "..."
++	}
++	for _, c := range cases {
++		got := truncateExcerpt(c.line, c.maxLen)
++		if got != c.want {
++			t.Errorf("truncateExcerpt(%q, %d) = %q, want %q", c.line, c.maxLen, got, c.want)
++		}
 +	}
 +}
