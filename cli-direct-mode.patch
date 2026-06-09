@@ -1,91 +1,56 @@
-diff -ruN /tmp/pg5/prev/yagura-v0.35.0/internal/mcp/tools_claudeaudit_test.go yagura-v0.35.0/internal/mcp/tools_claudeaudit_test.go
---- /tmp/pg5/prev/yagura-v0.35.0/internal/mcp/tools_claudeaudit_test.go	1970-01-01 00:00:00.000000000 +0000
-+++ yagura-v0.35.0/internal/mcp/tools_claudeaudit_test.go	2026-06-09 02:31:48.725697450 +0000
-@@ -0,0 +1,87 @@
-+package mcp
+diff -ruN /tmp/pg6/prev/yagura-v0.35.0/CLAUDE.md yagura-v0.35.0/CLAUDE.md
+--- /tmp/pg6/prev/yagura-v0.35.0/CLAUDE.md	2026-06-08 13:26:19.000000000 +0000
++++ yagura-v0.35.0/CLAUDE.md	2026-06-09 02:46:58.306086110 +0000
+@@ -121,17 +121,43 @@
+ 
+ ## Workflows (典型的な開発フロー)
+ 
++### 実装の進め方 — test-first(TDD を標準動作にする)
 +
-+import (
-+	"context"
-+	"encoding/json"
-+	"testing"
++機能追加・バグ修正は原則 **test-first**。自然言語の指示は解釈の幅があり、AI
++(Claude Code 等)はその幅の中で「それっぽいもの」を生成してしまう。先にテストを
++書くと、合否の判定者が人間の目視から **テストランナー(機械)** に変わり、仕様が
++コードとして 1 つに凍結される。これが「越えてはいけない柵」になり、暴走と往復を防ぐ。
 +
-+	"github.com/shizukutanaka/yagura/internal/harness"
-+)
++1. **Red — 失敗するテストだけ書く**。実装は書かない。正常系・境界値・異常系を
++   1 ケース 1 観点で分け、`go test ./internal/<topic>/` が **赤(未実装で fail)**
++   になることまで確認する。緑になるはずのないテストが緑なら、テスト自体が壊れている。
++2. **(レビュー)テストの妥当性を人間が確認するまで実装に進まない**。特に各
++   `want`/期待値が本当に正しいかを 1 ケースずつ読む。テストが間違っていれば AI は
++   間違った仕様を完璧に実装する(= TDD なしより危険、緑のお墨付きが付くため)。
++   テストを読む時間は実装全体を読む時間より遥かに短い。
++3. **Green — テストを通す最小実装**。**テストファイルは勝手に変更しない**(仕様を
++   実装に合わせて書き換えるのは仕様が実装に負ける瞬間)。`go test -race` を実際に
++   実行し、全件緑になるまで自分で直す。「通ったはず」の推測報告はしない。
++4. **Refactor — 緑を保ったまま整える**。振る舞いを変えず、各ステップ後に test 緑を維持。
++5. **バグ修正は再現テストから**。実装を触らず「そのバグで赤くなるテスト」を先に書き、
++   赤を確認 → 実装を直して緑 → 全 test green。これで同じバグの regression を恒久的に塞ぐ。
 +
-+// ─── yagura_skill_audit ──────────────────────────────────────
++注: 厳密な三角測量までは不要。「実装より先に合格条件をコードで固定する」の 1 点で効果が出る。
++本リポジトリは `make verify` の reproducible build + 全 package `-race` test がこの柵を担保している。
 +
-+func TestSkillAudit_InvalidInputs(t *testing.T) {
-+	tool := buildSkillAuditTool(newDeps(t))
-+	for name, args := range map[string]string{
-+		"bad json":      `{`,
-+		"empty content": `{"content":""}`,
-+		"missing field": `{}`,
-+	} {
-+		t.Run(name, func(t *testing.T) {
-+			if _, err := tool.Handler(context.Background(), json.RawMessage(args)); !IsCode(err, "invalid_input") {
-+				t.Errorf("expected invalid_input, got %v", err)
-+			}
-+		})
-+	}
-+}
-+
-+func TestSkillAudit_WellFormedScoresHigh(t *testing.T) {
-+	tool := buildSkillAuditTool(newDeps(t))
-+	content := "---\nname: my-skill\ndescription: Use when the user asks to audit a thing.\n---\n" +
-+		"# My Skill\n\nDoes the audit.\n\n## Gotchas\n\n- watch out for X\n"
-+	res := mustCall(t, tool, map[string]any{"content": content}).(harness.SkillAuditResult)
-+	if !res.HasFrontmatter {
-+		t.Error("expected frontmatter detected")
-+	}
-+	if !res.IsTriggerFormat {
-+		t.Error("expected trigger-format description detected")
-+	}
-+	if res.RetireRecommended {
-+		t.Errorf("well-formed skill should not be retire-recommended (score=%d)", res.Score)
-+	}
-+}
-+
-+func TestSkillAudit_StubIsRetireRecommended(t *testing.T) {
-+	tool := buildSkillAuditTool(newDeps(t))
-+	// No frontmatter, no routing description, near-empty body → stub retire path
-+	// (fires regardless of the numeric score).
-+	res := mustCall(t, tool, map[string]any{"content": "just a sentence"}).(harness.SkillAuditResult)
-+	if res.DescriptionLen != 0 {
-+		t.Errorf("expected no description, got len %d", res.DescriptionLen)
-+	}
-+	if !res.RetireRecommended {
-+		t.Errorf("stub skill should be retire-recommended, got %+v", res)
-+	}
-+	if res.RetireReason == "" {
-+		t.Error("retire-recommended result must carry a reason")
-+	}
-+}
-+
-+// ─── yagura_subagent_audit ───────────────────────────────────
-+
-+func TestSubagentAudit_InvalidInputs(t *testing.T) {
-+	tool := buildSubagentAuditTool(newDeps(t))
-+	for name, args := range map[string]string{
-+		"bad json":      `{`,
-+		"empty content": `{"content":""}`,
-+	} {
-+		t.Run(name, func(t *testing.T) {
-+			if _, err := tool.Handler(context.Background(), json.RawMessage(args)); !IsCode(err, "invalid_input") {
-+				t.Errorf("expected invalid_input, got %v", err)
-+			}
-+		})
-+	}
-+}
-+
-+func TestSubagentAudit_HappyPath(t *testing.T) {
-+	tool := buildSubagentAuditTool(newDeps(t))
-+	content := "---\nname: reviewer\ndescription: Use when reviewing a diff for correctness.\n---\n" +
-+		"You are a careful code reviewer. Inspect the diff and report bugs.\n"
-+	res := mustCall(t, tool, map[string]any{"content": content}).(harness.SubagentAuditResult)
-+	if !res.HasFrontmatter {
-+		t.Error("expected frontmatter detected for well-formed subagent")
-+	}
-+	if res.Score <= 0 {
-+		t.Errorf("well-formed subagent should score > 0, got %d", res.Score)
-+	}
-+}
+ ### 新 MCP tool 追加
+-1. `internal/<topic>/<topic>.go` で domain logic を書く(test cov ≥ 90% 目標)
+-2. `internal/mcp/tools.go` に `build<X>Tool(d Deps) *Tool` を追加
+-3. `RegisterDefaultTools` の末尾に `s.Register(build<X>Tool(d))` を追加
+-4. `cmd/yagura/integration_test.go` の expected names list と tool 数 (`if len(...) != N`) を更新
+-5. `internal/mcp/server_test.go` も同様
+-6. CHANGELOG に entry 追加(必ず Synergy / What's not yet / Sources セクション含む)
+-7. version bump (`cmd/yagura/main.go`, `cmd/yagura/main_test.go`,
++1. **(Red)`internal/<topic>/<topic>_test.go` に domain logic の spec をテストで先に固定**
++   (正常系・境界・異常系を 1 ケース 1 観点、赤を確認)。人間が期待値を確認してから次へ。
++2. `internal/<topic>/<topic>.go` で domain logic を書く(test cov ≥ 90% 目標、テストを緑に)
++3. `internal/mcp/tools.go` に `build<X>Tool(d Deps) *Tool` を追加
++4. `RegisterDefaultTools` の末尾に `s.Register(build<X>Tool(d))` を追加
++5. `cmd/yagura/integration_test.go` の expected names list と tool 数 (`if len(...) != N`) を更新
++6. `internal/mcp/server_test.go` も同様
++7. CHANGELOG に entry 追加(必ず Synergy / What's not yet / Sources セクション含む)
++8. version bump (`cmd/yagura/main.go`, `cmd/yagura/main_test.go`,
+    `internal/dashboard/dashboard.go`, `README.md`)
+-8. `make verify` で reproducible 確認
+-9. tarball を `/mnt/user-data/outputs/yagura-vX.Y.Z-source.tar.gz` に出力
++9. `make verify` で reproducible 確認
++10. tarball を `/mnt/user-data/outputs/yagura-vX.Y.Z-source.tar.gz` に出力
+ 
+ ### 新 sensor 統合
+ 1. 既存 `internal/scanner` の 24h loop に hook
