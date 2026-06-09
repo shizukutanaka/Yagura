@@ -292,6 +292,37 @@ func TestUpdate_PreservesCreatedAt(t *testing.T) {
 	}
 }
 
+// TestUpdate_PersistFails covers the atomicfile.Write error path in persist.
+// After a successful Add, we replace the .json file with a directory, which
+// causes the atomic Rename inside atomicfile.Write to fail on Update.
+func TestUpdate_PersistFails(t *testing.T) {
+	dir := t.TempDir()
+	r, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := sampleProject("overwrite-test")
+	if err := r.Add(p); err != nil {
+		t.Fatal(err)
+	}
+	// Replace the project JSON file with a directory of the same name.
+	// atomicfile.Write will create a temp file, then Rename(temp, dir) → error.
+	jsonPath := filepath.Join(dir, "overwrite-test.json")
+	if err := os.Remove(jsonPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(jsonPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(jsonPath) })
+
+	got, _ := r.Get("overwrite-test")
+	got.Notes = "modified"
+	if err := r.Update(got); err == nil {
+		t.Error("expected persist error when target path is a directory, got nil")
+	}
+}
+
 func TestGet_ClonesSprint(t *testing.T) {
 	r, _ := freshRegistry(t)
 	p := sampleProject("ws")
