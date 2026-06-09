@@ -1,152 +1,91 @@
-diff -ruN /tmp/pg4/prev/yagura-v0.35.0/internal/mcp/tools_hooks_test.go yagura-v0.35.0/internal/mcp/tools_hooks_test.go
---- /tmp/pg4/prev/yagura-v0.35.0/internal/mcp/tools_hooks_test.go	1970-01-01 00:00:00.000000000 +0000
-+++ yagura-v0.35.0/internal/mcp/tools_hooks_test.go	2026-06-09 01:58:57.044677311 +0000
-@@ -0,0 +1,148 @@
+diff -ruN /tmp/pg5/prev/yagura-v0.35.0/internal/mcp/tools_claudeaudit_test.go yagura-v0.35.0/internal/mcp/tools_claudeaudit_test.go
+--- /tmp/pg5/prev/yagura-v0.35.0/internal/mcp/tools_claudeaudit_test.go	1970-01-01 00:00:00.000000000 +0000
++++ yagura-v0.35.0/internal/mcp/tools_claudeaudit_test.go	2026-06-09 02:31:48.725697450 +0000
+@@ -0,0 +1,87 @@
 +package mcp
 +
 +import (
 +	"context"
 +	"encoding/json"
-+	"net/http/httptest"
-+	"strings"
 +	"testing"
 +
-+	"github.com/shizukutanaka/yagura/internal/hookreceiver"
++	"github.com/shizukutanaka/yagura/internal/harness"
 +)
 +
-+// fakeHookLookup maps a cwd prefix → slug (implements hookreceiver.ProjectLookup).
-+type fakeHookLookup struct{ m map[string]string }
++// ─── yagura_skill_audit ──────────────────────────────────────
 +
-+func (f *fakeHookLookup) ResolveByPath(cwd string) (string, bool) {
-+	for prefix, slug := range f.m {
-+		if strings.HasPrefix(cwd, prefix) {
-+			return slug, true
-+		}
-+	}
-+	return "", false
-+}
-+
-+// feedHook posts one hook event into the receiver via its HTTP handler.
-+func feedHook(t *testing.T, r *hookreceiver.Receiver, payload string) {
-+	t.Helper()
-+	req := httptest.NewRequest("POST", "/hooks/claude-code", strings.NewReader(payload))
-+	w := httptest.NewRecorder()
-+	r.Handle(w, req)
-+	if w.Code != 200 {
-+		t.Fatalf("hook post failed: %d %s", w.Code, w.Body.String())
++func TestSkillAudit_InvalidInputs(t *testing.T) {
++	tool := buildSkillAuditTool(newDeps(t))
++	for name, args := range map[string]string{
++		"bad json":      `{`,
++		"empty content": `{"content":""}`,
++		"missing field": `{}`,
++	} {
++		t.Run(name, func(t *testing.T) {
++			if _, err := tool.Handler(context.Background(), json.RawMessage(args)); !IsCode(err, "invalid_input") {
++				t.Errorf("expected invalid_input, got %v", err)
++			}
++		})
 +	}
 +}
 +
-+// serverWithHooks returns a Server wired to an in-memory receiver pre-loaded
-+// with a small deterministic event set across two projects.
-+func serverWithHooks(t *testing.T) *Server {
-+	t.Helper()
-+	lookup := &fakeHookLookup{m: map[string]string{
-+		"/repo/breeze":  "breeze",
-+		"/repo/tessera": "tessera",
-+	}}
-+	r, err := hookreceiver.NewReceiver("", lookup, 100)
-+	if err != nil {
-+		t.Fatal(err)
++func TestSkillAudit_WellFormedScoresHigh(t *testing.T) {
++	tool := buildSkillAuditTool(newDeps(t))
++	content := "---\nname: my-skill\ndescription: Use when the user asks to audit a thing.\n---\n" +
++		"# My Skill\n\nDoes the audit.\n\n## Gotchas\n\n- watch out for X\n"
++	res := mustCall(t, tool, map[string]any{"content": content}).(harness.SkillAuditResult)
++	if !res.HasFrontmatter {
++		t.Error("expected frontmatter detected")
 +	}
-+	// breeze: 2× Bash PreToolUse, 1× Read PreToolUse
-+	feedHook(t, r, `{"hook_event_name":"PreToolUse","cwd":"/repo/breeze","tool_name":"Bash"}`)
-+	feedHook(t, r, `{"hook_event_name":"PreToolUse","cwd":"/repo/breeze","tool_name":"Bash"}`)
-+	feedHook(t, r, `{"hook_event_name":"PreToolUse","cwd":"/repo/breeze","tool_name":"Read"}`)
-+	// tessera: 1× Stop event (no tool)
-+	feedHook(t, r, `{"hook_event_name":"Stop","cwd":"/repo/tessera"}`)
-+
-+	s := New("", nil)
-+	s.SetHookReceiver(r)
-+	return s
-+}
-+
-+// ─── yagura_hook_stats ───────────────────────────────────────
-+
-+func TestHookStats_Unavailable(t *testing.T) {
-+	tool := buildHookStatsTool(New("", nil)) // no receiver set
-+	if _, err := tool.Handler(context.Background(), json.RawMessage(`{}`)); !IsCode(err, "unavailable") {
-+		t.Errorf("expected unavailable without receiver, got %v", err)
++	if !res.IsTriggerFormat {
++		t.Error("expected trigger-format description detected")
++	}
++	if res.RetireRecommended {
++		t.Errorf("well-formed skill should not be retire-recommended (score=%d)", res.Score)
 +	}
 +}
 +
-+func TestHookStats_PerProject(t *testing.T) {
-+	tool := buildHookStatsTool(serverWithHooks(t))
-+	out := mustCall(t, tool, map[string]any{"slug": "breeze"}).(map[string]any)
-+
-+	if out["slug"] != "breeze" {
-+		t.Errorf("slug = %v", out["slug"])
++func TestSkillAudit_StubIsRetireRecommended(t *testing.T) {
++	tool := buildSkillAuditTool(newDeps(t))
++	// No frontmatter, no routing description, near-empty body → stub retire path
++	// (fires regardless of the numeric score).
++	res := mustCall(t, tool, map[string]any{"content": "just a sentence"}).(harness.SkillAuditResult)
++	if res.DescriptionLen != 0 {
++		t.Errorf("expected no description, got len %d", res.DescriptionLen)
 +	}
-+	st := out["stats"].(hookreceiver.Stats)
-+	if st.Total != 3 {
-+		t.Errorf("breeze total = %d, want 3", st.Total)
++	if !res.RetireRecommended {
++		t.Errorf("stub skill should be retire-recommended, got %+v", res)
 +	}
-+	if st.ByTool["Bash"] != 2 || st.ByTool["Read"] != 1 {
-+		t.Errorf("breeze ByTool = %v", st.ByTool)
-+	}
-+	// top_tools: Bash (2) ranks before Read (1).
-+	top := out["top_tools"].([]hookreceiver.ToolUsage)
-+	if len(top) != 2 || top[0].Tool != "Bash" || top[0].Count != 2 {
-+		t.Errorf("top_tools = %+v, want Bash first", top)
++	if res.RetireReason == "" {
++		t.Error("retire-recommended result must carry a reason")
 +	}
 +}
 +
-+func TestHookStats_AllProjects(t *testing.T) {
-+	tool := buildHookStatsTool(serverWithHooks(t))
-+	out := mustCall(t, tool, map[string]any{}).(map[string]any)
++// ─── yagura_subagent_audit ───────────────────────────────────
 +
-+	all := out["all_projects"].(map[string]hookreceiver.Stats)
-+	if all["breeze"].Total != 3 {
-+		t.Errorf("breeze total = %d, want 3", all["breeze"].Total)
-+	}
-+	if all["tessera"].Total != 1 {
-+		t.Errorf("tessera total = %d, want 1", all["tessera"].Total)
-+	}
-+	if _, ok := out["top_tools"]; !ok {
-+		t.Error("all-projects view should include top_tools")
++func TestSubagentAudit_InvalidInputs(t *testing.T) {
++	tool := buildSubagentAuditTool(newDeps(t))
++	for name, args := range map[string]string{
++		"bad json":      `{`,
++		"empty content": `{"content":""}`,
++	} {
++		t.Run(name, func(t *testing.T) {
++			if _, err := tool.Handler(context.Background(), json.RawMessage(args)); !IsCode(err, "invalid_input") {
++				t.Errorf("expected invalid_input, got %v", err)
++			}
++		})
 +	}
 +}
 +
-+// ─── yagura_hook_timeline ────────────────────────────────────
-+
-+func TestHookTimeline_Unavailable(t *testing.T) {
-+	tool := buildHookTimelineTool(New("", nil))
-+	if _, err := tool.Handler(context.Background(), json.RawMessage(`{}`)); !IsCode(err, "unavailable") {
-+		t.Errorf("expected unavailable without receiver, got %v", err)
++func TestSubagentAudit_HappyPath(t *testing.T) {
++	tool := buildSubagentAuditTool(newDeps(t))
++	content := "---\nname: reviewer\ndescription: Use when reviewing a diff for correctness.\n---\n" +
++		"You are a careful code reviewer. Inspect the diff and report bugs.\n"
++	res := mustCall(t, tool, map[string]any{"content": content}).(harness.SubagentAuditResult)
++	if !res.HasFrontmatter {
++		t.Error("expected frontmatter detected for well-formed subagent")
 +	}
-+}
-+
-+func TestHookTimeline_ReturnsEvents(t *testing.T) {
-+	tool := buildHookTimelineTool(serverWithHooks(t))
-+	out := mustCall(t, tool, map[string]any{"slug": "breeze"}).(map[string]any)
-+
-+	if out["count"].(int) != 3 {
-+		t.Errorf("breeze count = %v, want 3", out["count"])
-+	}
-+	if out["hours"].(int) != 24 {
-+		t.Errorf("default hours = %v, want 24", out["hours"])
-+	}
-+	events := out["events"].([]hookreceiver.Event)
-+	if len(events) != 3 {
-+		t.Fatalf("got %d events, want 3", len(events))
-+	}
-+}
-+
-+func TestHookTimeline_EventTypeFilter(t *testing.T) {
-+	tool := buildHookTimelineTool(serverWithHooks(t))
-+	// Only the tessera Stop event matches event_type=Stop.
-+	out := mustCall(t, tool, map[string]any{"event_type": "Stop"}).(map[string]any)
-+	if out["count"].(int) != 1 {
-+		t.Errorf("Stop-filtered count = %v, want 1", out["count"])
-+	}
-+}
-+
-+func TestHookTimeline_LimitCappedAt500(t *testing.T) {
-+	// The handler should clamp an over-large limit to 500 (echoed indirectly:
-+	// no panic, and count never exceeds available events).
-+	tool := buildHookTimelineTool(serverWithHooks(t))
-+	out := mustCall(t, tool, map[string]any{"limit": 99999}).(map[string]any)
-+	if out["count"].(int) != 4 { // all 4 events across projects
-+		t.Errorf("count = %v, want 4", out["count"])
++	if res.Score <= 0 {
++		t.Errorf("well-formed subagent should score > 0, got %d", res.Score)
 +	}
 +}
