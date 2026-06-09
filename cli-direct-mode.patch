@@ -17,6 +17,160 @@ diff -ruN /tmp/pgA/prev/yagura-v0.35.0/CHANGELOG.md /home/user/Yagura/yagura-v0.
  - **fix(recovery): budget 1 で retry を返さない収束ガード(loop engineering)**
    (`internal/recovery`)。recovery kernel は失敗を retry/replan/escalate に決定論的に
    振り分け、budget(MaxAttempts、既定 3)を使い切ると terminal escalate/degrade する設計。
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format_test.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_format_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_format_test.go	2026-06-09 07:17:29.197483346 +0000
+@@ -0,0 +1,150 @@
++// cli_format_test.go — tests for the human-readable CLI formatters. These were
++// at 0% coverage; they are pure functions writing to an io.Writer, so each test
++// renders into a bytes.Buffer and asserts on the emitted text.
++package main
++
++import (
++	"bytes"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/harness"
++	"github.com/shizukutanaka/yagura/internal/pindrift"
++	"github.com/shizukutanaka/yagura/internal/sbom"
++)
++
++func TestShortSHA(t *testing.T) {
++	cases := []struct{ in, want string }{
++		{"", ""},
++		{"abc", "abc"},
++		{"123456789012", "123456789012"},  // exactly 12 → unchanged
++		{"1234567890123", "123456789012"}, // 13 → truncated to 12
++		{"11bd71901bbe5b1630ceea73d27597364c", "11bd71901bbe"},
++	}
++	for _, c := range cases {
++		if got := shortSHA(c.in); got != c.want {
++			t.Errorf("shortSHA(%q) = %q, want %q", c.in, got, c.want)
++		}
++	}
++}
++
++func TestDash(t *testing.T) {
++	if dash("") != "-" {
++		t.Error("empty string should render as -")
++	}
++	if dash("go1.22") != "go1.22" {
++		t.Error("non-empty string should pass through")
++	}
++}
++
++func TestYesNo(t *testing.T) {
++	if yesNo(true) != "yes" || yesNo(false) != "no" {
++		t.Error("yesNo mapping wrong")
++	}
++}
++
++func TestHumanStats(t *testing.T) {
++	var b bytes.Buffer
++	humanStats(&b, statsView{
++		Total:            5,
++		TotalOpenPRs:     2,
++		TotalOpenIssues:  3,
++		StaleActiveCount: 1,
++		AvgPriority:      2.5,
++		ByStage:          map[string]int{"active": 4, "archived": 1},
++		ByLanguage:       map[string]int{"Go": 5},
++	})
++	out := b.String()
++	for _, want := range []string{"total: 5", "open PRs: 2", "avg priority: 2.50", "by stage:", "active", "by language:", "Go"} {
++		if !strings.Contains(out, want) {
++			t.Errorf("humanStats output missing %q\n---\n%s", want, out)
++		}
++	}
++}
++
++func TestPrintCountMap_EmptyIsSilent(t *testing.T) {
++	var b bytes.Buffer
++	printCountMap(&b, "by stage", map[string]int{})
++	if b.Len() != 0 {
++		t.Errorf("empty map should print nothing, got %q", b.String())
++	}
++}
++
++func TestPrintCountMap_SortedKeys(t *testing.T) {
++	var b bytes.Buffer
++	printCountMap(&b, "by lang", map[string]int{"zeta": 1, "alpha": 2})
++	out := b.String()
++	if strings.Index(out, "alpha") > strings.Index(out, "zeta") {
++		t.Errorf("keys must be sorted (alpha before zeta): %q", out)
++	}
++}
++
++func TestHumanSbom(t *testing.T) {
++	var b bytes.Buffer
++	bom := &sbom.Bom{
++		SpecVersion: "1.5",
++		Metadata:    sbom.Metadata{},
++		Components: []sbom.Component{
++			{Name: "stdlib", Version: "go1.22"},
++		},
++	}
++	humanSbom(&b, bom)
++	out := b.String()
++	if !strings.Contains(out, "CycloneDX 1.5") {
++		t.Errorf("expected spec line, got: %s", out)
++	}
++	if !strings.Contains(out, "components:") || !strings.Contains(out, "stdlib") {
++		t.Errorf("expected component listing, got: %s", out)
++	}
++}
++
++func TestHumanSbom_NoComponents(t *testing.T) {
++	var b bytes.Buffer
++	humanSbom(&b, &sbom.Bom{SpecVersion: "1.5"})
++	// The summary line legitimately reads "components: 0"; what must be absent
++	// is the standalone listing header line ("components:\n") and any rows.
++	if strings.Contains(b.String(), "components:\n") {
++		t.Errorf("no components should omit the components: listing header, got: %s", b.String())
++	}
++}
++
++func TestHumanPinDrift(t *testing.T) {
++	var b bytes.Buffer
++	results := []pindrift.Result{
++		{
++			Pin:    pindrift.Pin{Owner: "actions", Repo: "checkout", PinnedSHA: "11bd71901bbe5b1630ceea73d27597364c9af683"},
++			Status: pindrift.StatusOK,
++			Detail: "ok",
++		},
++	}
++	humanPinDrift(&b, results)
++	out := b.String()
++	for _, want := range []string{"total_pins: 1", "actions/checkout", "11bd71901bbe", "OK"} {
++		if !strings.Contains(out, want) {
++			t.Errorf("humanPinDrift output missing %q\n---\n%s", want, out)
++		}
++	}
++	// SHA must be truncated, not full.
++	if strings.Contains(out, "11bd71901bbe5b1630") {
++		t.Errorf("SHA should be shortened in output: %s", out)
++	}
++}
++
++func TestWorkflowShape(t *testing.T) {
++	cases := []struct {
++		r    harness.WorkflowAuditResult
++		want string
++	}{
++		{harness.WorkflowAuditResult{}, "-"},
++		{harness.WorkflowAuditResult{UsesParallel: true}, "parallel"},
++		{harness.WorkflowAuditResult{UsesPipeline: true}, "pipeline"},
++		{harness.WorkflowAuditResult{HasLoop: true}, "loop"},
++		{harness.WorkflowAuditResult{UsesParallel: true, HasLoop: true}, "parallel+loop"},
++		{harness.WorkflowAuditResult{UsesParallel: true, UsesPipeline: true, HasLoop: true}, "parallel+pipeline+loop"},
++	}
++	for _, c := range cases {
++		if got := workflowShape(c.r); got != c.want {
++			t.Errorf("workflowShape(%+v) = %q, want %q", c.r, got, c.want)
++		}
++	}
++}
 diff -ruN /tmp/pgA/prev/yagura-v0.35.0/docs/MCP_TOOLS.md /home/user/Yagura/yagura-v0.35.0/docs/MCP_TOOLS.md
 --- /tmp/pgA/prev/yagura-v0.35.0/docs/MCP_TOOLS.md	2026-06-08 15:19:34.000000000 +0000
 +++ /home/user/Yagura/yagura-v0.35.0/docs/MCP_TOOLS.md	2026-06-09 04:28:32.766641610 +0000
