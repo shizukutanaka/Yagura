@@ -1018,3 +1018,92 @@ func TestRead_ReadDirFails(t *testing.T) {
 		t.Error("expected error when dir arg is a regular file")
 	}
 }
+
+// ─── Append error paths ──────────────────────────────────────
+
+// TestAppend_RotationFails covers the `return err` on Append's rotateLocked
+// path (today != currentDate but openCurrent fails).
+func TestAppend_RotationFails(t *testing.T) {
+	dir := t.TempDir()
+	l, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	// Replace today's .jsonl file with a directory so openCurrent fails.
+	today := time.Now().UTC().Format("2006-01-02")
+	todayPath := filepath.Join(dir, today+".jsonl")
+	_ = l.file.Close()
+	l.file = nil
+	_ = os.Remove(todayPath)
+	if err := os.MkdirAll(todayPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Set a stale date so Append triggers rotation.
+	l.currentDate = "2000-01-01"
+
+	if err = l.Append(Record{Kind: "rotate_fail"}); err == nil {
+		t.Error("expected error when rotation target is blocked by a directory")
+	}
+}
+
+// TestAppend_UnmarshalableFields covers the `return fmt.Errorf("compute hash: %w")`
+// in Append and the `return "", nil, err` in computeHashAndPayload when
+// json.Marshal fails because Fields contains an unmarshalable type.
+func TestAppend_UnmarshalableFields(t *testing.T) {
+	l, _ := New(t.TempDir())
+	defer l.Close()
+	err := l.Append(Record{
+		Kind:   "test",
+		Fields: map[string]any{"ch": make(chan int)},
+	})
+	if err == nil {
+		t.Error("expected error when Fields contains an unmarshalable value (channel)")
+	}
+}
+
+// ─── verifyFile: hashMap error ───────────────────────────────
+
+// TestVerifyFile_RecomputeHashFails covers the `res.Reason = "recompute hash
+// failed"` branch inside verifyFile. A record with a numeric "time" field
+// passes seq/prev_hash checks but causes hashMap to fail when it tries to
+// unmarshal the raw map into Record (time.Time can't be a number).
+func TestVerifyFile_RecomputeHashFails(t *testing.T) {
+	dir := t.TempDir()
+	fname := time.Now().UTC().Format("2006-01-02") + ".jsonl"
+	content := `{"seq":1,"kind":"x","prev_hash":"","time":12345,"hash":"anyhash"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, fname), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	results, err := Verify(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].OK {
+		t.Error("expected verification failure due to hashMap error")
+	}
+	if !strings.Contains(results[0].Reason, "recompute hash failed") {
+		t.Errorf("expected 'recompute hash failed' in reason, got %q", results[0].Reason)
+	}
+}
+
+// ─── tailState: non-ErrNotExist open failure ─────────────────
+
+// TestTailState_OpenFailsEnotdir covers the `return "", 0, err` branch in
+// tailState when os.Open fails with ENOTDIR (not ErrNotExist). The path
+// "regularfile/ghost" triggers ENOTDIR because "regularfile" is not a directory.
+func TestTailState_OpenFailsEnotdir(t *testing.T) {
+	parent := t.TempDir()
+	blocker := filepath.Join(parent, "notadir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := tailState(filepath.Join(blocker, "ghost"))
+	if err == nil {
+		t.Error("expected non-nil error for ENOTDIR open failure")
+	}
+}

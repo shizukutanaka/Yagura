@@ -647,3 +647,110 @@ func TestStageOrder_Unknown(t *testing.T) {
 		t.Errorf("stageOrder(unknown) = %d, want 99", got)
 	}
 }
+
+// ─── Priority sort, FailingCI, stale project ──────────────────
+
+// TestServeHTTP_PrioritySort covers the `projects[i].Priority > projects[j].Priority`
+// branch in the sort.SliceStable comparator. Two active projects with different
+// priorities trigger the priority comparison after same-stage rank.
+func TestServeHTTP_PrioritySort(t *testing.T) {
+	h, reg := setupHandler(t)
+	_ = reg.Add(&project.Project{
+		Slug: "low-prio", DisplayName: "Low Priority", Repository: "x/low",
+		Stage: project.StageActive, Priority: 1,
+	})
+	_ = reg.Add(&project.Project{
+		Slug: "high-prio", DisplayName: "High Priority", Repository: "x/high",
+		Stage: project.StageActive, Priority: 5,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("priority sort: code = %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "high-prio") || !strings.Contains(body, "low-prio") {
+		t.Fatal("both priority projects should appear in dashboard")
+	}
+}
+
+// TestServeHTTP_FailingCI_StaleProject covers `failingCI++` (CIStatusFailing)
+// and `stale++` (active project with LatestActivity > 14 days ago).
+func TestServeHTTP_FailingCI_StaleProject(t *testing.T) {
+	h, reg := setupHandler(t)
+	staleTime := time.Now().UTC().AddDate(0, 0, -20) // 20 days old → stale
+	_ = reg.Add(&project.Project{
+		Slug:           "ci-fail",
+		DisplayName:    "CI Failing",
+		Repository:     "x/ci",
+		Stage:          project.StageActive,
+		CIStatus:       project.CIStatusFailing,
+		LatestActivity: staleTime,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("failing-ci/stale: code = %d", w.Code)
+	}
+}
+
+// ─── agent staleSet ──────────────────────────────────────────
+
+// staleAgentProvider extends stubAgentStatus to return a non-empty AnyStale list,
+// covering the `staleSet[a] = true` branch inside ServeHTTP's agent panel.
+type staleAgentProvider struct{ stubAgentStatus }
+
+func (s *staleAgentProvider) AnyStale(d time.Duration) []quotamonitor.Agent {
+	return []quotamonitor.Agent{quotamonitor.AgentWindsurf}
+}
+
+func TestServeHTTP_StaleAgent(t *testing.T) {
+	h, _ := setupHandler(t)
+	h.SetAgentStatusProvider(&staleAgentProvider{})
+	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("stale-agent: code = %d", w.Code)
+	}
+}
+
+// ─── buildSparklinePath: out-of-range clamps ─────────────────
+
+// TestBuildSparklinePath_OutOfRangeClamp covers the `y = 0` and `y = float64(hgt)`
+// clamp branches. remaining > 100 produces y < 0; remaining < 0 produces y > 30.
+func TestBuildSparklinePath_OutOfRangeClamp(t *testing.T) {
+	// remaining > 100 → y = 30 - 110*30/100 = -3 → clamped to 0.
+	got := buildSparklinePath([]quotamonitor.ReportEvent{
+		{RemainingPercent: 110},
+		{RemainingPercent: 50},
+	})
+	if !strings.HasPrefix(got, "0.0,0.0") {
+		t.Errorf("remaining>100 should yield y=0.0 at first point, got %q", got)
+	}
+
+	// remaining < 0 → y = 30 - (-10)*30/100 = 33 → clamped to 30.
+	got2 := buildSparklinePath([]quotamonitor.ReportEvent{
+		{RemainingPercent: -10},
+		{RemainingPercent: 50},
+	})
+	if !strings.HasPrefix(got2, "0.0,30.0") {
+		t.Errorf("remaining<0 should yield y=30.0 at first point, got %q", got2)
+	}
+}
+
+// ─── securityCell: VulnLow > 0 ───────────────────────────────
+
+// TestSecurityCell_VulnLow covers the `VulnLow > 0` branch in securityCell.
+func TestSecurityCell_VulnLow(t *testing.T) {
+	p := project.Project{
+		VulnScanAt: time.Now(),
+		VulnLow:    3,
+	}
+	got := string(securityCell(p))
+	if !strings.Contains(got, "3L") || !strings.Contains(got, "vuln-low") {
+		t.Errorf("VulnLow=3 should produce '3L' badge, got %q", got)
+	}
+}
