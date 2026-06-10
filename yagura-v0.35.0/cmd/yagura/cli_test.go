@@ -1357,3 +1357,200 @@ func TestCLI_List_PartialLoadWarning(t *testing.T) {
 		t.Errorf("valid project should still be listed:\n%s", out)
 	}
 }
+
+// ─── ai-verify (v0.36.0) ─────────────────────────────────────
+
+// TestCLI_AIVerify_EmptyDir runs ai-verify on an empty temp dir.
+// No source files → zero findings, exit 0.
+func TestCLI_AIVerify_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	code, out, errs := runCLICapture(t, "ai-verify", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("ai-verify empty dir: code=%d stderr=%q", code, errs)
+	}
+	if !strings.Contains(out, "files_scanned:") {
+		t.Errorf("expected summary line, got:\n%s", out)
+	}
+}
+
+// TestCLI_AIVerify_JSON confirms --json returns parseable JSON with expected keys.
+func TestCLI_AIVerify_JSON(t *testing.T) {
+	dir := t.TempDir()
+	// Plant a file with a known high-risk pattern.
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(`
+package main
+import "crypto/md5"
+func hashPwd(password string) []byte {
+    return md5.New().Sum(nil) // ai-marker: AI generated
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "ai-verify", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("ai-verify --json: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if resp["risk_score"] == nil {
+		t.Error("JSON response missing risk_score")
+	}
+}
+
+// TestCLI_AIVerify_CustomRulesFile loads a .yagura/aiverify.json with a custom
+// rule and verifies it fires on matching content.
+func TestCLI_AIVerify_CustomRulesFile(t *testing.T) {
+	dir := t.TempDir()
+	// Create source file with custom-rule-matching content.
+	if err := os.WriteFile(filepath.Join(dir, "api.go"), []byte(`
+package api
+func callLegacyAPI() {
+    legacyEndpoint() // FORBIDDEN_LEGACY call
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Plant .yagura/aiverify.json with a custom rule.
+	rulesDir := filepath.Join(dir, ".yagura")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rulesJSON := `{"rules":[{"id":"no-legacy","pattern":"FORBIDDEN_LEGACY","category":"external","risk":"HIGH","message":"legacy endpoint forbidden"}]}`
+	if err := os.WriteFile(filepath.Join(rulesDir, "aiverify.json"), []byte(rulesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "ai-verify", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("ai-verify with custom rules: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	findings, _ := resp["findings"].([]any)
+	var foundCustom bool
+	for _, f := range findings {
+		if fm, ok := f.(map[string]any); ok {
+			if fm["rule_id"] == "no-legacy" {
+				foundCustom = true
+			}
+		}
+	}
+	if !foundCustom {
+		t.Errorf("custom rule 'no-legacy' did not fire; findings: %v", findings)
+	}
+}
+
+// TestCLI_AIVerify_SummaryOnly confirms --summary-only suppresses per-finding output.
+func TestCLI_AIVerify_SummaryOnly(t *testing.T) {
+	dir := t.TempDir()
+	// Use an ai-marker comment to produce a LOW finding without any secret-like value.
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte("package x\n// AI generated\nfunc f() {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "ai-verify", "--dir", dir, "--summary-only")
+	if code != 0 {
+		t.Fatalf("ai-verify --summary-only: code=%d", code)
+	}
+	if strings.Contains(out, "RULE\t") {
+		t.Error("--summary-only should not include per-finding table header")
+	}
+}
+
+// TestCLI_AIVerify_BadRulesFile returns exit 1 when --rules-file is invalid JSON.
+func TestCLI_AIVerify_BadRulesFile(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(bad, []byte("{invalid"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "ai-verify", "--dir", dir, "--rules-file", bad)
+	if code == 0 {
+		t.Error("expected non-zero exit for bad rules file")
+	}
+}
+
+// ─── quality-check (v0.36.0) ─────────────────────────────────
+
+func TestCLI_QualityCheck_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	code, out, errs := runCLICapture(t, "quality-check", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("quality-check empty dir: code=%d stderr=%q", code, errs)
+	}
+	if !strings.Contains(out, "files_scanned:") {
+		t.Errorf("expected summary line, got:\n%s", out)
+	}
+}
+
+func TestCLI_QualityCheck_JSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "app.ts"), []byte(`const x = y as any; // TODO fix this`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "quality-check", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("quality-check --json: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if resp["findings"] == nil {
+		t.Error("JSON response missing findings")
+	}
+}
+
+// TestCLI_QualityCheck_CustomRulesFile verifies .yagura/quality.json is loaded.
+func TestCLI_QualityCheck_CustomRulesFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "svc.go"), []byte(`package svc
+// DO_NOT_MERGE_TAG: unfinished`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rulesDir := filepath.Join(dir, ".yagura")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rulesJSON := `[{"id":"no-merge-tag","pattern":"DO_NOT_MERGE_TAG","severity":"prohibited","description":"merge blocked"}]`
+	if err := os.WriteFile(filepath.Join(rulesDir, "quality.json"), []byte(rulesJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "quality-check", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("quality-check custom rules: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	findings, _ := resp["findings"].([]any)
+	var found bool
+	for _, f := range findings {
+		if fm, ok := f.(map[string]any); ok {
+			if fm["rule_id"] == "no-merge-tag" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("custom rule 'no-merge-tag' did not fire; findings: %v", findings)
+	}
+}
+
+// TestCLI_QualityCheck_SummaryOnly confirms --summary-only suppresses finding table.
+func TestCLI_QualityCheck_SummaryOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.ts"), []byte(`const y = z as any;`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "quality-check", "--dir", dir, "--summary-only")
+	if code != 0 {
+		t.Fatalf("quality-check --summary-only: code=%d", code)
+	}
+	if strings.Contains(out, "RULE\t") {
+		t.Error("--summary-only should not include per-finding table header")
+	}
+}

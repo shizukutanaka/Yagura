@@ -36,6 +36,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/config"
@@ -47,6 +48,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
+	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/registry"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
@@ -71,6 +73,7 @@ var cliVerbs = map[string]bool{
 	"mcp-audit": true, "vex-audit": true, "self-improve-history": true,
 	"path-policy": true, "inject-scan": true, "cc-security": true,
 	"claudemd-audit": true,
+	"ai-verify": true, "quality-check": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -125,6 +128,10 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliCCSecurity(args, stdout, stderr)
 	case "claudemd-audit":
 		err = cliClaudeMdAudit(args, stdout, stderr)
+	case "ai-verify":
+		err = cliAIVerify(args, stdout, stderr)
+	case "quality-check":
+		err = cliQualityCheck(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -1562,6 +1569,162 @@ func severityRank(s secretscan.Severity) int {
 	default:
 		return 0
 	}
+}
+
+// ─── ai-verify (v0.36.0) ─────────────────────────────────────
+
+// cliAIVerify は `yagura ai-verify [dir]` を処理する。
+// デフォルト rule set に加え、dir/.yagura/aiverify.json があれば自動的に
+// カスタムルールをマージする。--rules-file で明示的にファイルを指定することも可能。
+func cliAIVerify(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("ai-verify", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	summaryOnly := fset.Bool("summary-only", false, "summary only (no per-finding list)")
+	dir := fset.String("dir", ".", "directory to scan recursively")
+	rulesFile := fset.String("rules-file", "", "path to custom rules JSON (default: auto-detect <dir>/.yagura/aiverify.json)")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	files, err := readSourceFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("read source files: %w", err)
+	}
+
+	rules := aiverify.DefaultRules()
+
+	// Resolve custom rules file: explicit flag or auto-detect.
+	rf := *rulesFile
+	if rf == "" {
+		candidate := filepath.Join(*dir, ".yagura", "aiverify.json")
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			rf = candidate
+		}
+	}
+	if rf != "" {
+		cfg, loadErr := aiverify.LoadUserConfig(rf)
+		if loadErr != nil {
+			return fmt.Errorf("custom rules: %w", loadErr)
+		}
+		rules, err = cfg.Apply(rules)
+		if err != nil {
+			return fmt.Errorf("apply custom rules: %w", err)
+		}
+	}
+
+	res := aiverify.ScanWithRules(files, rules)
+	if *jsonOut {
+		return emitJSON(stdout, res)
+	}
+	humanAIVerify(stdout, res, *summaryOnly)
+	return nil
+}
+
+// ─── quality-check (v0.36.0) ─────────────────────────────────
+
+// cliQualityCheck は `yagura quality-check [dir]` を処理する。
+// dir/.yagura/quality.json があれば自動的にカスタムルールをマージする。
+func cliQualityCheck(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("quality-check", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	summaryOnly := fset.Bool("summary-only", false, "summary only (no per-finding list)")
+	dir := fset.String("dir", ".", "directory to scan recursively")
+	rulesFile := fset.String("rules-file", "", "path to custom rules JSON [{id,pattern,severity,languages?,description?,suggestion?}]")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	files, err := readSourceFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("read source files: %w", err)
+	}
+
+	rules := qualitycheck.DefaultRules()
+
+	// Resolve custom rules file: explicit flag or auto-detect.
+	rf := *rulesFile
+	if rf == "" {
+		candidate := filepath.Join(*dir, ".yagura", "quality.json")
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			rf = candidate
+		}
+	}
+	if rf != "" {
+		data, readErr := os.ReadFile(rf)
+		if readErr != nil {
+			return fmt.Errorf("read rules file: %w", readErr)
+		}
+		var specs []qualitycheck.RuleSpec
+		if jsonErr := json.Unmarshal(data, &specs); jsonErr != nil {
+			return fmt.Errorf("parse rules file: %w", jsonErr)
+		}
+		custom, compErr := qualitycheck.CompileRules(specs)
+		if compErr != nil {
+			return fmt.Errorf("compile custom rules: %w", compErr)
+		}
+		rules = append(rules, custom...)
+	}
+
+	res := qualitycheck.ScanFiles(files, rules)
+	if *jsonOut {
+		return emitJSON(stdout, res)
+	}
+	humanQualityCheck(stdout, res, *summaryOnly)
+	return nil
+}
+
+// readSourceFiles は dir を再帰的に走査し、Go/TS/JS/Python/Rust/Java の
+// ソースファイルを {relpath: content} として返す。
+// vendor/, node_modules/, .git/ はスキップ。上限 1000 件 / 50 MB。
+func readSourceFiles(dir string) (map[string]string, error) {
+	const maxFiles = 1000
+	const maxTotalBytes = 50 * 1024 * 1024
+
+	files := make(map[string]string)
+	var totalBytes int64
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if name == "vendor" || name == "node_modules" || name == ".git" || name == ".yagura" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !isSourceFile(name) {
+			return nil
+		}
+		if len(files) >= maxFiles {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil // skip unreadable files silently
+		}
+		totalBytes += int64(len(data))
+		if totalBytes > maxTotalBytes {
+			return nil
+		}
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			rel = path
+		}
+		files[rel] = string(data)
+		return nil
+	})
+	return files, err
+}
+
+// isSourceFile は name がサポート言語のソースファイルかを返す。
+func isSourceFile(name string) bool {
+	for _, ext := range []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java"} {
+		if strings.HasSuffix(name, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // readWorkflowFiles は dir 直下の *.yml / *.yaml を {filename: content} で読む。

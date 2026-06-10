@@ -126,14 +126,18 @@ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
 				"text":         map[string]any{"type": "string"},
 				"path":         map[string]any{"type": "string"},
 				"summary_only": map[string]any{"type": "boolean"},
+				"custom_rules": map[string]any{"type": "array", "description": "project-specific AI risk rules: [{id, pattern(regex), category, risk(CRITICAL|HIGH|MEDIUM|LOW), message, languages?}]"},
+				"disable_rules": map[string]any{"type": "array", "description": "built-in rule IDs to suppress (e.g. [\"billing-stripe-uncaught\"])"},
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
 			var in struct {
-				Files       map[string]string `json:"files"`
-				Text        string            `json:"text"`
-				Path        string            `json:"path"`
-				SummaryOnly bool              `json:"summary_only"`
+				Files        map[string]string  `json:"files"`
+				Text         string             `json:"text"`
+				Path         string             `json:"path"`
+				SummaryOnly  bool               `json:"summary_only"`
+				CustomRules  []aiverify.UserRule `json:"custom_rules"`
+				DisableRules []string           `json:"disable_rules"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return nil, &ToolError{Code: "invalid_input", Cause: err}
@@ -142,6 +146,20 @@ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
 				return nil, &ToolError{Code: "invalid_input",
 					Message: "either 'files' or 'text' is required"}
 			}
+			if len(in.CustomRules) > 200 {
+				return nil, &ToolError{Code: "invalid_input", Message: "too many custom_rules (max 200)"}
+			}
+
+			// Build effective rule set (defaults ± user config).
+			rules := aiverify.DefaultRules()
+			if len(in.CustomRules) > 0 || len(in.DisableRules) > 0 {
+				userCfg := &aiverify.UserConfig{Rules: in.CustomRules, Disable: in.DisableRules}
+				var err error
+				rules, err = userCfg.Apply(aiverify.DefaultRules())
+				if err != nil {
+					return nil, &ToolError{Code: "invalid_input", Message: err.Error()}
+				}
+			}
 
 			var res aiverify.Result
 			if in.Text != "" {
@@ -149,11 +167,13 @@ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
 				if path == "" {
 					path = "<input>"
 				}
-				res = aiverify.Scan(map[string]string{path: in.Text})
-			} else if cache != nil {
+				res = aiverify.ScanWithRules(map[string]string{path: in.Text}, rules)
+			} else if cache != nil && len(in.CustomRules) == 0 && len(in.DisableRules) == 0 {
+				// Cache is only safe when the rule set is the default (cache key is
+				// content-based and does not encode custom rules).
 				res = aiverify.ScanCached(in.Files, cache)
 			} else {
-				res = aiverify.Scan(in.Files)
+				res = aiverify.ScanWithRules(in.Files, rules)
 			}
 
 			// v0.26.0: testcoverage と結合し untested AI 生成を flag (+5/file)
