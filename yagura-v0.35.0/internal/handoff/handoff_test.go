@@ -269,3 +269,25 @@ func TestSave_PreSetSavedAt(t *testing.T) {
 		t.Errorf("SavedAt not preserved: got %v, want %v", loaded.SavedAt.UTC(), preSet.UTC())
 	}
 }
+
+// ─── Load: non-ErrNotExist open error (ENOTDIR) ──────────────
+
+// TestLoad_OpenErrorNotEnoent covers the Load() branch where os.Open fails with
+// an error other than os.ErrNotExist. A regular file standing in for a
+// directory makes the open of "<file>/handoff.json" return ENOTDIR, which must
+// surface as a real error (not the benign ErrNotSaved).
+func TestLoad_OpenErrorNotEnoent(t *testing.T) {
+	parent := t.TempDir()
+	blocker := filepath.Join(parent, "notadir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Store{path: filepath.Join(blocker, "handoff.json")}
+	_, err := s.Load()
+	if err == nil {
+		t.Fatal("expected a non-nil error when the path traverses a regular file")
+	}
+	if errors.Is(err, ErrNotSaved) {
+		t.Errorf("ENOTDIR open failure must not be reported as ErrNotSaved, got %v", err)
+	}
+}
