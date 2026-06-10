@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,8 +13,10 @@ import (
 
 	"github.com/shizukutanaka/yagura/internal/github"
 	"github.com/shizukutanaka/yagura/internal/logging"
+	"github.com/shizukutanaka/yagura/internal/osv"
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/registry"
+	"github.com/shizukutanaka/yagura/internal/scorecard"
 )
 
 // fakeGitHub は最小限の GitHub REST API を模す httptest server。
@@ -450,3 +453,335 @@ func TestScanner_Run_TickerFires(t *testing.T) {
 	<-ctx.Done()
 	s.Stop()
 }
+
+func TestNoopMetrics_AllMethodsCovered(t *testing.T) {
+	// noopMetrics is the default when Scanner is built without a Metrics option.
+	// Calling each method confirms they are reachable and don't panic.
+	m := noopMetrics{}
+	m.IncScanned()
+	m.IncFailed()
+	m.SetLastScanDuration(0)
+	m.SetLastScanAt(time.Time{})
+}
+
+// ─── scanOne error paths ──────────────────────────────────────
+
+// TestScanOne_InvalidRepo covers the owner==""||repo=="" branch in scanOne.
+func TestScanOne_InvalidRepo(t *testing.T) {
+	s, _, srv := newTestEnv(t, 0, 0, "", false)
+	defer srv.Close()
+
+	p := &project.Project{
+		Slug:        "bad-repo",
+		DisplayName: "bad-repo",
+		Repository:  "", // OwnerRepo() → ("", "")
+		Stage:       project.StageActive,
+	}
+	err := s.scanOne(context.Background(), p)
+	if err == nil || !strings.Contains(err.Error(), "invalid repository") {
+		t.Errorf("expected invalid-repository error, got %v", err)
+	}
+}
+
+// TestScanOne_LatestReleaseFails covers the LatestRelease error fallback in scanOne.
+// A 404 is treated as "no release" (no error), so we use 500 to force an error.
+func TestScanOne_LatestReleaseFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
+			http.Error(w, "forced error", http.StatusInternalServerError)
+		case strings.HasSuffix(r.URL.Path, "/pulls"):
+			_ = json.NewEncoder(w).Encode([]struct{}{})
+		case strings.HasSuffix(r.URL.Path, "/issues"):
+			_ = json.NewEncoder(w).Encode([]struct{}{})
+		case strings.Contains(r.URL.Path, "/actions/runs"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"total_count": 0, "workflow_runs": []any{},
+			})
+		case strings.HasPrefix(r.URL.Path, "/repos/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"full_name": "o/r", "default_branch": "main",
+				"pushed_at": time.Now().Format(time.RFC3339),
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	gh := github.NewClient(github.Config{Token: "test-token", BaseURL: srv.URL, Timeout: 2 * time.Second})
+	reg, err := registry.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(Config{Interval: 30 * time.Second, GitHub: gh, Registry: reg, Logger: logging.Discard()})
+
+	p := sampleProj("release-fail")
+	p.LatestVersion = "v0.9.0"
+	if err := reg.Add(p); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.scanOne(context.Background(), p); err != nil {
+		t.Errorf("scanOne should succeed with release fallback, got: %v", err)
+	}
+	got, _ := reg.Get("release-fail")
+	if got.LatestVersion != "v0.9.0" {
+		t.Errorf("LatestVersion fallback: want v0.9.0, got %q", got.LatestVersion)
+	}
+}
+
+// TestScanOne_LatestCIStatusFails covers the LatestCIStatus error fallback in scanOne.
+// A 404 is treated as "no CI" (no error), so we use 500 to force an error.
+func TestScanOne_LatestCIStatusFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/actions/runs"):
+			http.Error(w, "forced error", http.StatusInternalServerError)
+		case strings.HasSuffix(r.URL.Path, "/pulls"):
+			_ = json.NewEncoder(w).Encode([]struct{}{})
+		case strings.HasSuffix(r.URL.Path, "/issues"):
+			_ = json.NewEncoder(w).Encode([]struct{}{})
+		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"tag_name": "v1.0.0", "published_at": time.Now().Format(time.RFC3339),
+			})
+		case strings.HasPrefix(r.URL.Path, "/repos/"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"full_name": "o/r", "default_branch": "main",
+				"pushed_at": time.Now().Format(time.RFC3339),
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	gh := github.NewClient(github.Config{Token: "test-token", BaseURL: srv.URL, Timeout: 2 * time.Second})
+	reg, err := registry.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(Config{Interval: 30 * time.Second, GitHub: gh, Registry: reg, Logger: logging.Discard()})
+
+	p := sampleProj("ci-fail")
+	if err := reg.Add(p); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.scanOne(context.Background(), p); err != nil {
+		t.Errorf("scanOne should succeed with CI fallback, got: %v", err)
+	}
+	got, _ := reg.Get("ci-fail")
+	if got.CIStatus != project.CIStatusUnknown {
+		t.Errorf("CIStatus fallback: want Unknown, got %q", got.CIStatus)
+	}
+}
+
+// TestScanOne_RegistryGetFails covers the registry.Get failure path in scanOne.
+func TestScanOne_RegistryGetFails(t *testing.T) {
+	s, _, srv := newTestEnv(t, 0, 0, "success", false)
+	defer srv.Close()
+
+	// p is not registered → registry.Get("not-registered") → ErrNotFound
+	p := &project.Project{
+		Slug:        "not-registered",
+		DisplayName: "not-registered",
+		Repository:  "github.com/o/r",
+		Stage:       project.StageActive,
+	}
+	err := s.scanOne(context.Background(), p)
+	if err == nil || !strings.Contains(err.Error(), "registry.Get during scan") {
+		t.Errorf("expected registry.Get-during-scan error, got %v", err)
+	}
+}
+
+// ─── SecurityScanner error-path tests ────────────────────────
+// (mockScorecard and mockOSV are defined in security_test.go)
+
+// newSecurityReg returns a Scanner backed by a fresh registry.
+func newSecurityReg(t *testing.T) (*Scanner, *registry.Registry) {
+	t.Helper()
+	reg, err := registry.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(Config{Interval: 30 * time.Second, Registry: reg, Logger: logging.Discard()}), reg
+}
+
+// addActiveProject adds a project with all required fields to the registry.
+func addActiveProject(t *testing.T, reg *registry.Registry, slug, lang string) {
+	t.Helper()
+	p := &project.Project{
+		Slug:        slug,
+		DisplayName: slug,
+		Repository:  "github.com/o/r",
+		Language:    lang,
+		Stage:       project.StageActive,
+	}
+	if err := reg.Add(p); err != nil {
+		t.Fatalf("addActiveProject %s: %v", slug, err)
+	}
+}
+
+// TestSecurityScanner_StopChBranch exercises the stopCh case inside run().
+func TestSecurityScanner_StopChBranch(t *testing.T) {
+	s, _ := newSecurityReg(t)
+	ss := s.NewSecurityScanner(
+		nil,
+		&mockScorecard{scoreFor: map[string]*scorecard.Score{}},
+		24*time.Hour,
+	)
+	ss.Start(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		s.Stop() // closes stopCh → run() exits via stopCh case
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("SecurityScanner did not stop within 3s after Stop()")
+	}
+}
+
+// TestSecurityScanner_TickerBranch exercises the ticker.C case inside run().
+func TestSecurityScanner_TickerBranch(t *testing.T) {
+	s, _ := newSecurityReg(t)
+	ss := s.NewSecurityScanner(
+		nil,
+		&mockScorecard{scoreFor: map[string]*scorecard.Score{}},
+		10*time.Millisecond, // short interval → ticker fires quickly
+	)
+	ss.pause = 0
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	ss.Start(ctx)
+	<-ctx.Done()
+	s.Stop()
+}
+
+// TestSecurityScanner_RunOnce_ArchiveSkip covers the archived-project continue in runOnce.
+func TestSecurityScanner_RunOnce_ArchiveSkip(t *testing.T) {
+	s, reg := newSecurityReg(t)
+	sc := &mockScorecard{scoreFor: map[string]*scorecard.Score{}}
+	ss := s.NewSecurityScanner(nil, sc, time.Hour)
+	ss.pause = 0
+
+	// Must include DisplayName so registry.Add succeeds (Validate requires it).
+	arch := &project.Project{
+		Slug:        "arch",
+		DisplayName: "arch",
+		Repository:  "github.com/o/r",
+		Stage:       project.StageArchived,
+	}
+	if err := reg.Add(arch); err != nil {
+		t.Fatalf("add archived: %v", err)
+	}
+	ss.runOnce(context.Background())
+	if sc.calls != 0 {
+		t.Errorf("scorecard.Fetch should not be called for archived project, got %d calls", sc.calls)
+	}
+}
+
+// TestSecurityScanner_RunOnce_CtxCancelled covers ctx.Done() in runOnce's inner select.
+func TestSecurityScanner_RunOnce_CtxCancelled(t *testing.T) {
+	s, reg := newSecurityReg(t)
+	sc := &mockScorecard{scoreFor: map[string]*scorecard.Score{}}
+	ss := s.NewSecurityScanner(nil, sc, time.Hour)
+	ss.pause = 0
+
+	addActiveProject(t, reg, "active", "Go")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before runOnce → inner select fires ctx.Done() immediately
+	ss.runOnce(ctx) // must return quickly, not panic
+}
+
+// TestScanScorecard_EmptyRepository covers the p.Repository=="" guard in scanScorecard.
+func TestScanScorecard_EmptyRepository(t *testing.T) {
+	s, _ := newSecurityReg(t)
+	sc := &mockScorecard{scoreFor: map[string]*scorecard.Score{}}
+	ss := s.NewSecurityScanner(nil, sc, time.Hour)
+
+	p := &project.Project{Slug: "empty-repo", DisplayName: "empty-repo", Repository: ""}
+	if got := ss.scanScorecard(context.Background(), p); got {
+		t.Error("scanScorecard should return false when Repository is empty")
+	}
+}
+
+// TestScanScorecard_RegistryGetFails covers the registry.Get failure in scanScorecard.
+func TestScanScorecard_RegistryGetFails(t *testing.T) {
+	s, _ := newSecurityReg(t)
+	// scoreFor has a score for the repo, but the slug is not in the registry.
+	sc := &mockScorecard{
+		scoreFor: map[string]*scorecard.Score{
+			"github.com/o/r": {Score: 7.0},
+		},
+	}
+	ss := s.NewSecurityScanner(nil, sc, time.Hour)
+
+	// Slug "ghost" is not in the registry → Get inside scanScorecard fails.
+	p := &project.Project{Slug: "ghost", DisplayName: "ghost", Repository: "github.com/o/r"}
+	if got := ss.scanScorecard(context.Background(), p); got {
+		t.Error("scanScorecard should return false when registry.Get fails")
+	}
+}
+
+// TestScanVulns_NoEcosystem covers the ecosystem=="" early return in scanVulns.
+func TestScanVulns_NoEcosystem(t *testing.T) {
+	s, _ := newSecurityReg(t)
+	o := &mockOSV{} // must not be called
+	ss := s.NewSecurityScanner(o, nil, time.Hour)
+
+	// Language="" → LanguageToEcosystem("") → "" → return false immediately.
+	p := &project.Project{Slug: "no-eco", DisplayName: "no-eco", Repository: "github.com/o/r", Language: ""}
+	if got := ss.scanVulns(context.Background(), p); got {
+		t.Error("scanVulns should return false when ecosystem is empty")
+	}
+	if o.calls != 0 {
+		t.Errorf("osv.Query should not be called, got %d", o.calls)
+	}
+}
+
+// TestScanVulns_RegistryGetFails covers the registry.Get failure in scanVulns.
+func TestScanVulns_RegistryGetFails(t *testing.T) {
+	s, _ := newSecurityReg(t)
+	// Query returns no vulns, but "ghost-vuln" is not in the registry.
+	o := &mockOSV{vulnsFor: map[string][]osv.Vuln{}}
+	ss := s.NewSecurityScanner(o, nil, time.Hour)
+
+	p := &project.Project{Slug: "ghost-vuln", DisplayName: "ghost-vuln", Repository: "github.com/o/r", Language: "Go"}
+	if got := ss.scanVulns(context.Background(), p); got {
+		t.Error("scanVulns should return false when registry.Get fails")
+	}
+}
+
+// TestScanVulns_HighSeverityLog covers the critical+high warn log path in scanVulns.
+func TestScanVulns_HighSeverityLog(t *testing.T) {
+	s, reg := newSecurityReg(t)
+	o := &mockOSV{
+		vulnsFor: map[string][]osv.Vuln{
+			"Go|github.com/o/r": {
+				{ID: "CVE-2025-0001", Severity: osv.SeverityCritical},
+				{ID: "CVE-2025-0002", Severity: osv.SeverityHigh},
+			},
+		},
+	}
+	ss := s.NewSecurityScanner(o, nil, time.Hour)
+
+	addActiveProject(t, reg, "high-vuln", "Go")
+	p, _ := reg.Get("high-vuln")
+	if !ss.scanVulns(context.Background(), p) {
+		t.Error("scanVulns should return true on success")
+	}
+	got, _ := reg.Get("high-vuln")
+	if got.VulnCritical != 1 || got.VulnHigh != 1 {
+		t.Errorf("vuln counts: critical=%d high=%d, want 1,1", got.VulnCritical, got.VulnHigh)
+	}
+}
+
+// Suppress unused-import errors: errors is used in scanOne tests above.
+var _ = errors.New

@@ -343,3 +343,112 @@ func TestGet_ClonesSprint(t *testing.T) {
 		t.Errorf("Milestone mutation leaked: %q", got2.Sprint.Milestones[0].Title)
 	}
 }
+
+// TestNew_DirExistsAsFile covers the os.MkdirAll failure path in New (line 42-43).
+// os.MkdirAll returns ENOTDIR when the target path already exists as a regular file.
+func TestNew_DirExistsAsFile(t *testing.T) {
+	parent := t.TempDir()
+	filePath := filepath.Join(parent, "not-a-dir")
+	if err := os.WriteFile(filePath, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(filePath); err == nil {
+		t.Error("expected error when dir path already exists as a regular file")
+	}
+}
+
+// TestLoadAll_ReadDirFails covers the os.ReadDir error path in loadAll.
+// Directly constructs a Registry with a nonexistent dir and calls loadAll.
+func TestLoadAll_ReadDirFails(t *testing.T) {
+	r := &Registry{
+		dir:      "/nonexistent/registry/path/that/does/not/exist",
+		projects: make(map[string]*project.Project),
+	}
+	if err := r.loadAll(); err == nil {
+		t.Error("expected error for nonexistent registry dir")
+	}
+}
+
+// TestLoadAll_SkipsNonJSONAndSubdirs covers the continue branch in loadAll
+// that skips entries that are directories or lack a .json suffix.
+func TestLoadAll_SkipsNonJSONAndSubdirs(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "README.txt"), []byte("ignore me"), 0o600)
+	_ = os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
+	good := `{"slug":"ok","display_name":"OK","repository":"x/ok","stage":"active"}`
+	_ = os.WriteFile(filepath.Join(dir, "ok.json"), []byte(good), 0o600)
+	r, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, gerr := r.Get("ok"); gerr != nil {
+		t.Errorf("valid project should load: %v", gerr)
+	}
+	if r.Count()[project.StageActive] != 1 {
+		t.Errorf("expected 1 active project, got %v", r.Count())
+	}
+}
+
+// TestLoadProjectFile_ReadFileFails covers the os.ReadFile error path in loadProjectFile.
+func TestLoadProjectFile_ReadFileFails(t *testing.T) {
+	if _, err := loadProjectFile("/nonexistent/missing.json"); err == nil {
+		t.Error("expected error for nonexistent file")
+	}
+}
+
+// TestAdd_PersistFails covers the persist error path in Add (line 104-105).
+// Pre-creating the target .json path as a directory makes atomicfile.Write fail
+// because os.Rename cannot replace a directory with a regular file.
+func TestAdd_PersistFails(t *testing.T) {
+	dir := t.TempDir()
+	conflictPath := filepath.Join(dir, "conflict-slug.json")
+	if err := os.Mkdir(conflictPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(conflictPath) })
+	r, err := New(dir) // loadAll skips the dir entry, so no load error
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Add(sampleProject("conflict-slug")); err == nil {
+		t.Error("expected persist error when target path is a directory")
+	}
+}
+
+// TestDelete_RemoveFails covers the os.Remove non-ENOENT error path in Delete.
+// Replacing the project JSON file with a non-empty directory causes os.Remove
+// to fail with ENOTEMPTY, which is not treated as a not-found condition.
+func TestDelete_RemoveFails(t *testing.T) {
+	r, dir := freshRegistry(t)
+	if err := r.Add(sampleProject("del-fail")); err != nil {
+		t.Fatal(err)
+	}
+	jsonPath := filepath.Join(dir, "del-fail.json")
+	if err := os.Remove(jsonPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(jsonPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(jsonPath, "dummy"), nil, 0o600)
+	t.Cleanup(func() { _ = os.RemoveAll(jsonPath) })
+	if err := r.Delete("del-fail"); err == nil {
+		t.Error("expected error when json path is replaced by a non-empty directory")
+	}
+}
+
+// TestGet_ClonesDependsOn covers the DependsOn slice copy branch in cloneProject.
+func TestGet_ClonesDependsOn(t *testing.T) {
+	r, _ := freshRegistry(t)
+	p := sampleProject("dep-owner")
+	p.DependsOn = []string{"dep-a", "dep-b"}
+	if err := r.Add(p); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := r.Get("dep-owner")
+	got.DependsOn[0] = "MODIFIED"
+	got2, _ := r.Get("dep-owner")
+	if got2.DependsOn[0] != "dep-a" {
+		t.Errorf("DependsOn mutation leaked: %q", got2.DependsOn[0])
+	}
+}
