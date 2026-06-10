@@ -800,3 +800,221 @@ func TestAppend_DateRotation(t *testing.T) {
 		t.Errorf("expected ≥2 log files after rotation, got %d", jsonlCount)
 	}
 }
+
+// ─── tailState: non-existent path (ErrNotExist branch) ──────
+
+func TestTailState_NonExistentFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "ghost.jsonl")
+	h, n, err := tailState(p)
+	if err != nil {
+		t.Fatalf("non-existent file should return nil error: %v", err)
+	}
+	if h != "" || n != 0 {
+		t.Errorf("expected empty result, got (%q, %d)", h, n)
+	}
+}
+
+// ─── tailState: multi-line file (idx >= 0 branch) ───────────
+
+func TestTailState_MultiLineReopen(t *testing.T) {
+	dir := t.TempDir()
+	l, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = l.Append(Record{Kind: "first"})
+	_ = l.Append(Record{Kind: "second"})
+	savedPath := l.filePath
+	_ = l.Close()
+
+	// Reopen: tailState sees a 2-record file → idx >= 0 branch
+	l2, err := New(dir)
+	if err != nil {
+		t.Fatalf("New after 2 appends: %v", err)
+	}
+	defer l2.Close()
+	if l2.seq != 2 {
+		t.Errorf("seq = %d, want 2", l2.seq)
+	}
+	if l2.filePath != savedPath {
+		t.Errorf("filePath = %q, want %q", l2.filePath, savedPath)
+	}
+}
+
+// ─── hashMap: json.Marshal failure ──────────────────────────
+
+func TestHashMap_UnmarshalableType(t *testing.T) {
+	// channels cannot be JSON-marshalled → triggers the first error path
+	_, err := hashMap(map[string]any{"ch": make(chan int)})
+	if err == nil {
+		t.Error("expected error for unmarshalable type, got nil")
+	}
+}
+
+// ─── Verify: skips dirs and non-jsonl files ──────────────────
+
+func TestVerify_SkipsNonJSONL(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := New(dir)
+	_ = l.Append(Record{Kind: "x"})
+	_ = l.Close()
+
+	// Non-jsonl file and a directory — both should be silently skipped
+	_ = os.WriteFile(filepath.Join(dir, "README.txt"), []byte("ignore"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, "subdir.jsonl"), 0o755)
+
+	results, err := Verify(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result, got %d", len(results))
+	}
+	if !results[0].OK {
+		t.Errorf("expected OK result, got %+v", results[0])
+	}
+}
+
+// ─── Read: skips dirs and non-jsonl files ────────────────────
+
+func TestRead_SkipsNonJSONL(t *testing.T) {
+	dir := t.TempDir()
+	l, _ := New(dir)
+	_ = l.Append(Record{Kind: "good"})
+	_ = l.Close()
+
+	_ = os.WriteFile(filepath.Join(dir, "meta.txt"), []byte("ignore"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, "cache.jsonl"), 0o755)
+
+	recs, err := Read(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Errorf("expected 1 record, got %d", len(recs))
+	}
+}
+
+// ─── verifyFile: open failure via broken symlink ─────────────
+
+func TestVerify_OpenFails(t *testing.T) {
+	dir := t.TempDir()
+	badLink := filepath.Join(dir, "2000-01-01.jsonl")
+	if err := os.Symlink(filepath.Join(dir, "nowhere"), badLink); err != nil {
+		t.Skip("symlink not supported")
+	}
+	results, err := Verify(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].OK {
+		t.Errorf("expected 1 failed result, got %d ok=%v", len(results), len(results) > 0 && results[0].OK)
+	}
+	if results[0].Reason == "" {
+		t.Error("expected non-empty Reason for open failure")
+	}
+}
+
+// ─── Read: open failure via broken symlink ───────────────────
+
+func TestRead_OpenFails(t *testing.T) {
+	dir := t.TempDir()
+	// Symlink with a date earlier than any real file (sorts first)
+	badLink := filepath.Join(dir, "2000-01-01.jsonl")
+	if err := os.Symlink(filepath.Join(dir, "nowhere"), badLink); err != nil {
+		t.Skip("symlink not supported")
+	}
+	// Also add a valid record so we have something to skip
+	l, _ := New(dir)
+	_ = l.Append(Record{Kind: "after"})
+	_ = l.Close()
+
+	_, err := Read(dir, "")
+	if err == nil {
+		t.Error("expected error when a file cannot be opened")
+	}
+}
+
+// ─── Prune: ReadDir failure ───────────────────────────────────
+
+func TestPrune_ReadDirFails(t *testing.T) {
+	// Pass a regular file as dir — ReadDir returns ENOTDIR (not ErrNotExist)
+	f, err := os.CreateTemp(t.TempDir(), "audit-prune-block")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	_, pruneErr := Prune(f.Name(), 30)
+	if pruneErr == nil {
+		t.Error("expected error when dir is a regular file")
+	}
+}
+
+// ─── New: openCurrent fails (directory blocker) ──────────────
+
+func TestNew_OpenCurrentFails(t *testing.T) {
+	dir := t.TempDir()
+	today := time.Now().UTC().Format("2006-01-02")
+	// Block the .jsonl path with a directory — os.OpenFile(O_WRONLY) fails on a dir
+	blocker := filepath.Join(dir, today+".jsonl")
+	if err := os.MkdirAll(blocker, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := New(dir)
+	if err == nil {
+		t.Error("expected error when audit file path is occupied by a directory")
+	}
+}
+
+// ─── rotateLocked: rollback without chmod (directory blocker) ─
+
+func TestRotate_RollbackDirBlocker(t *testing.T) {
+	dir := t.TempDir()
+	l, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	_ = l.Append(Record{Kind: "before"})
+	prevDate := l.currentDate
+
+	// Block the new date's file path with a directory
+	newDate := "2099-12-31"
+	_ = os.MkdirAll(filepath.Join(dir, newDate+".jsonl"), 0o755)
+
+	l.mu.Lock()
+	err = l.rotateLocked(newDate)
+	l.mu.Unlock()
+	if err == nil {
+		t.Fatal("expected error when rotation target is blocked by a directory")
+	}
+	if l.currentDate != prevDate {
+		t.Errorf("currentDate = %q after rollback, want %q", l.currentDate, prevDate)
+	}
+}
+
+// ─── Verify / Read: ReadDir failure (file-as-dir) ────────────
+
+func TestVerify_ReadDirFails(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "audit-block")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	_, err = Verify(f.Name())
+	if err == nil {
+		t.Error("expected error when dir arg is a regular file")
+	}
+}
+
+func TestRead_ReadDirFails(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "audit-block")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	_, err = Read(f.Name(), "")
+	if err == nil {
+		t.Error("expected error when dir arg is a regular file")
+	}
+}
