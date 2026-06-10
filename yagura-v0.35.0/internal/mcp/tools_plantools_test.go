@@ -460,6 +460,87 @@ func TestAlertFix_NilStore(t *testing.T) {
 	}
 }
 
+func TestAlertFix_CustomThresholds(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	store := newAlertFixStore(t)
+	p := sampleProject("th", func(p *project.Project) {
+		p.OpenIssues = 25
+		p.ScorecardScore = 4.0
+	})
+	_ = d.Registry.Add(p)
+
+	tool := buildAlertFixTool(d, cache, store)
+	// All three overrides exercised in one call: stale_days, scorecard_min,
+	// open_issues_high. With open_issues_high=20, 25 issues should alert; with
+	// the default (50) it would not.
+	r := mustCall(t, tool, map[string]any{
+		"stale_days":       7,
+		"scorecard_min":    5.0,
+		"open_issues_high": 20,
+	}).(map[string]any)
+	if r["total"].(int) == 0 {
+		t.Error("lowered thresholds should produce alerts for 25 issues / scorecard 4.0")
+	}
+}
+
+func TestAlertFix_PlanMdPath(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	store := newAlertFixStore(t)
+	dir := t.TempDir()
+	// A Plan.md missing required sections → PlanIsHealthy=false → plan alert.
+	if err := os.WriteFile(filepath.Join(dir, "Plan.md"), []byte("# just a title\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := sampleProject("planned", func(p *project.Project) {
+		p.LocalPath = dir
+	})
+	_ = d.Registry.Add(p)
+
+	tool := buildAlertFixTool(d, cache, store)
+	r := mustCall(t, tool, struct{}{}).(map[string]any)
+	bySource := r["by_source"].(map[alertfix.Source]int)
+	if bySource[alertfix.SourcePlan] == 0 {
+		t.Errorf("unhealthy Plan.md should produce a plan-source alert, got %v", bySource)
+	}
+}
+
+func TestAlertFix_FilteredInactive(t *testing.T) {
+	d := newDeps(t)
+	cache := dedupe.New(0, 0)
+	store := newAlertFixStore(t)
+	p := sampleProject("res", func(p *project.Project) {
+		p.VulnCritical = 1
+	})
+	_ = d.Registry.Add(p)
+
+	tool := buildAlertFixTool(d, cache, store)
+	// First sweep: capture an alert ID.
+	r1 := mustCall(t, tool, struct{}{}).(map[string]any)
+	alerts := r1["alerts"].([]alertfix.Alert)
+	if len(alerts) == 0 {
+		t.Fatal("expected at least one alert to resolve")
+	}
+	if err := store.Resolve(alerts[0].ID, "fixed in test"); err != nil {
+		t.Fatal(err)
+	}
+	// Second sweep: the resolved alert is filtered → filtered_inactive appears.
+	r2 := mustCall(t, tool, struct{}{}).(map[string]any)
+	fi, ok := r2["filtered_inactive"]
+	if !ok {
+		t.Fatal("filtered_inactive should be present after resolving an alert")
+	}
+	if fi.(int) < 1 {
+		t.Errorf("filtered_inactive = %v, want >= 1", fi)
+	}
+	// include_inactive=true skips the filter → no filtered_inactive key.
+	r3 := mustCall(t, tool, map[string]any{"include_inactive": true}).(map[string]any)
+	if _, has := r3["filtered_inactive"]; has {
+		t.Error("include_inactive=true should bypass the lifecycle filter")
+	}
+}
+
 // ─── yagura_release_radar ────────────────────────────────────
 
 func TestReleaseRadar_EmptyRegistry(t *testing.T) {
@@ -705,6 +786,62 @@ func TestProgressFile_InvalidJSON(t *testing.T) {
 	_, err := tool.Handler(nil, b)
 	if err == nil {
 		t.Error("invalid JSON args should return error")
+	}
+}
+
+func TestProgressFile_WithHookActivity(t *testing.T) {
+	// serverWithHooks feeds Bash/Read tool events for "breeze" — the
+	// HookReceiver branch (sessions, error count, top tools) must run.
+	s := serverWithHooks(t)
+	d := newDeps(t)
+	_ = d.Registry.Add(sampleProject("breeze"))
+	tool := buildProgressFileTool(d, s)
+	r := mustCall(t, tool, map[string]any{"slug": "breeze"}).(map[string]any)
+	body, _ := r["body"].(string)
+	if !strings.Contains(body, "Bash") {
+		t.Errorf("body should list top tool Bash from hook activity:\n%s", body)
+	}
+}
+
+func TestProgressFile_WithActiveAlert(t *testing.T) {
+	s := newServerForProgressTest(t)
+	store := newAlertFixStore(t)
+	// Resolve→Reopen leaves the alert in StatusActive in Snapshot().
+	if err := store.Resolve("vuln:demo:critical", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Reopen("vuln:demo:critical", "back"); err != nil {
+		t.Fatal(err)
+	}
+	s.SetAlertStore(store)
+	d := newDeps(t)
+	_ = d.Registry.Add(sampleProject("alerted"))
+	tool := buildProgressFileTool(d, s)
+	r := mustCall(t, tool, map[string]any{"slug": "alerted"}).(map[string]any)
+	body, _ := r["body"].(string)
+	if !strings.Contains(body, "vuln:demo:critical") {
+		t.Errorf("body should mention the active alert ID:\n%s", body)
+	}
+}
+
+func TestProgressFile_WriteFails(t *testing.T) {
+	dir := t.TempDir()
+	writePlanMd(t, dir)
+	// Block the write target: claude-progress.txt as a non-empty directory.
+	target := filepath.Join(dir, "claude-progress.txt")
+	if err := os.MkdirAll(filepath.Join(target, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := newDeps(t)
+	s := newServerForProgressTest(t)
+	_ = d.Registry.Add(sampleProject("wfail", func(p *project.Project) { p.LocalPath = dir }))
+	tool := buildProgressFileTool(d, s)
+	_, err := callErr(t, tool, map[string]any{"slug": "wfail", "write": true})
+	if err == nil {
+		t.Fatal("expected write_failed when target path is a directory")
+	}
+	if te, ok := err.(*ToolError); !ok || te.Code != "write_failed" {
+		t.Errorf("expected ToolError write_failed, got %v", err)
 	}
 }
 

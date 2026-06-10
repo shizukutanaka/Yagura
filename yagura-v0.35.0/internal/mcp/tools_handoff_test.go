@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -334,5 +336,137 @@ func TestUsageSummary_InvalidAgent(t *testing.T) {
 	_, err := callErr(t, tool, map[string]any{"agent": "gpt4"})
 	if err == nil {
 		t.Error("invalid agent should return error")
+	}
+}
+
+// ─── handoff/session error + real-launch branches ────────────
+
+// failingHandoffStore fails Save/Load to drive the save_failed/load_failed branches.
+type failingHandoffStore struct{}
+
+func (failingHandoffStore) Save(*handoff.Context) error { return errors.New("disk full") }
+func (failingHandoffStore) Load() (*handoff.Context, error) {
+	return nil, errors.New("corrupt file")
+}
+func (failingHandoffStore) Clear() error { return nil }
+func (failingHandoffStore) Path() string { return "/dev/null/handoff.json" }
+
+// failingLauncher fails every launch to drive the launch_failed branch.
+type failingLauncher struct{}
+
+func (failingLauncher) LaunchWindsurf(context.Context, string) error {
+	return errors.New("windsurf not installed")
+}
+func (failingLauncher) LaunchClaudeCode(context.Context, string) error {
+	return errors.New("claude not installed")
+}
+func (failingLauncher) LastCommand() (string, []string) { return "", nil }
+
+func TestSessionSave_SaveFails(t *testing.T) {
+	d := handoffDeps(t)
+	d.HandoffStore = failingHandoffStore{}
+	tool := buildSessionSaveTool(d)
+	_, err := callErr(t, tool, map[string]any{"workspace": "/ws"})
+	if err == nil {
+		t.Fatal("expected save_failed error")
+	}
+	if te, ok := err.(*ToolError); !ok || te.Code != "save_failed" {
+		t.Errorf("expected ToolError save_failed, got %v", err)
+	}
+}
+
+func TestSessionSave_WorkspaceDefaultsToRoot(t *testing.T) {
+	d := handoffDeps(t)
+	tool := buildSessionSaveTool(d)
+	// No workspace in args → falls back to d.WorkspaceRoot.
+	r := mustCall(t, tool, map[string]any{"saved_by": "claude_code"}).(map[string]any)
+	if r["workspace"] != d.WorkspaceRoot {
+		t.Errorf("workspace = %v, want WorkspaceRoot %q", r["workspace"], d.WorkspaceRoot)
+	}
+}
+
+func TestSessionSave_InvalidJSON(t *testing.T) {
+	d := handoffDeps(t)
+	tool := buildSessionSaveTool(d)
+	_, err := tool.Handler(context.Background(), []byte("{not json"))
+	if err == nil {
+		t.Error("expected invalid_input error for malformed JSON")
+	}
+}
+
+func TestSessionLoad_LoadFails(t *testing.T) {
+	d := handoffDeps(t)
+	d.HandoffStore = failingHandoffStore{}
+	tool := buildSessionLoadTool(d)
+	_, err := callErr(t, tool, struct{}{})
+	if err == nil {
+		t.Fatal("expected load_failed error for non-ErrNotSaved failure")
+	}
+	if te, ok := err.(*ToolError); !ok || te.Code != "load_failed" {
+		t.Errorf("expected ToolError load_failed, got %v", err)
+	}
+}
+
+func TestHandoff_SaveFails(t *testing.T) {
+	d := handoffDeps(t)
+	d.HandoffStore = failingHandoffStore{}
+	tool := buildHandoffTool(d)
+	_, err := callErr(t, tool, map[string]any{"target": "windsurf", "dry_run": true})
+	if err == nil {
+		t.Fatal("expected save_failed error")
+	}
+	if te, ok := err.(*ToolError); !ok || te.Code != "save_failed" {
+		t.Errorf("expected ToolError save_failed, got %v", err)
+	}
+}
+
+func TestHandoff_LaunchFails(t *testing.T) {
+	d := handoffDeps(t)
+	d.AgentLauncher = failingLauncher{}
+	tool := buildHandoffTool(d)
+	_, err := callErr(t, tool, map[string]any{"target": "windsurf"}) // dry_run=false
+	if err == nil {
+		t.Fatal("expected launch_failed error")
+	}
+	if te, ok := err.(*ToolError); !ok || te.Code != "launch_failed" {
+		t.Errorf("expected ToolError launch_failed, got %v", err)
+	}
+}
+
+func TestHandoff_RealLaunch_WindsurfDryLauncher(t *testing.T) {
+	d := handoffDeps(t)
+	// Launcher-level DryRun: the tool's non-dry-run path runs (handoff_complete
+	// =true, LaunchWindsurf called) but no process is actually spawned.
+	d.AgentLauncher = &agentlauncher.Launcher{DryRun: true}
+	tool := buildHandoffTool(d)
+	r := mustCall(t, tool, map[string]any{"target": "windsurf"}).(map[string]any)
+	if r["handoff_complete"] != true {
+		t.Errorf("handoff_complete = %v, want true", r["handoff_complete"])
+	}
+	cmd := r["launch_command"].([]string)
+	if len(cmd) == 0 || cmd[0] == "" {
+		t.Errorf("launch_command should record the assembled command, got %v", cmd)
+	}
+}
+
+func TestHandoff_RealLaunch_ClaudeCodeDryLauncher(t *testing.T) {
+	d := handoffDeps(t)
+	d.AgentLauncher = &agentlauncher.Launcher{DryRun: true}
+	tool := buildHandoffTool(d)
+	r := mustCall(t, tool, map[string]any{"target": "claude_code"}).(map[string]any)
+	if r["handoff_complete"] != true {
+		t.Errorf("handoff_complete = %v, want true", r["handoff_complete"])
+	}
+	if r["source_agent"] != "windsurf" {
+		t.Errorf("source_agent = %v, want windsurf", r["source_agent"])
+	}
+}
+
+func TestHandoff_InvalidJSON(t *testing.T) {
+	d := handoffDeps(t)
+	tool := buildHandoffTool(d)
+	_, err := tool.Handler(context.Background(), []byte("{bad"))
+	if err == nil {
+		t.Error("expected invalid_input error for malformed JSON")
 	}
 }
