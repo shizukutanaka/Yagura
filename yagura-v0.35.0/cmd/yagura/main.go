@@ -152,8 +152,9 @@ CLI direct mode (no MCP client required):
   yagura inject-scan [path]                Scan untrusted content for indirect prompt injection (--strict)
   yagura cc-security [dir]                 Audit a project's Claude Code security posture (--min-score for CI)
   yagura claudemd-audit [file]             Audit CLAUDE.md structure (4 sections, instruction budget)
-  yagura ai-verify [dir]                   AI code risk audit (auth/billing/data/crypto/secret; 2x AI-zone multiplier)
-  yagura quality-check [dir]               Code lint: prohibited patterns, TODO/FIXME, ts-ignore, as any
+  yagura ai-verify [--dir .]               AI code risk audit (auth/billing/data/crypto/secret; 2x AI-zone multiplier)
+  yagura quality-check [--dir .]           Code lint: prohibited patterns, TODO/FIXME, ts-ignore, as any
+  yagura test-audit [--dir .]              Source-test coverage detection (Go/TS/JS/Python/Rust/Java; --untested-only)
   Add --json to any of the above for machine-readable output.
   ai-verify/quality-check accept --rules-file to load project-specific rules from .yagura/aiverify.json or .yagura/quality.json.
   pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).

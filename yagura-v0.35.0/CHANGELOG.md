@@ -47,6 +47,13 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   `qualitycheck.RuleSpec` 形式でカスタムルールを自動ロード(配列 JSON)。
   test-first: 4 ケース先に固定→ 実装で緑。
 
+- **`yagura test-audit [--dir .] [--json] [--untested-only]`**
+  同じ walk 機構で `testcoverage.Audit`(純関数、I/O / token 不要)を実行し
+  source-test 対応 + coverage ratio を返す。`yagura_test_audit` MCP tool には
+  CLI が欠けていた(v0.35 の CLI direct mode で ai_verify / quality_check と並ぶ
+  3 つ目の quality-gate tool だが取りこぼし)。`--untested-only` で test なし
+  source のみ列挙(CI gate 向け)。test-first: 3 ケース先に固定→ 実装で緑。
+
 - **Roadmap CLAUDE.md 更新**: #2(Scanner ↔ alert_fix periodic loop、v0.35 で完了)と
   #5(Alert lifecycle、v0.30 で完了)を ✅ に更新。両者は実装済みだったが
   マークが付いていなかった。

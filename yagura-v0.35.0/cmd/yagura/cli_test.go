@@ -1554,3 +1554,63 @@ func TestCLI_QualityCheck_SummaryOnly(t *testing.T) {
 		t.Error("--summary-only should not include per-finding table header")
 	}
 }
+
+// ─── test-audit (v0.36.0) ────────────────────────────────────
+
+func TestCLI_TestAudit_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	code, out, errs := runCLICapture(t, "test-audit", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("test-audit empty dir: code=%d stderr=%q", code, errs)
+	}
+	if !strings.Contains(out, "coverage_ratio:") {
+		t.Errorf("expected coverage_ratio summary line, got:\n%s", out)
+	}
+}
+
+// TestCLI_TestAudit_JSON plants a source file with a matching test and confirms
+// the JSON shows full coverage.
+func TestCLI_TestAudit_JSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "svc.go"), []byte("package svc\nfunc Do() {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "svc_test.go"), []byte("package svc\nimport \"testing\"\nfunc TestDo(t *testing.T){}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "test-audit", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("test-audit --json: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if resp["coverage_ratio"] == nil {
+		t.Error("JSON response missing coverage_ratio")
+	}
+	if cr, ok := resp["coverage_ratio"].(float64); !ok || cr != 1.0 {
+		t.Errorf("expected coverage_ratio 1.0 for fully-tested source, got %v", resp["coverage_ratio"])
+	}
+}
+
+// TestCLI_TestAudit_UntestedOnly lists only sources without a matching test.
+func TestCLI_TestAudit_UntestedOnly(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tested.go"), []byte("package p\nfunc A() {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tested_test.go"), []byte("package p\nimport \"testing\"\nfunc TestA(t *testing.T){}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "orphan.go"), []byte("package p\nfunc B() {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "test-audit", "--dir", dir, "--untested-only")
+	if code != 0 {
+		t.Fatalf("test-audit --untested-only: code=%d stderr=%q", code, errs)
+	}
+	if !strings.Contains(out, "orphan.go") {
+		t.Errorf("untested-only should list orphan.go, got:\n%s", out)
+	}
+}

@@ -29,6 +29,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
+	"github.com/shizukutanaka/yagura/internal/testcoverage"
 )
 
 // emitJSON は v を indent 付き JSON + 改行で書く。
@@ -678,4 +679,43 @@ func humanQualityCheck(w io.Writer, res qualitycheck.Result, summaryOnly bool) {
 			f.Severity, f.File, f.Line, f.RuleID, f.Description)
 	}
 	_ = tw.Flush()
+}
+
+// ─── test-audit (v0.36.0) ────────────────────────────────────
+
+func humanTestAudit(w io.Writer, res testcoverage.AuditResult, untestedOnly bool) {
+	fmt.Fprintf(w, "files_scanned: %d  source_files: %d  test_files: %d\n",
+		res.FilesScanned, res.SourceFiles, res.TestFiles)
+	fmt.Fprintf(w, "sources_with_test: %d  sources_no_test: %d  coverage_ratio: %.2f\n",
+		res.SourcesWithTest, res.SourcesNoTest, res.CoverageRatio)
+
+	if untestedOnly {
+		if len(res.UntestedFiles) == 0 {
+			fmt.Fprintln(w, "no untested sources")
+			return
+		}
+		fmt.Fprintln(w, "untested sources:")
+		for _, p := range res.UntestedFiles {
+			fmt.Fprintf(w, "  %s\n", p)
+		}
+		return
+	}
+
+	if len(res.ByLanguage) > 0 {
+		langs := make([]string, 0, len(res.ByLanguage))
+		for l := range res.ByLanguage {
+			langs = append(langs, l)
+		}
+		sort.Strings(langs)
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "LANGUAGE\tSOURCES\tTESTS\tWITH_TEST\tCOVERAGE")
+		for _, l := range langs {
+			s := res.ByLanguage[l]
+			fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%.2f\n", l, s.Sources, s.Tests, s.WithTest, s.CoverageRatio)
+		}
+		_ = tw.Flush()
+	}
+	if len(res.UntestedFiles) > 0 {
+		fmt.Fprintf(w, "untested: %s\n", strings.Join(res.UntestedFiles, ", "))
+	}
 }

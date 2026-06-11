@@ -52,6 +52,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/registry"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
+	"github.com/shizukutanaka/yagura/internal/testcoverage"
 	"github.com/shizukutanaka/yagura/internal/vex"
 )
 
@@ -73,7 +74,7 @@ var cliVerbs = map[string]bool{
 	"mcp-audit": true, "vex-audit": true, "self-improve-history": true,
 	"path-policy": true, "inject-scan": true, "cc-security": true,
 	"claudemd-audit": true,
-	"ai-verify": true, "quality-check": true,
+	"ai-verify": true, "quality-check": true, "test-audit": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -132,6 +133,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliAIVerify(args, stdout, stderr)
 	case "quality-check":
 		err = cliQualityCheck(args, stdout, stderr)
+	case "test-audit":
+		err = cliTestAudit(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -1670,6 +1673,33 @@ func cliQualityCheck(args []string, stdout, stderr io.Writer) error {
 		return emitJSON(stdout, res)
 	}
 	humanQualityCheck(stdout, res, *summaryOnly)
+	return nil
+}
+
+// ─── test-audit (v0.36.0) ────────────────────────────────────
+
+// cliTestAudit は `yagura test-audit --dir .` を処理する。
+// dir を再帰 walk して source-test 対応を検出し、coverage ratio を返す。
+// testcoverage.Audit は純関数(I/O / token 不要)。
+func cliTestAudit(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("test-audit", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively")
+	untestedOnly := fset.Bool("untested-only", false, "list only sources without a matching test")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	files, err := readSourceFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("read source files: %w", err)
+	}
+
+	res := testcoverage.Audit(files)
+	if *jsonOut {
+		return emitJSON(stdout, res)
+	}
+	humanTestAudit(stdout, res, *untestedOnly)
 	return nil
 }
 
