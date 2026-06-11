@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
+	"github.com/shizukutanaka/yagura/internal/alertfix"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/config"
@@ -44,6 +45,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/github"
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/injectscan"
+	"github.com/shizukutanaka/yagura/internal/mcp"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/project"
@@ -75,6 +77,7 @@ var cliVerbs = map[string]bool{
 	"path-policy": true, "inject-scan": true, "cc-security": true,
 	"claudemd-audit": true,
 	"ai-verify": true, "quality-check": true, "test-audit": true,
+	"alert-fix": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -135,6 +138,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliQualityCheck(args, stdout, stderr)
 	case "test-audit":
 		err = cliTestAudit(args, stdout, stderr)
+	case "alert-fix":
+		err = cliAlertFix(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -1701,6 +1706,125 @@ func cliTestAudit(args []string, stdout, stderr io.Writer) error {
 	}
 	humanTestAudit(stdout, res, *untestedOnly)
 	return nil
+}
+
+// ─── alert-fix (v0.36.0) ─────────────────────────────────────
+
+// cliAlertFix は `yagura alert-fix` を処理する。registry の sensor data に対して
+// portfolio 全体の health sweep を実行し、actionable alert を返す。token 不要
+// (registry 読込のみ)。daemon の AfterScan health sweep と同じ rule を使う。
+//
+// 注: daemon の sweep 同様、Plan.md enrichment は行わない(sensor-only、disk I/O なし)。
+// Plan.md を含む richer な評価は MCP `yagura_alert_fix` を使う。
+func cliAlertFix(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("alert-fix", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	slug := fset.String("slug", "", "evaluate a single project (default: whole portfolio)")
+	severityMin := fset.String("severity-min", "", "drop alerts below this severity (critical/high/medium/low)")
+	staleDays := fset.Int("stale-days", 0, "override stale threshold in days (0 = default 30)")
+	scorecardMin := fset.Float64("scorecard-min", 0, "override Scorecard alert threshold (0 = default 5.0)")
+	openIssuesHigh := fset.Int("open-issues-high", 0, "override open-issues alert threshold (0 = default 20)")
+	includeInactive := fset.Bool("include-inactive", false, "include resolved/snoozed alerts (default: filtered out)")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return err
+	}
+
+	var projects []*project.Project
+	if *slug != "" {
+		p, gerr := reg.Get(*slug)
+		if gerr != nil {
+			return fmt.Errorf("project %q not registered", *slug)
+		}
+		projects = []*project.Project{p}
+	} else {
+		projects = reg.List()
+	}
+
+	th := alertfix.DefaultThresholds()
+	if *staleDays > 0 {
+		th.StaleDays = *staleDays
+	}
+	if *scorecardMin > 0 {
+		th.ScorecardMin = *scorecardMin
+	}
+	if *openIssuesHigh > 0 {
+		th.OpenIssuesHigh = *openIssuesHigh
+	}
+
+	snaps := make([]alertfix.ProjectSnapshot, 0, len(projects))
+	for _, p := range projects {
+		snaps = append(snaps, mcp.ProjectToSnapshot(*p))
+	}
+	report := alertfix.EvaluateAll(snaps, th)
+
+	if *severityMin != "" {
+		report = filterReportBySeverity(report, *severityMin)
+	}
+
+	// Lifecycle filter: exclude resolved/snoozed alerts (same store the daemon and
+	// yagura_alert_fix use) unless --include-inactive. Best-effort: a load failure
+	// just means no alerts are filtered.
+	if !*includeInactive {
+		if sd, sderr := config.ResolveStateDir(); sderr == nil {
+			statePath := filepath.Join(sd, "alert_state.jsonl")
+			if store, serr := alertfix.NewStore(statePath); serr == nil {
+				report = store.FilterReport(report)
+			} else {
+				fmt.Fprintf(stderr, "yagura: warning: alert lifecycle unavailable: %v\n", serr)
+			}
+		}
+	}
+
+	if *jsonOut {
+		return emitJSON(stdout, map[string]any{
+			"alerts":           report.Alerts,
+			"total":            report.Total,
+			"by_severity":      report.BySeverity,
+			"by_source":        report.BySource,
+			"by_project":       report.ByProject,
+			"projects_scanned": report.ProjectsScanned,
+			"has_critical":     report.HasCritical,
+			"summary":          report.Summary(),
+		})
+	}
+	humanAlertFix(stdout, report)
+	return nil
+}
+
+// filterReportBySeverity は severity_min 以上の alert のみ残し集計を再計算する。
+// mcp.filterBySeverity と同じ rank だが、Total だけでなく by_* も再計算する。
+func filterReportBySeverity(r alertfix.Report, min string) alertfix.Report {
+	rank := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3}
+	maxRank, ok := rank[strings.ToLower(min)]
+	if !ok {
+		return r
+	}
+	kept := make([]alertfix.Alert, 0, len(r.Alerts))
+	for _, a := range r.Alerts {
+		if rank[string(a.Severity)] <= maxRank {
+			kept = append(kept, a)
+		}
+	}
+	r.Alerts = kept
+	r.Total = len(kept)
+	r.BySeverity = map[alertfix.Severity]int{}
+	r.BySource = map[alertfix.Source]int{}
+	r.ByProject = map[string]int{}
+	r.HasCritical = false
+	for _, a := range kept {
+		r.BySeverity[a.Severity]++
+		r.BySource[a.Source]++
+		r.ByProject[a.Project]++
+		if a.Severity == alertfix.SevCritical {
+			r.HasCritical = true
+		}
+	}
+	return r
 }
 
 // readSourceFiles は dir を再帰的に走査し、Go/TS/JS/Python/Rust/Java の

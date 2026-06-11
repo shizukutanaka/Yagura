@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/config"
@@ -1612,5 +1613,89 @@ func TestCLI_TestAudit_UntestedOnly(t *testing.T) {
 	}
 	if !strings.Contains(out, "orphan.go") {
 		t.Errorf("untested-only should list orphan.go, got:\n%s", out)
+	}
+}
+
+// ─── alert-fix (v0.36.0) ─────────────────────────────────────
+
+// writeProjectJSON writes a project record directly into the registry's projects
+// dir so tests can seed sensor fields (vuln_critical, latest_activity, …) that
+// the manual-metadata-only register/update CLI verbs intentionally cannot set.
+func writeProjectJSON(t *testing.T, stateDir, slug, jsonBody string) {
+	t.Helper()
+	pd := config.ProjectsDirFor(stateDir)
+	if err := os.MkdirAll(pd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pd, slug+".json"), []byte(jsonBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCLI_AlertFix_EmptyRegistry(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, out, errs := runCLICapture(t, "alert-fix")
+	if code != 0 {
+		t.Fatalf("alert-fix empty registry: code=%d stderr=%q", code, errs)
+	}
+	if !strings.Contains(out, "healthy") && !strings.Contains(out, "0 alerts") {
+		t.Errorf("empty registry should report healthy/0 alerts, got:\n%s", out)
+	}
+}
+
+// TestCLI_AlertFix_CriticalVuln seeds a project with critical vulns and expects a
+// critical alert in the report.
+func TestCLI_AlertFix_CriticalVuln(t *testing.T) {
+	sd := t.TempDir()
+	t.Setenv("YAGURA_STATE_DIR", sd)
+	writeProjectJSON(t, sd, "vulnerable",
+		`{"slug":"vulnerable","display_name":"Vuln","repository":"o/vuln","stage":"active","priority":1,"vuln_critical":3}`)
+
+	code, out, errs := runCLICapture(t, "alert-fix", "--json")
+	if code != 0 {
+		t.Fatalf("alert-fix --json: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if hc, _ := resp["has_critical"].(bool); !hc {
+		t.Errorf("expected has_critical=true for a project with vuln_critical=3, got %v", resp["has_critical"])
+	}
+}
+
+// TestCLI_AlertFix_SeverityMin filters out low-severity alerts.
+func TestCLI_AlertFix_SeverityMin(t *testing.T) {
+	sd := t.TempDir()
+	t.Setenv("YAGURA_STATE_DIR", sd)
+	// A project that is only "stale" (low severity) — old activity, no vulns.
+	old := time.Now().AddDate(0, 0, -90).UTC().Format(time.RFC3339)
+	writeProjectJSON(t, sd, "stale",
+		`{"slug":"stale","display_name":"Stale","repository":"o/stale","stage":"active","priority":1,"latest_activity":"`+old+`"}`)
+
+	// Without filter: should surface the low-severity stale alert.
+	code, out, _ := runCLICapture(t, "alert-fix", "--json")
+	if code != 0 {
+		t.Fatalf("alert-fix: code=%d", code)
+	}
+	var base map[string]any
+	if err := json.Unmarshal([]byte(out), &base); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if total, _ := base["total"].(float64); total < 1 {
+		t.Fatalf("expected at least one alert for a 90-day-stale project, got %v", base["total"])
+	}
+
+	// With severity-min=high: the low stale alert is filtered out.
+	code, out, _ = runCLICapture(t, "alert-fix", "--json", "--severity-min", "high")
+	if code != 0 {
+		t.Fatalf("alert-fix --severity-min high: code=%d", code)
+	}
+	var filtered map[string]any
+	if err := json.Unmarshal([]byte(out), &filtered); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if total, _ := filtered["total"].(float64); total != 0 {
+		t.Errorf("severity-min=high should filter out the low stale alert, got total=%v", filtered["total"])
 	}
 }

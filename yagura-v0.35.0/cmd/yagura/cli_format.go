@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
+	"github.com/shizukutanaka/yagura/internal/alertfix"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
@@ -718,4 +719,20 @@ func humanTestAudit(w io.Writer, res testcoverage.AuditResult, untestedOnly bool
 	if len(res.UntestedFiles) > 0 {
 		fmt.Fprintf(w, "untested: %s\n", strings.Join(res.UntestedFiles, ", "))
 	}
+}
+
+// ─── alert-fix (v0.36.0) ─────────────────────────────────────
+
+func humanAlertFix(w io.Writer, r alertfix.Report) {
+	fmt.Fprintln(w, r.Summary())
+	if r.Total == 0 {
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tPROJECT\tSOURCE\tTITLE\tSUGGESTED_TOOL")
+	for _, a := range r.Alerts {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			a.Severity, a.Project, a.Source, a.Title, dash(a.SuggestedTool))
+	}
+	_ = tw.Flush()
 }

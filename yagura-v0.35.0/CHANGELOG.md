@@ -54,6 +54,19 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   3 つ目の quality-gate tool だが取りこぼし)。`--untested-only` で test なし
   source のみ列挙(CI gate 向け)。test-first: 3 ケース先に固定→ 実装で緑。
 
+- **`yagura alert-fix [--slug] [--severity-min] [--stale-days] [--scorecard-min] [--open-issues-high] [--include-inactive] [--json]`**
+  registry の sensor data に対して portfolio 全体の health sweep を実行し、
+  actionable alert(vuln / CI / visibility / stale / scorecard / open issues)を
+  返す。token 不要(registry 読込のみ)。daemon の AfterScan health sweep および
+  MCP `yagura_alert_fix` と同じ `alertfix.EvaluateAll` rule を使う
+  (`mcp.ProjectToSnapshot` で single source of truth の field 抽出)。
+  resolved/snoozed alert は `{state_dir}/alert_state.jsonl` の lifecycle store で
+  既定除外(`--include-inactive` で全件表示)。`yagura_alert_fix` MCP tool には
+  CLI が欠けていた — これで cron / CI から MCP client なしで portfolio health を
+  チェックできる。Plan.md enrichment は daemon sweep 同様 skip(sensor-only)。
+  test-first: 3 ケース(empty registry / critical vuln / severity-min filter)を
+  先に固定→ 実装で緑。
+
 - **Roadmap CLAUDE.md 更新**: #2(Scanner ↔ alert_fix periodic loop、v0.35 で完了)と
   #5(Alert lifecycle、v0.30 で完了)を ✅ に更新。両者は実装済みだったが
   マークが付いていなかった。
