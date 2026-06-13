@@ -519,6 +519,7 @@ func cliSecretScan(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fs.Bool("json", false, "JSON output")
 	slug := fs.String("slug", "", "scan only this project (default: all non-archived)")
 	minSev := fs.String("min-severity", "", "LOW/MEDIUM/HIGH/CRITICAL")
+	rulesFile := fs.String("rules-file", "", "path to custom rules JSON (default: auto-detect .yagura/secretscan.json)")
 	if err := fs.Parse(args); err != nil {
 		return errUsage
 	}
@@ -547,7 +548,29 @@ func cliSecretScan(args []string, stdout, stderr io.Writer) error {
 	for _, p := range toScan {
 		items = append(items, projectScanItems(p)...)
 	}
-	result := secretscan.New().ScanBatch(items)
+
+	// Custom rules: explicit --rules-file or auto-detect ./.yagura/secretscan.json.
+	scanner := secretscan.New()
+	rf := *rulesFile
+	if rf == "" {
+		candidate := filepath.Join(".yagura", "secretscan.json")
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			rf = candidate
+		}
+	}
+	if rf != "" {
+		cfg, loadErr := secretscan.LoadUserConfig(rf)
+		if loadErr != nil {
+			return fmt.Errorf("custom rules: %w", loadErr)
+		}
+		rules, applyErr := cfg.Apply(secretscan.DefaultRules())
+		if applyErr != nil {
+			return fmt.Errorf("apply custom rules: %w", applyErr)
+		}
+		scanner = secretscan.NewWithRules(rules)
+	}
+
+	result := scanner.ScanBatch(items)
 	if *minSev != "" {
 		m := strings.ToUpper(*minSev)
 		if m != "LOW" && m != "MEDIUM" && m != "HIGH" && m != "CRITICAL" {

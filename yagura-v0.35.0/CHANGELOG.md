@@ -6,10 +6,11 @@ All notable changes to Yagura are documented here. Format follows
 
 ## [v0.36.0] - 2026-06-10
 
-### Theme — "Custom rule loading + `ai-verify`/`quality-check` CLI commands"
+### Theme — "Custom rule loading (3 scanners) + CLI parity for the quality/health tools"
 
-Roadmap #4(カスタムルールロード)と、v0.35 で CLI direct mode を追加した際に
-見落とされていた `ai-verify` / `quality-check` の CLI コマンドを実装。
+Roadmap #4(カスタムルールロード)を 3 scanner 全て(aiverify / qualitycheck /
+secretscan)で統一し、v0.35 で CLI direct mode を追加した際に見落とされていた
+`ai-verify` / `quality-check` / `test-audit` / `alert-fix` の CLI コマンドを実装。
 ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
 
 ### What's new
@@ -67,9 +68,20 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   test-first: 3 ケース(empty registry / critical vuln / severity-min filter)を
   先に固定→ 実装で緑。
 
+- **Custom rule loading for `secretscan` (`internal/secretscan.UserConfig` + `RuleSpec` / `CompileRules`)**
+  3 つ目の scanner に custom rule loading が欠けていた(qualitycheck / aiverify は
+  既にサポート)。組織内の独自 token 形式(社内 API key prefix 等)はデフォルト
+  rule set では検出できない。`.yagura/secretscan.json` で rule を追加 / 既存 rule を
+  無効化できるようにし、3 scanner で custom rule API を統一。
+  新 API: `RuleSpec`(JSON 入力)/ `CompileRules([]RuleSpec) ([]Rule, error)`
+  (RE2、ReDoS なし、severity 未指定は MEDIUM)/ `UserConfig` + `LoadUserConfig` +
+  `Apply`。CLI `secretscan --rules-file`(または `.yagura/secretscan.json` 自動検出)、
+  MCP `yagura_secretscan` の `custom_rules` / `disable_rules` パラメータ。
+  test-first: domain 13 ケース + CLI 2 + MCP 2 を先に固定→ 実装で緑。zero-dep。
+
 - **Roadmap CLAUDE.md 更新**: #2(Scanner ↔ alert_fix periodic loop、v0.35 で完了)と
   #5(Alert lifecycle、v0.30 で完了)を ✅ に更新。両者は実装済みだったが
-  マークが付いていなかった。
+  マークが付いていなかった。#4 を 3 scanner 統一で完遂。
 
 ### Zero new deps
   ADR-0001 維持。`encoding/json` + `regexp` + `path/filepath` のみ。

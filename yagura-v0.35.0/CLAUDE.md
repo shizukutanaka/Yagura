@@ -220,11 +220,14 @@ trust base 保護のため意図的。alert_fix の live smoke で plan 以外�
 3. ~~**Persistent cache** (sbom / aiverify 結果を disk に)~~ ✅ v0.35 — `dedupe` に
    optional write-through disk 層(`EnablePersistence`)。daemon は `{StateDir}/cache` に有効化。
 4. ~~**Custom rule loading** (`.yagura/aiverify.yaml` 等)~~ ✅ v0.36 —
-   `internal/aiverify.UserConfig` + `LoadUserConfig` + `Apply` で
-   `.yagura/aiverify.json` からプロジェクト固有ルールを追加/無効化。
-   CLI `ai-verify` が自動検出。MCP `yagura_ai_verify` が `custom_rules` /
-   `disable_rules` パラメータを受付。CLI `quality-check` も追加
-   (`.yagura/quality.json` でカスタムルール)。
+   3 scanner 全てで project 固有ルールを追加/無効化可能に統一:
+   `aiverify.UserConfig` / `secretscan.UserConfig`(+ `RuleSpec`/`CompileRules`)
+   + `LoadUserConfig` + `Apply`、qualitycheck は既存 `RuleSpec`/`CompileRules`。
+   CLI `ai-verify` / `quality-check` / `secretscan` が `--rules-file` または
+   `.yagura/{aiverify,quality,secretscan}.json` を自動検出。MCP
+   `yagura_ai_verify` / `yagura_secretscan` が `custom_rules` / `disable_rules`
+   パラメータを受付(`yagura_quality_check` は従来から)。
+   CLI `test-audit` / `alert-fix`(token-free portfolio health sweep)も追加。
 5. ~~**Alert lifecycle** (last-seen / resolved / snooze)~~ ✅ v0.30 —
    `internal/alertfix.Store` に resolve/snooze/reopen + JSONL 永続化。
    MCP `yagura_alert_resolve` / `yagura_alert_snooze` / `yagura_alert_reopen`。

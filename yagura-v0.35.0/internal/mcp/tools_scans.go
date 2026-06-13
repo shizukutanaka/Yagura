@@ -35,6 +35,8 @@ func buildSecretScanTool(d Deps) *Tool {
 				"min_severity": map[string]any{
 					"type": "string",
 				},
+				"custom_rules":  map[string]any{"type": "array", "description": "project-specific secret rules: [{id, pattern(regex), severity(CRITICAL|HIGH|MEDIUM|LOW), description?, entropy_min?, capture_idx?}]"},
+				"disable_rules": map[string]any{"type": "array", "description": "built-in rule IDs to suppress (e.g. [\"aws-access-key-id\"])"},
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
@@ -43,11 +45,16 @@ func buildSecretScanTool(d Deps) *Tool {
 					Message: "secretscanner not configured at startup"}
 			}
 			var in struct {
-				Slug        string `json:"slug"`
-				MinSeverity string `json:"min_severity"`
+				Slug         string                `json:"slug"`
+				MinSeverity  string                `json:"min_severity"`
+				CustomRules  []secretscan.RuleSpec `json:"custom_rules"`
+				DisableRules []string              `json:"disable_rules"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return nil, &ToolError{Code: "invalid_input", Message: "invalid args", Cause: err}
+			}
+			if len(in.CustomRules) > 200 {
+				return nil, &ToolError{Code: "invalid_input", Message: "too many custom_rules (max 200)"}
 			}
 
 			// プロジェクト → ScanItem への変換
@@ -72,7 +79,18 @@ func buildSecretScanTool(d Deps) *Tool {
 				items = append(items, projectFieldsAsScanItems(p)...)
 			}
 
-			result := d.SecretScanner.ScanBatch(items)
+			// Default scanner unless the caller supplied custom/disabled rules.
+			scanner := d.SecretScanner
+			if len(in.CustomRules) > 0 || len(in.DisableRules) > 0 {
+				cfg := &secretscan.UserConfig{Rules: in.CustomRules, Disable: in.DisableRules}
+				rules, err := cfg.Apply(secretscan.DefaultRules())
+				if err != nil {
+					return nil, &ToolError{Code: "invalid_input", Message: err.Error()}
+				}
+				scanner = secretscan.NewWithRules(rules)
+			}
+
+			result := scanner.ScanBatch(items)
 
 			// min_severity フィルタ
 			if in.MinSeverity != "" {

@@ -1699,3 +1699,47 @@ func TestCLI_AlertFix_SeverityMin(t *testing.T) {
 		t.Errorf("severity-min=high should filter out the low stale alert, got total=%v", filtered["total"])
 	}
 }
+
+// ─── secretscan custom rules (v0.36.0) ───────────────────────
+
+// TestCLI_SecretScan_CustomRulesFile seeds a project whose notes contain an
+// org-specific token and a custom rule that flags it via --rules-file.
+func TestCLI_SecretScan_CustomRulesFile(t *testing.T) {
+	sd := t.TempDir()
+	t.Setenv("YAGURA_STATE_DIR", sd)
+	// notes carry a fake internal token matching the custom pattern.
+	writeProjectJSON(t, sd, "leaky",
+		`{"slug":"leaky","display_name":"Leaky","repository":"o/leaky","stage":"active","priority":1,"notes":"deploy key acme_abcd1234efgh5678 rotate me"}`)
+
+	rules := filepath.Join(sd, "rules.json")
+	body := `{"rules":[{"id":"acme-token","pattern":"acme_[A-Za-z0-9]{16}","severity":"HIGH","description":"ACME internal token"}]}`
+	if err := os.WriteFile(rules, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errs := runCLICapture(t, "secretscan", "--rules-file", rules, "--json")
+	if code != 0 {
+		t.Fatalf("secretscan --rules-file: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if total, _ := resp["total_findings"].(float64); total < 1 {
+		t.Errorf("custom rule should flag the acme_ token, got total_findings=%v", resp["total_findings"])
+	}
+}
+
+// TestCLI_SecretScan_BadRulesFile returns a non-zero exit for malformed rules.
+func TestCLI_SecretScan_BadRulesFile(t *testing.T) {
+	sd := t.TempDir()
+	t.Setenv("YAGURA_STATE_DIR", sd)
+	bad := filepath.Join(sd, "bad.json")
+	if err := os.WriteFile(bad, []byte("{nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "secretscan", "--rules-file", bad)
+	if code == 0 {
+		t.Error("expected non-zero exit for malformed rules file")
+	}
+}
