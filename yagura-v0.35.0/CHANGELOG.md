@@ -109,6 +109,16 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   を追加:同位置衝突を含む 20-file map を 40 回 scan して出力が byte 安定で
   あることを確認(将来 map-range の未ソート再混入を捕捉。旧キーに戻すと赤を実証済)。
 
+- **fail-open 修正: riskreason の未認識 severity 文字列を可視化 + `important` 別名**
+  リスク順位付け層は CVSS 数値が無い場合 severity 文字列を bucket 化するが、
+  `important`(RedHat/Microsoft の High 相当語)等の未対応値や typo は `""` に落ち、
+  severity weight ゼロで**サイレントに under-rank**され、しかも Unknowns に
+  「no CVSS or severity string provided(未指定)」と**事実誤認の理由**が出ていた
+  (severity は提供されていた)。`important` → high を別名追加(既存 `moderate` →
+  medium の前例に合わせる)し、未認識(提供済みだが非対応)と未指定を区別して
+  `severity "X" not recognized` を出すよう修正。operator が typo に気づける。
+  test-first: `important`→high + 未認識時の区別メッセージを赤で固定 → 緑。zero-dep。
+
 - **fail-open 修正: opsrisk の未知 blast radius を secure-by-default に**
   自律性 guardrail は capability・可逆性・blast radius から tier(auto/log/review/
   human)を決めるが、blast radius の switch に `default` が無く、typo や未対応値

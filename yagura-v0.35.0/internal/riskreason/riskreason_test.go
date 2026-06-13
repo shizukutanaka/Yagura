@@ -332,3 +332,38 @@ func TestSSVC_NoneHighOpenIsAttend(t *testing.T) {
 	}
 }
 
+
+// TestSeverityBucket_Important closes a vocabulary fail-open: RedHat/Microsoft
+// advisories label High-severity issues "Important". Previously this returned
+// "" → zero severity weight → the vuln was silently under-ranked. Mirrors the
+// existing "moderate" -> medium alias.
+func TestSeverityBucket_Important(t *testing.T) {
+	if got := severityBucket(0, "important"); got != "high" {
+		t.Errorf(`severityBucket(0, "important") = %q, want "high"`, got)
+	}
+	if got := severityBucket(0, "IMPORTANT"); got != "high" {
+		t.Errorf(`severityBucket(0, "IMPORTANT") = %q, want "high"`, got)
+	}
+}
+
+// TestScore_UnrecognizedSeverity_DistinctMessage: a provided-but-unrecognized
+// severity (typo) must be surfaced as such, not conflated with "no severity
+// provided" — otherwise the operator thinks they forgot to set it.
+func TestScore_UnrecognizedSeverity_DistinctMessage(t *testing.T) {
+	r := Score(Input{CVE: "CVE-2026-0009", Severity: "criticl"})
+	var sawNotRecognized, sawNotProvided bool
+	for _, u := range r.Unknowns {
+		if strings.Contains(u, "not recognized") {
+			sawNotRecognized = true
+		}
+		if strings.Contains(u, "no CVSS or severity string provided") {
+			sawNotProvided = true
+		}
+	}
+	if !sawNotRecognized {
+		t.Errorf(`expected an "not recognized" unknown for a typo'd severity, got %v`, r.Unknowns)
+	}
+	if sawNotProvided {
+		t.Errorf(`must not claim "no severity provided" when one was provided, got %v`, r.Unknowns)
+	}
+}
