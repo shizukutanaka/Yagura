@@ -176,6 +176,51 @@ func TestApply_MissingPattern_Error(t *testing.T) {
 	}
 }
 
+// TestApply_InvalidRisk_Error rejects an unknown risk level. risk is a closed
+// gating enum (CRITICAL/HIGH/MEDIUM/LOW) that drives computeRiskScore + Summary;
+// a typo like "HGIH" would otherwise compile, fire, but score 0 and stay
+// invisible in the gate — a silent no-op worse than an error. Mirrors
+// secretscan.CompileRules rejecting an invalid severity.
+func TestApply_InvalidRisk_Error(t *testing.T) {
+	cfg := &UserConfig{
+		Rules: []UserRule{
+			{ID: "typo-risk", Pattern: `foo`, Category: "external", Risk: "HGIH", Message: "typo"},
+		},
+	}
+	_, err := cfg.Apply(DefaultRules())
+	if err == nil {
+		t.Error("expected error for invalid risk level 'HGIH'")
+	}
+}
+
+// TestApply_EmptyRisk_DefaultsMedium mirrors secretscan: an omitted severity
+// defaults to MEDIUM rather than scoring 0.
+func TestApply_EmptyRisk_DefaultsMedium(t *testing.T) {
+	cfg := &UserConfig{
+		Rules: []UserRule{
+			{ID: "no-risk", Pattern: `foo`, Category: "external", Risk: "", Message: "default"},
+		},
+	}
+	merged, err := cfg.Apply(DefaultRules())
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	var got RiskLevel
+	var found bool
+	for _, r := range merged {
+		if r.ID == "no-risk" {
+			found = true
+			got = r.Risk
+		}
+	}
+	if !found {
+		t.Fatal("rule 'no-risk' missing after Apply")
+	}
+	if got != RiskMedium {
+		t.Errorf("empty risk should default to MEDIUM, got %q", got)
+	}
+}
+
 // TestApply_CustomRuleDetects verifies a user rule actually fires on scan.
 func TestApply_CustomRuleDetects(t *testing.T) {
 	cfg := &UserConfig{

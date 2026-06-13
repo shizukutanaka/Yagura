@@ -23,8 +23,11 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
    "disable":["billing-stripe-uncaught"]}
   ```
   新 API: `LoadUserConfig(path) (*UserConfig, error)` + `(c *UserConfig).Apply(base []Rule) ([]Rule, error)`。
-  pattern は Go regexp(RE2、ReDoS なし)でコンパイル。category / risk は文字列で
-  forward-compatible(不明な値もエラーにしない)。
+  pattern は Go regexp(RE2、ReDoS なし)でコンパイル。`risk` は閉じた gating enum
+  (CRITICAL/HIGH/MEDIUM/LOW)として検証 — 未指定は MEDIUM、不明値はエラー
+  (secretscan severity / qualitycheck severity と同じ拒否規約。タイポした risk が
+  サイレントに score 0 で素通りする no-op を防ぐ)。`category` は gate に効かない
+  自由記述の reporting label なので未知値も素通り。
   MCP `yagura_ai_verify` も `custom_rules` / `disable_rules` パラメータを新設
   (inline で渡す quality_check パリティ)。キャッシュはカスタムルール使用時は
   バイパス(ルール差異を cache key に含めないため)。

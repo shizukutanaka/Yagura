@@ -97,13 +97,25 @@ func (cfg *UserConfig) Apply(base []Rule) ([]Rule, error) {
 		if err != nil {
 			return nil, fmt.Errorf("aiverify: custom rule %q: invalid pattern: %w", u.ID, err)
 		}
-		// Accept any category/risk string (forward-compatible; unknown values
-		// behave like their zero-value equivalents rather than rejecting).
+		// risk is a closed gating enum: it drives computeRiskScore / Summary /
+		// HasCritical. An unknown value would compile and fire but score 0 and
+		// stay invisible in the gate — a silent no-op. So reject invalid risk
+		// (mirroring secretscan severity) and default an omitted one to MEDIUM.
+		risk := RiskLevel(u.Risk)
+		if risk == "" {
+			risk = RiskMedium
+		}
+		if risk != RiskCritical && risk != RiskHigh && risk != RiskMedium && risk != RiskLow {
+			return nil, fmt.Errorf("aiverify: custom rule %q: invalid risk %q (CRITICAL/HIGH/MEDIUM/LOW)", u.ID, u.Risk)
+		}
+		// category, by contrast, is a free-form reporting label (only feeds
+		// ByCategory grouping, never the gate) — unknown values pass through so
+		// users can group custom rules under their own label.
 		out = append(out, Rule{
 			ID:        u.ID,
 			Pattern:   re,
 			Category:  Category(u.Category),
-			Risk:      RiskLevel(u.Risk),
+			Risk:      risk,
 			Message:   u.Message,
 			Languages: u.Languages,
 		})
