@@ -94,6 +94,18 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   test-first: domain 13 + numeric 検証 5 ケース + CLI 2 + MCP 2 を先に固定→
   実装で緑。zero-dep。
 
+- **決定論修正: aiverify / qualitycheck の finding sort を全順序化**
+  両 scanner は入力 `files` map を range(= 走査順が非決定的)して findings を集め、
+  `sort.Slice`(unstable)で並べていたが、比較キーが全順序でなかった
+  (aiverify は `File,Line` のみ / qualitycheck は `File,Line,Column`)。同一行
+  (同一 Column)に複数ルールがヒットすると tie となり、unstable sort + map 走査順
+  依存で **出力順が run ごとにブレ**得た(「Deterministic output: tie-break が
+  決定論的」不変条件に違反、reproducible/regression の前提を崩す)。両者の sort を
+  `sortFindings` に抽出し `… → Column → RuleID` まで tie-break して全順序化。
+  test-first: tied pair を両 permutation で sort し同一に正規化されることを確認
+  (`sortFindings` 抽出 → 旧キーで赤を実証 → tie-break 追加で緑)。secretscan は
+  `sort.SliceStable` + 決定論的 rule 順入力なので元から安全(確認済)。
+
 - **Roadmap CLAUDE.md 更新**: #2(Scanner ↔ alert_fix periodic loop、v0.35 で完了)と
   #5(Alert lifecycle、v0.30 で完了)を ✅ に更新。両者は実装済みだったが
   マークが付いていなかった。#4 を 3 scanner 統一で完遂。

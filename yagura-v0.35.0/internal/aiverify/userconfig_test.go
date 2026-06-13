@@ -243,3 +243,31 @@ func TestApply_CustomRuleDetects(t *testing.T) {
 		t.Error("custom rule 'custom-todo-strict' did not fire on matching content")
 	}
 }
+
+// ─── determinism: sortFindings total order ───────────────────────
+//
+// Scan builds res.Findings by ranging the input files map (non-deterministic
+// order) and sorts with sort.Slice (unstable). If the sort key is not a total
+// order, two findings that compare equal keep an order that depends on the
+// map walk — violating the "tie-break が決定論的" invariant. Two different
+// rules matching the same file+line is a real collision. This test feeds the
+// tied pair in both permutations: a total order canonicalizes both identically.
+
+func TestSortFindings_TotalOrder_SameFileLine(t *testing.T) {
+	a := Finding{File: "x.go", Line: 10, Column: 1, RuleID: "aaa-rule"}
+	b := Finding{File: "x.go", Line: 10, Column: 1, RuleID: "zzz-rule"}
+
+	fwd := []Finding{a, b}
+	sortFindings(fwd)
+	rev := []Finding{b, a}
+	sortFindings(rev)
+
+	if fwd[0].RuleID != rev[0].RuleID || fwd[1].RuleID != rev[1].RuleID {
+		t.Errorf("sortFindings is not a total order: [a,b] -> %s,%s but [b,a] -> %s,%s",
+			fwd[0].RuleID, fwd[1].RuleID, rev[0].RuleID, rev[1].RuleID)
+	}
+	// canonical order is RuleID-ascending for the tie
+	if fwd[0].RuleID != "aaa-rule" {
+		t.Errorf("expected RuleID-ascending tie-break, got %s first", fwd[0].RuleID)
+	}
+}
