@@ -105,6 +105,9 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   test-first: tied pair を両 permutation で sort し同一に正規化されることを確認
   (`sortFindings` 抽出 → 旧キーで赤を実証 → tie-break 追加で緑)。secretscan は
   `sort.SliceStable` + 決定論的 rule 順入力なので元から安全(確認済)。
+  加えて統合レベルの回帰柵 `TestScan_DeterministicOrder_SamePositionCollision`
+  を追加:同位置衝突を含む 20-file map を 40 回 scan して出力が byte 安定で
+  あることを確認(将来 map-range の未ソート再混入を捕捉。旧キーに戻すと赤を実証済)。
 
 - **Roadmap CLAUDE.md 更新**: #2(Scanner ↔ alert_fix periodic loop、v0.35 で完了)と
   #5(Alert lifecycle、v0.30 で完了)を ✅ に更新。両者は実装済みだったが
