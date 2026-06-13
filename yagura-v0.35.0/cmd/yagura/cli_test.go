@@ -1743,3 +1743,83 @@ func TestCLI_SecretScan_BadRulesFile(t *testing.T) {
 		t.Error("expected non-zero exit for malformed rules file")
 	}
 }
+
+// ─── readSourceFiles truncation (fail-open guard) ────────────────
+//
+// A scan that silently caps at maxFiles/maxBytes and still prints a
+// clean-looking verdict is a fail-open security gate. These tests pin the
+// truncation *signal* so callers can warn instead of reporting a partial
+// scan as if it were complete.
+
+func writeNGoFiles(t *testing.T, dir string, n int, body string) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		p := filepath.Join(dir, fmt.Sprintf("f%04d.go", i))
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+}
+
+func TestReadSourceFilesLimited_TruncateByCount(t *testing.T) {
+	dir := t.TempDir()
+	writeNGoFiles(t, dir, 3, "package x\n")
+	files, truncated, err := readSourceFilesLimited(dir, 2, 1<<30)
+	if err != nil {
+		t.Fatalf("readSourceFilesLimited: %v", err)
+	}
+	if len(files) != 2 {
+		t.Errorf("expected cap at 2 files, got %d", len(files))
+	}
+	if !truncated {
+		t.Error("expected truncated=true when file count exceeds cap")
+	}
+}
+
+func TestReadSourceFilesLimited_TruncateByBytes(t *testing.T) {
+	dir := t.TempDir()
+	// a.go ~100B (fits), b.go ~100B (pushes total over 150B cap).
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(strings.Repeat("a", 100)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte(strings.Repeat("b", 100)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, truncated, err := readSourceFilesLimited(dir, 1000, 150)
+	if err != nil {
+		t.Fatalf("readSourceFilesLimited: %v", err)
+	}
+	if !truncated {
+		t.Error("expected truncated=true when total bytes exceeds cap")
+	}
+}
+
+func TestReadSourceFilesLimited_NoTruncate(t *testing.T) {
+	dir := t.TempDir()
+	writeNGoFiles(t, dir, 2, "package x\n")
+	files, truncated, err := readSourceFilesLimited(dir, 1000, 1<<30)
+	if err != nil {
+		t.Fatalf("readSourceFilesLimited: %v", err)
+	}
+	if len(files) != 2 {
+		t.Errorf("expected 2 files, got %d", len(files))
+	}
+	if truncated {
+		t.Error("expected truncated=false within caps")
+	}
+}
+
+// TestCLI_AIVerify_TruncationWarns proves the warning reaches stderr through a
+// real handler: a >maxFiles repo must not be scanned silently.
+func TestCLI_AIVerify_TruncationWarns(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	writeNGoFiles(t, dir, 1001, "package x\n")
+	code, _, stderr := runCLICapture(t, "ai-verify", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("ai-verify code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(strings.ToLower(stderr), "truncat") {
+		t.Errorf("expected truncation warning on stderr, got %q", stderr)
+	}
+}

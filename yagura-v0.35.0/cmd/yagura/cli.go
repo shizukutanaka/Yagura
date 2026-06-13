@@ -1617,10 +1617,11 @@ func cliAIVerify(args []string, stdout, stderr io.Writer) error {
 		return errUsage
 	}
 
-	files, err := readSourceFiles(*dir)
+	files, truncated, err := readSourceFiles(*dir)
 	if err != nil {
 		return fmt.Errorf("read source files: %w", err)
 	}
+	warnIfTruncated(stderr, truncated, *dir, len(files))
 
 	rules := aiverify.DefaultRules()
 
@@ -1665,10 +1666,11 @@ func cliQualityCheck(args []string, stdout, stderr io.Writer) error {
 		return errUsage
 	}
 
-	files, err := readSourceFiles(*dir)
+	files, truncated, err := readSourceFiles(*dir)
 	if err != nil {
 		return fmt.Errorf("read source files: %w", err)
 	}
+	warnIfTruncated(stderr, truncated, *dir, len(files))
 
 	rules := qualitycheck.DefaultRules()
 
@@ -1718,10 +1720,11 @@ func cliTestAudit(args []string, stdout, stderr io.Writer) error {
 		return errUsage
 	}
 
-	files, err := readSourceFiles(*dir)
+	files, truncated, err := readSourceFiles(*dir)
 	if err != nil {
 		return fmt.Errorf("read source files: %w", err)
 	}
+	warnIfTruncated(stderr, truncated, *dir, len(files))
 
 	res := testcoverage.Audit(files)
 	if *jsonOut {
@@ -1853,12 +1856,20 @@ func filterReportBySeverity(r alertfix.Report, min string) alertfix.Report {
 // readSourceFiles は dir を再帰的に走査し、Go/TS/JS/Python/Rust/Java の
 // ソースファイルを {relpath: content} として返す。
 // vendor/, node_modules/, .git/ はスキップ。上限 1000 件 / 50 MB。
-func readSourceFiles(dir string) (map[string]string, error) {
+// 第 2 戻り値 truncated は上限に達して一部ファイルを取りこぼした場合 true。
+// これが true のまま「findings なし」を報告すると部分スキャンを完全スキャンと
+// 取り違える fail-open になるため、呼出側は必ず警告すること。
+func readSourceFiles(dir string) (map[string]string, bool, error) {
 	const maxFiles = 1000
 	const maxTotalBytes = 50 * 1024 * 1024
+	return readSourceFilesLimited(dir, maxFiles, maxTotalBytes)
+}
 
+// readSourceFilesLimited は readSourceFiles の本体(上限を引数化してテスト可能に)。
+func readSourceFilesLimited(dir string, maxFiles int, maxTotalBytes int64) (map[string]string, bool, error) {
 	files := make(map[string]string)
 	var totalBytes int64
+	truncated := false
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {
 			return werr
@@ -1874,16 +1885,18 @@ func readSourceFiles(dir string) (map[string]string, error) {
 			return nil
 		}
 		if len(files) >= maxFiles {
+			truncated = true
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return nil // skip unreadable files silently
 		}
-		totalBytes += int64(len(data))
-		if totalBytes > maxTotalBytes {
+		if totalBytes+int64(len(data)) > maxTotalBytes {
+			truncated = true
 			return nil
 		}
+		totalBytes += int64(len(data))
 		rel, relErr := filepath.Rel(dir, path)
 		if relErr != nil {
 			rel = path
@@ -1891,7 +1904,18 @@ func readSourceFiles(dir string) (map[string]string, error) {
 		files[rel] = string(data)
 		return nil
 	})
-	return files, err
+	return files, truncated, err
+}
+
+// warnIfTruncated は scan が上限で打ち切られた場合に stderr へ目立つ警告を出す。
+// 部分スキャンを「クリーン」と誤読させない(fail-open 防止)ための共通処理。
+func warnIfTruncated(stderr io.Writer, truncated bool, dir string, scanned int) {
+	if !truncated {
+		return
+	}
+	fmt.Fprintf(stderr, "warning: scan of %s truncated at %d files / 50MB cap — "+
+		"results cover only part of the tree; narrow --dir or split the scan before trusting a clean verdict\n",
+		dir, scanned)
 }
 
 // isSourceFile は name がサポート言語のソースファイルかを返す。
