@@ -75,6 +75,10 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   チェックできる。Plan.md enrichment は daemon sweep 同様 skip(sensor-only)。
   test-first: 3 ケース(empty registry / critical vuln / severity-min filter)を
   先に固定→ 実装で緑。
+  fix: `--severity-min` の閉じた enum を parse 直後に検証。従来は typo
+  (`hihg` 等)が `filterReportBySeverity` で無マッチ → **フィルタ無視で全件素通し**
+  となり、ユーザーの意図と異なる結果がサイレントに返っていた。不正値は
+  `invalid --severity-min "X"` で即エラーに(`validAlertSeverity`、CLI 1 ケース追加)。
 
 - **Custom rule loading for `secretscan` (`internal/secretscan.UserConfig` + `RuleSpec` / `CompileRules`)**
   3 つ目の scanner に custom rule loading が欠けていた(qualitycheck / aiverify は

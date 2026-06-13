@@ -1719,6 +1719,19 @@ func TestCLI_AlertFix_SeverityMin(t *testing.T) {
 	}
 }
 
+// TestCLI_AlertFix_BadSeverityMin: a typo'd --severity-min must error, not be
+// silently ignored (which previously returned the report unfiltered).
+func TestCLI_AlertFix_BadSeverityMin(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, errs := runCLICapture(t, "alert-fix", "--json", "--severity-min", "hihg")
+	if code == 0 {
+		t.Error("typo'd --severity-min should be rejected, not silently ignored")
+	}
+	if !strings.Contains(errs, "severity-min") {
+		t.Errorf("expected an error naming severity-min, got: %q", errs)
+	}
+}
+
 // ─── secretscan custom rules (v0.36.0) ───────────────────────
 
 // TestCLI_SecretScan_CustomRulesFile seeds a project whose notes contain an
