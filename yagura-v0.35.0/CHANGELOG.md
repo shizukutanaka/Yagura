@@ -8,6 +8,23 @@ All notable changes to Yagura are documented here. Format follows
 
 ### Theme — "Custom rule loading (3 scanners) + CLI parity for the quality/health tools"
 
+- **AST analysis 着手(Roadmap #6): 新 package `internal/astcheck` + CLI `ast-check`**
+  go/parser + go/ast(stdlib のみ、ADR-0001 維持)で Go ソースを構造解析し、
+  **行 regex では原理的に不可能**な検査を決定論的に提供する:
+  - `os-exit-library`: `package main` 以外(かつ `*_test.go` 以外)での `os.Exit`
+    呼出。ライブラリが os.Exit すると呼び手プロセスごと落ちる。**package 文脈**が必要。
+  - `empty-nil-branch`: `if x != nil {}`(本体が空)= エラー/分岐のサイレント
+    握り潰し。**block 構造(空 body)** の判定が必要。
+  - `parse-error`: 解析失敗した Go ファイルを surface(黙ってスキップしない)。
+  `ScanFiles` は .go のみ対象、findings は全順序(File→Line→Column→Rule)で整列
+  (map 走査順に依存しない determinism)。CLI `yagura ast-check [--dir .] [--json]`。
+  test-first: domain 8 ケース(os.Exit lib/main/test・空/非空 nil 分岐・parse-error・
+  非go skip・determinism)+ CLI 2 ケースを赤で固定 → 緑。zero-dep。
+  What's not yet: go/types を要する検査(未使用 error 返り値の型確認等)は
+  パッケージロードが必要で zero-dep と要相談。現状は型不要の構造検査に限定。
+
+
+
 Roadmap #4(カスタムルールロード)を 3 scanner 全て(aiverify / qualitycheck /
 secretscan)で統一し、v0.35 で CLI direct mode を追加した際に見落とされていた
 `ai-verify` / `quality-check` / `test-audit` / `alert-fix` の CLI コマンドを実装。

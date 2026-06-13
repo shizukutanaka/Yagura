@@ -1732,6 +1732,45 @@ func TestCLI_AlertFix_BadSeverityMin(t *testing.T) {
 	}
 }
 
+// ─── ast-check (v0.36.0, Roadmap #6) ─────────────────────────
+
+func TestCLI_ASTCheck_FindsOsExitInLibrary(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lib.go"),
+		[]byte("package lib\nimport \"os\"\nfunc Boom() { os.Exit(1) }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "ast-check", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("ast-check: code=%d", code)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	byRule, _ := res["by_rule"].(map[string]any)
+	if n, _ := byRule["os-exit-library"].(float64); n != 1 {
+		t.Errorf("expected 1 os-exit-library finding, got %v (by_rule=%v)", byRule["os-exit-library"], byRule)
+	}
+}
+
+func TestCLI_ASTCheck_CleanDir(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ok.go"),
+		[]byte("package ok\nfunc Add(a, b int) int { return a + b }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "ast-check", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("ast-check: code=%d", code)
+	}
+	if !strings.Contains(out, "findings: 0") {
+		t.Errorf("clean dir should report 0 findings, got: %q", out)
+	}
+}
+
 // ─── secretscan custom rules (v0.36.0) ───────────────────────
 
 // TestCLI_SecretScan_CustomRulesFile seeds a project whose notes contain an

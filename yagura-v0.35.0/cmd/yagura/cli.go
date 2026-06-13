@@ -38,6 +38,7 @@ import (
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/alertfix"
+	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/config"
@@ -76,8 +77,8 @@ var cliVerbs = map[string]bool{
 	"mcp-audit": true, "vex-audit": true, "self-improve-history": true,
 	"path-policy": true, "inject-scan": true, "cc-security": true,
 	"claudemd-audit": true,
-	"ai-verify": true, "quality-check": true, "test-audit": true,
-	"alert-fix": true,
+	"ai-verify":      true, "quality-check": true, "test-audit": true,
+	"alert-fix": true, "ast-check": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -140,6 +141,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliTestAudit(args, stdout, stderr)
 	case "alert-fix":
 		err = cliAlertFix(args, stdout, stderr)
+	case "ast-check":
+		err = cliASTCheck(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -699,6 +702,7 @@ func minScoreGate(min int, scored map[string]int) error {
 //   - ファイル不在なら "graceful zero"(scanned:0 / flagged:0 / itemsKey:[])を
 //     出力して handled=true を返す(未配置リポジトリでも素直に 0 件)。
 //   - 在れば content を読み出して返す(read 失敗は "read <p>:" で wrap)。
+//
 // 呼出側は `if handled || err != nil { return err }` で分岐する。itemsKey は
 // JSON 空配列のキー("configs" / "manifests")で、各 audit の出力 shape に合わせる。
 func resolveSingleAuditTarget(stdout io.Writer, fileFlag string, rest []string, jsonOut bool, itemsKey string) (path, content string, handled bool, err error) {
@@ -1737,6 +1741,33 @@ func cliTestAudit(args []string, stdout, stderr io.Writer) error {
 		return emitJSON(stdout, res)
 	}
 	humanTestAudit(stdout, res, *untestedOnly)
+	return nil
+}
+
+// ─── ast-check (v0.36.0, Roadmap #6) ─────────────────────────
+
+// cliASTCheck は `yagura ast-check` を処理する。--dir 配下の Go ソースを go/ast で
+// 構造解析し、行 regex では検出できないパターン(os.Exit in library / 空 nil 分岐 /
+// parse error)を flag する。
+func cliASTCheck(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("ast-check", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	sr, err := readSourceFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("read source files: %w", err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+
+	res := astcheck.ScanFiles(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, res)
+	}
+	humanASTCheck(stdout, res)
 	return nil
 }
 

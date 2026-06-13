@@ -19,6 +19,7 @@ import (
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/alertfix"
+	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
@@ -719,6 +720,22 @@ func humanTestAudit(w io.Writer, res testcoverage.AuditResult, untestedOnly bool
 	if len(res.UntestedFiles) > 0 {
 		fmt.Fprintf(w, "untested: %s\n", strings.Join(res.UntestedFiles, ", "))
 	}
+}
+
+// ─── ast-check (v0.36.0, Roadmap #6) ─────────────────────────
+
+func humanASTCheck(w io.Writer, res astcheck.Result) {
+	fmt.Fprintf(w, "files_scanned: %d  findings: %d\n", res.FilesScanned, len(res.Findings))
+	if len(res.Findings) == 0 {
+		return
+	}
+	printCountMap(w, "by severity", res.BySeverity)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tRULE\tMESSAGE")
+	for _, f := range res.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.Severity, f.File, f.Line, f.Rule, f.Message)
+	}
+	_ = tw.Flush()
 }
 
 // ─── alert-fix (v0.36.0) ─────────────────────────────────────

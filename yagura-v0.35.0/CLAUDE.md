@@ -21,7 +21,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 51 internal packages
+## Map — 52 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -44,6 +44,9 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - `internal/pindrift` — 依存 pin 漏れ検出
 - `internal/aiverify` — AI 生成 code の risk pattern 検出 ★ v0.25
 - `internal/testcoverage` — source-test 対応検出 ★ v0.26
+- `internal/astcheck` — Go 構造解析(go/ast、zero-dep)。行 regex では不能な検査:
+  os.Exit in library(package 文脈)/ 空 `!= nil` 分岐(block 構造)/ parse-error。
+  CLI `ast-check`(Roadmap #6 の最初の増分)★ v0.36
 - `internal/ccsecurity` — Claude Code プロジェクトのセキュリティ姿勢を決定論的に監査
   (機械判定可能な対策 = .env 同梱/危険フラグ/deny ルール/CLAUDE.md ルール/git/MCP 最小化 を
   スコア化、人手プロセス項目はガイダンス提示。CLI `cc-security`)★ v0.36
@@ -231,7 +234,11 @@ trust base 保護のため意図的。alert_fix の live smoke で plan 以外�
 5. ~~**Alert lifecycle** (last-seen / resolved / snooze)~~ ✅ v0.30 —
    `internal/alertfix.Store` に resolve/snooze/reopen + JSONL 永続化。
    MCP `yagura_alert_resolve` / `yagura_alert_snooze` / `yagura_alert_reopen`。
-6. **AST analysis** (zero-dep 制約と相談)
+6. **AST analysis** (zero-dep 制約と相談)— 🚧 着手 v0.36: `internal/astcheck`
+   (go/parser + go/ast, stdlib のみ)+ CLI `ast-check`。行 regex では不能な
+   os-exit-library(package 文脈)/ empty-nil-branch(block 構造)/ parse-error を
+   検出。今後 ignored-error 等の構造ルールを追加予定(go/types は要パッケージ
+   ロードのため zero-dep と要相談、現状は go/ast のみで型不要の検査に限定)。
 7. **OAuth / Marketplace / Code Mode** (long-standing)
 
 ## References
