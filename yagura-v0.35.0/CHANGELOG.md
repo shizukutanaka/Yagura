@@ -109,6 +109,17 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   を追加:同位置衝突を含む 20-file map を 40 回 scan して出力が byte 安定で
   あることを確認(将来 map-range の未ソート再混入を捕捉。旧キーに戻すと赤を実証済)。
 
+- **fail-open 修正: opsrisk の未知 blast radius を secure-by-default に**
+  自律性 guardrail は capability・可逆性・blast radius から tier(auto/log/review/
+  human)を決めるが、blast radius の switch に `default` が無く、typo や未対応値
+  (`portfollio` / `global` / `organization` 等)は**無マッチで escalation せず**、
+  操作が capability 基準 tier(auto/log の場合あり)に留まっていた(= 呼び手が
+  影響を示したのに oversight が下がる fail-open)。未指定・`single` は従来どおり
+  無昇格のまま、それ以外の未知値は **review まで引き上げ**(未知 capability →
+  review と同じ secure-by-default 規約に統一)。
+  test-first: 未知 blast radius → ≥review(赤)+ 空 → auto 維持(過剰昇格防止)
+  を固定 → 緑。zero-dep。
+
 - **fail-open 修正: pathpolicy ルールを load 時に検証(`Policy.Validate`)**
   path guardrail は deny/review/allow を glob で判定するが、(a) deny ルールの
   glob が壊れている(`path.Match` ErrBadPattern → 無マッチ扱い)、(b) action が
