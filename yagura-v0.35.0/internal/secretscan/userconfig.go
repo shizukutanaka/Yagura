@@ -30,6 +30,11 @@ import (
 // maxPatternLen は custom rule の regexp 長上限(暴走防止)。
 const maxPatternLen = 1000
 
+// maxEntropyBits は Shannon entropy (bits/char) の理論上限 = log2(256)。
+// これを超える entropy_min はどんな文字列でも到達不能で、ルールを
+// サイレントに dead no-op 化するため拒否する。
+const maxEntropyBits = 8.0
+
 // RuleSpec は JSON 入力用の rule(compiled regex を持たない)。
 type RuleSpec struct {
 	ID          string   `json:"id"`
@@ -72,6 +77,21 @@ func CompileRules(specs []RuleSpec) ([]Rule, error) {
 		re, err := regexp.Compile(s.Pattern)
 		if err != nil {
 			return nil, fmt.Errorf("secretscan: custom rule %q: invalid pattern: %w", s.ID, err)
+		}
+		// entropy_min / capture_idx は Scan の guard で範囲外だと黙って無視
+		// (→ filter 無効化 or full-match へ fallback)されるため、ここで
+		// 到達不能な値を拒否し、サイレントな misconfig を防ぐ。
+		if s.EntropyMin < 0 {
+			return nil, fmt.Errorf("secretscan: custom rule %q: entropy_min must be >= 0 (0 = no filter)", s.ID)
+		}
+		if s.EntropyMin > maxEntropyBits {
+			return nil, fmt.Errorf("secretscan: custom rule %q: entropy_min %.2f exceeds max Shannon entropy %.1f (rule could never fire)", s.ID, s.EntropyMin, maxEntropyBits)
+		}
+		if s.CaptureIdx < 0 {
+			return nil, fmt.Errorf("secretscan: custom rule %q: capture_idx must be >= 0 (0 = full match)", s.ID)
+		}
+		if s.CaptureIdx > re.NumSubexp() {
+			return nil, fmt.Errorf("secretscan: custom rule %q: capture_idx %d exceeds pattern's %d capture group(s)", s.ID, s.CaptureIdx, re.NumSubexp())
 		}
 		out = append(out, Rule{
 			ID:          s.ID,

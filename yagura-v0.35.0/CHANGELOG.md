@@ -80,7 +80,14 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   (RE2、ReDoS なし、severity 未指定は MEDIUM)/ `UserConfig` + `LoadUserConfig` +
   `Apply`。CLI `secretscan --rules-file`(または `.yagura/secretscan.json` 自動検出)、
   MCP `yagura_secretscan` の `custom_rules` / `disable_rules` パラメータ。
-  test-first: domain 13 ケース + CLI 2 + MCP 2 を先に固定→ 実装で緑。zero-dep。
+  数値フィールドも検証:`entropy_min` は [0, 8.0] (Shannon entropy bits/char の
+  理論上限 log2(256)) 範囲外を拒否(8.0 超は到達不能で rule が dead no-op 化、
+  負値は filter をサイレント無効化)、`capture_idx` は負値および pattern の
+  capture group 数 (`re.NumSubexp()`) 超過を拒否(超過時 Scan は full-match へ
+  サイレント fallback)。id/pattern/severity だけ検証して numeric は素通しだった
+  非対称を解消。
+  test-first: domain 13 + numeric 検証 5 ケース + CLI 2 + MCP 2 を先に固定→
+  実装で緑。zero-dep。
 
 - **Roadmap CLAUDE.md 更新**: #2(Scanner ↔ alert_fix periodic loop、v0.35 で完了)と
   #5(Alert lifecycle、v0.30 で完了)を ✅ に更新。両者は実装済みだったが

@@ -75,6 +75,61 @@ func TestCompileRules_PatternTooLong(t *testing.T) {
 	}
 }
 
+// TestCompileRules_NegativeEntropyMin rejects a negative entropy threshold.
+// Shannon entropy is always ≥ 0 and the documented sentinel for "no filter"
+// is 0 — a negative value (e.g. a "-4.0" typo for "4.0") is meaningless and
+// would silently disable filtering (EntropyMin>0 guard never trips).
+func TestCompileRules_NegativeEntropyMin(t *testing.T) {
+	_, err := CompileRules([]RuleSpec{{ID: "x", Pattern: `foo`, Severity: SeverityLow, EntropyMin: -1}})
+	if err == nil {
+		t.Error("expected error for negative entropy_min")
+	}
+}
+
+// TestCompileRules_EntropyMinTooHigh rejects a threshold no string can reach.
+// Shannon entropy in bits/char is capped at log2(256)=8.0; entropy_min>8.0
+// can never pass, silently turning the rule into a dead no-op.
+func TestCompileRules_EntropyMinTooHigh(t *testing.T) {
+	_, err := CompileRules([]RuleSpec{{ID: "x", Pattern: `foo`, Severity: SeverityLow, EntropyMin: 8.5}})
+	if err == nil {
+		t.Error("expected error for entropy_min > 8.0 (impossible to reach)")
+	}
+}
+
+// TestCompileRules_NegativeCaptureIdx rejects a negative capture index. The
+// sentinel for "use the full match" is 0; a negative value is meaningless.
+func TestCompileRules_NegativeCaptureIdx(t *testing.T) {
+	_, err := CompileRules([]RuleSpec{{ID: "x", Pattern: `(foo)`, Severity: SeverityLow, CaptureIdx: -1}})
+	if err == nil {
+		t.Error("expected error for negative capture_idx")
+	}
+}
+
+// TestCompileRules_CaptureIdxOutOfRange rejects a capture index the pattern
+// can never satisfy. A pattern with 1 group can only address capture_idx 0..1;
+// capture_idx 3 would silently fall back to full-match entropy (Scan's
+// len(m)>=2*(idx+1) guard), misconfiguring the rule without any signal.
+func TestCompileRules_CaptureIdxOutOfRange(t *testing.T) {
+	_, err := CompileRules([]RuleSpec{{ID: "x", Pattern: `(foo)`, Severity: SeverityLow, CaptureIdx: 3}})
+	if err == nil {
+		t.Error("expected error for capture_idx exceeding pattern's group count")
+	}
+}
+
+// TestCompileRules_ValidEntropyAndCapture confirms in-range numeric fields are
+// accepted (guards against over-rejection by the validation above).
+func TestCompileRules_ValidEntropyAndCapture(t *testing.T) {
+	rules, err := CompileRules([]RuleSpec{
+		{ID: "x", Pattern: `key=([A-Za-z0-9]+)`, Severity: SeverityHigh, EntropyMin: 3.5, CaptureIdx: 1},
+	})
+	if err != nil {
+		t.Fatalf("valid entropy_min/capture_idx rejected: %v", err)
+	}
+	if rules[0].EntropyMin != 3.5 || rules[0].CaptureIdx != 1 {
+		t.Errorf("numeric fields not preserved: %+v", rules[0])
+	}
+}
+
 // ─── LoadUserConfig + Apply ──────────────────────────────────
 
 func TestLoadUserConfig_HappyPath(t *testing.T) {
