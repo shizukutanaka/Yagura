@@ -42,9 +42,11 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   `aiverify` scan を実行する。`--dir` デフォルトはカレントディレクトリ。
   `.yagura/aiverify.json` があれば自動検出してカスタムルールをマージ。
   `vendor/` / `node_modules/` / `.git/` はスキップ。上限 1000 ファイル / 50 MB。
-  上限超過時は `readSourceFiles` が `truncated=true` を返し、`ai-verify` /
-  `quality-check` / `test-audit` は stderr に目立つ警告を出す(部分スキャンを
-  クリーン判定と誤読する fail-open を防止。従来はサイレントに打ち切っていた)。
+  `readSourceFiles` は不完全スキャンの理由を `scanResult{Truncated, Unreadable}`
+  で区別して返し、`ai-verify` / `quality-check` / `test-audit` は stderr に目立つ
+  警告を出す(部分スキャンをクリーン判定と誤読する fail-open を防止。従来は上限
+  超過も読取失敗のソースもサイレントに取りこぼしていた。`readWorkflowFiles` が
+  読取失敗で hard-fail するのに対し、深いツリー walk は skip+report に統一)。
   `--json` で MCP と同形状の JSON 出力(json タグ再利用)。
   test-first: 5 ケース(empty dir / --json / custom rules auto-detect /
   --summary-only / bad rules-file)を先に固定→ 実装で緑。

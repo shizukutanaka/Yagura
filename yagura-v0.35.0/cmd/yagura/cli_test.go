@@ -1764,14 +1764,14 @@ func writeNGoFiles(t *testing.T, dir string, n int, body string) {
 func TestReadSourceFilesLimited_TruncateByCount(t *testing.T) {
 	dir := t.TempDir()
 	writeNGoFiles(t, dir, 3, "package x\n")
-	files, truncated, err := readSourceFilesLimited(dir, 2, 1<<30)
+	sr, err := readSourceFilesLimited(dir, 2, 1<<30)
 	if err != nil {
 		t.Fatalf("readSourceFilesLimited: %v", err)
 	}
-	if len(files) != 2 {
-		t.Errorf("expected cap at 2 files, got %d", len(files))
+	if len(sr.Files) != 2 {
+		t.Errorf("expected cap at 2 files, got %d", len(sr.Files))
 	}
-	if !truncated {
+	if !sr.Truncated {
 		t.Error("expected truncated=true when file count exceeds cap")
 	}
 }
@@ -1785,11 +1785,11 @@ func TestReadSourceFilesLimited_TruncateByBytes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte(strings.Repeat("b", 100)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, truncated, err := readSourceFilesLimited(dir, 1000, 150)
+	sr, err := readSourceFilesLimited(dir, 1000, 150)
 	if err != nil {
 		t.Fatalf("readSourceFilesLimited: %v", err)
 	}
-	if !truncated {
+	if !sr.Truncated {
 		t.Error("expected truncated=true when total bytes exceeds cap")
 	}
 }
@@ -1797,15 +1797,47 @@ func TestReadSourceFilesLimited_TruncateByBytes(t *testing.T) {
 func TestReadSourceFilesLimited_NoTruncate(t *testing.T) {
 	dir := t.TempDir()
 	writeNGoFiles(t, dir, 2, "package x\n")
-	files, truncated, err := readSourceFilesLimited(dir, 1000, 1<<30)
+	sr, err := readSourceFilesLimited(dir, 1000, 1<<30)
 	if err != nil {
 		t.Fatalf("readSourceFilesLimited: %v", err)
 	}
-	if len(files) != 2 {
-		t.Errorf("expected 2 files, got %d", len(files))
+	if len(sr.Files) != 2 {
+		t.Errorf("expected 2 files, got %d", len(sr.Files))
 	}
-	if truncated {
+	if sr.Truncated {
 		t.Error("expected truncated=false within caps")
+	}
+	if len(sr.Unreadable) != 0 {
+		t.Errorf("expected no unreadable files, got %v", sr.Unreadable)
+	}
+}
+
+// TestReadSourceFilesLimited_UnreadableReported pins the second fail-open
+// dimension: a source file present in the tree but unreadable must be
+// reported, not silently dropped (readWorkflowFiles fails loud on the same
+// condition; the source walk used to skip silently). A dangling symlink is a
+// deterministic trigger even when the test runs as root (chmod is bypassed).
+func TestReadSourceFilesLimited_UnreadableReported(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ok.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dangling := filepath.Join(dir, "broken.go")
+	if err := os.Symlink(filepath.Join(dir, "does-not-exist.go"), dangling); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	sr, err := readSourceFilesLimited(dir, 1000, 1<<30)
+	if err != nil {
+		t.Fatalf("readSourceFilesLimited: %v", err)
+	}
+	if _, ok := sr.Files["ok.go"]; !ok {
+		t.Error("readable file ok.go should still be collected")
+	}
+	if len(sr.Unreadable) != 1 {
+		t.Fatalf("expected 1 unreadable file reported, got %v", sr.Unreadable)
+	}
+	if !strings.Contains(sr.Unreadable[0], "broken.go") {
+		t.Errorf("unreadable entry should name broken.go, got %q", sr.Unreadable[0])
 	}
 }
 

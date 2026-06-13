@@ -1617,11 +1617,12 @@ func cliAIVerify(args []string, stdout, stderr io.Writer) error {
 		return errUsage
 	}
 
-	files, truncated, err := readSourceFiles(*dir)
+	sr, err := readSourceFiles(*dir)
 	if err != nil {
 		return fmt.Errorf("read source files: %w", err)
 	}
-	warnIfTruncated(stderr, truncated, *dir, len(files))
+	warnIncompleteScan(stderr, sr, *dir)
+	files := sr.Files
 
 	rules := aiverify.DefaultRules()
 
@@ -1666,11 +1667,12 @@ func cliQualityCheck(args []string, stdout, stderr io.Writer) error {
 		return errUsage
 	}
 
-	files, truncated, err := readSourceFiles(*dir)
+	sr, err := readSourceFiles(*dir)
 	if err != nil {
 		return fmt.Errorf("read source files: %w", err)
 	}
-	warnIfTruncated(stderr, truncated, *dir, len(files))
+	warnIncompleteScan(stderr, sr, *dir)
+	files := sr.Files
 
 	rules := qualitycheck.DefaultRules()
 
@@ -1720,11 +1722,12 @@ func cliTestAudit(args []string, stdout, stderr io.Writer) error {
 		return errUsage
 	}
 
-	files, truncated, err := readSourceFiles(*dir)
+	sr, err := readSourceFiles(*dir)
 	if err != nil {
 		return fmt.Errorf("read source files: %w", err)
 	}
-	warnIfTruncated(stderr, truncated, *dir, len(files))
+	warnIncompleteScan(stderr, sr, *dir)
+	files := sr.Files
 
 	res := testcoverage.Audit(files)
 	if *jsonOut {
@@ -1853,23 +1856,31 @@ func filterReportBySeverity(r alertfix.Report, min string) alertfix.Report {
 	return r
 }
 
+// scanResult は readSourceFiles の結果。スキャンが不完全になった理由を
+// 区別して持つ(remediation が異なるため):Truncated = 上限到達、
+// Unreadable = 存在するが読めなかったソース。どちらも非空なら呼出側が警告する。
+type scanResult struct {
+	Files      map[string]string
+	Truncated  bool     // 1000 件 / 50 MB 上限に達して打ち切った
+	Unreadable []string // ツリー内に在るが os.ReadFile が失敗したソース
+}
+
 // readSourceFiles は dir を再帰的に走査し、Go/TS/JS/Python/Rust/Java の
 // ソースファイルを {relpath: content} として返す。
 // vendor/, node_modules/, .git/ はスキップ。上限 1000 件 / 50 MB。
-// 第 2 戻り値 truncated は上限に達して一部ファイルを取りこぼした場合 true。
-// これが true のまま「findings なし」を報告すると部分スキャンを完全スキャンと
+// スキャンが不完全(上限到達 or 読取失敗)なら scanResult のフラグで通知する。
+// これらを無視して「findings なし」を報告すると部分スキャンを完全スキャンと
 // 取り違える fail-open になるため、呼出側は必ず警告すること。
-func readSourceFiles(dir string) (map[string]string, bool, error) {
+func readSourceFiles(dir string) (scanResult, error) {
 	const maxFiles = 1000
 	const maxTotalBytes = 50 * 1024 * 1024
 	return readSourceFilesLimited(dir, maxFiles, maxTotalBytes)
 }
 
 // readSourceFilesLimited は readSourceFiles の本体(上限を引数化してテスト可能に)。
-func readSourceFilesLimited(dir string, maxFiles int, maxTotalBytes int64) (map[string]string, bool, error) {
-	files := make(map[string]string)
+func readSourceFilesLimited(dir string, maxFiles int, maxTotalBytes int64) (scanResult, error) {
+	sr := scanResult{Files: make(map[string]string)}
 	var totalBytes int64
-	truncated := false
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {
 			return werr
@@ -1884,16 +1895,24 @@ func readSourceFilesLimited(dir string, maxFiles int, maxTotalBytes int64) (map[
 		if !isSourceFile(name) {
 			return nil
 		}
-		if len(files) >= maxFiles {
-			truncated = true
+		if len(sr.Files) >= maxFiles {
+			sr.Truncated = true
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
-			return nil // skip unreadable files silently
+			// 存在するソースが読めない = 検出から漏れる。fail-open を避けるため
+			// 黙殺せず記録する(readWorkflowFiles は同条件で hard-fail するが、
+			// 深いツリー walk を 1 ファイルで止めるのは過剰なので skip+report)。
+			rel, relErr := filepath.Rel(dir, path)
+			if relErr != nil {
+				rel = path
+			}
+			sr.Unreadable = append(sr.Unreadable, rel)
+			return nil
 		}
 		if totalBytes+int64(len(data)) > maxTotalBytes {
-			truncated = true
+			sr.Truncated = true
 			return nil
 		}
 		totalBytes += int64(len(data))
@@ -1901,21 +1920,29 @@ func readSourceFilesLimited(dir string, maxFiles int, maxTotalBytes int64) (map[
 		if relErr != nil {
 			rel = path
 		}
-		files[rel] = string(data)
+		sr.Files[rel] = string(data)
 		return nil
 	})
-	return files, truncated, err
+	return sr, err
 }
 
-// warnIfTruncated は scan が上限で打ち切られた場合に stderr へ目立つ警告を出す。
+// warnIncompleteScan は scan が不完全な場合に stderr へ目立つ警告を出す。
 // 部分スキャンを「クリーン」と誤読させない(fail-open 防止)ための共通処理。
-func warnIfTruncated(stderr io.Writer, truncated bool, dir string, scanned int) {
-	if !truncated {
-		return
+func warnIncompleteScan(stderr io.Writer, sr scanResult, dir string) {
+	if sr.Truncated {
+		fmt.Fprintf(stderr, "warning: scan of %s truncated at %d files / 50MB cap — "+
+			"results cover only part of the tree; narrow --dir or split the scan before trusting a clean verdict\n",
+			dir, len(sr.Files))
 	}
-	fmt.Fprintf(stderr, "warning: scan of %s truncated at %d files / 50MB cap — "+
-		"results cover only part of the tree; narrow --dir or split the scan before trusting a clean verdict\n",
-		dir, scanned)
+	if n := len(sr.Unreadable); n > 0 {
+		shown := sr.Unreadable
+		if len(shown) > 5 {
+			shown = shown[:5]
+		}
+		fmt.Fprintf(stderr, "warning: %d source file(s) in %s could not be read and were skipped "+
+			"(not scanned): %s — fix permissions/symlinks before trusting a clean verdict\n",
+			n, dir, strings.Join(shown, ", "))
+	}
 }
 
 // isSourceFile は name がサポート言語のソースファイルかを返す。
