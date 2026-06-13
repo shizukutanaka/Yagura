@@ -1262,6 +1262,9 @@ func cliPathPolicy(args []string, stdout, stderr io.Writer) error {
 	if err := json.Unmarshal(data, &pol); err != nil {
 		return fmt.Errorf("parse policy %s: %w", *policyPath, err)
 	}
+	if err := pol.Validate(); err != nil {
+		return err
+	}
 
 	changed := splitCSV(*changedCSV)
 	changed = append(changed, pos...)

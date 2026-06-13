@@ -860,6 +860,25 @@ func TestCLI_PathPolicy(t *testing.T) {
 	}
 }
 
+// TestCLI_PathPolicy_InvalidRuleRejected guards the fail-open: a deny rule with
+// a malformed glob would silently never match (path allowed). The CLI must
+// reject the policy at load time rather than gate against a disabled rule.
+func TestCLI_PathPolicy_InvalidRuleRejected(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	pf := filepath.Join(dir, "policy.json")
+	if err := os.WriteFile(pf, []byte(`{"rules":[{"path":"secrets/[","action":"deny"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs := runCLICapture(t, "path-policy", "--policy", pf, "secrets/key.pem")
+	if code == 0 {
+		t.Error("policy with malformed deny glob should be rejected, not silently allowed")
+	}
+	if !strings.Contains(errs, "invalid glob") {
+		t.Errorf("expected 'invalid glob' error, got: %q", errs)
+	}
+}
+
 func TestCLI_PathPolicy_MalformedJSON(t *testing.T) {
 	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
 	dir := t.TempDir()

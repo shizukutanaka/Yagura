@@ -109,6 +109,17 @@ ADR-0001 ゼロ依存を維持(YAML でなく JSON、stdlib のみ)。
   を追加:同位置衝突を含む 20-file map を 40 回 scan して出力が byte 安定で
   あることを確認(将来 map-range の未ソート再混入を捕捉。旧キーに戻すと赤を実証済)。
 
+- **fail-open 修正: pathpolicy ルールを load 時に検証(`Policy.Validate`)**
+  path guardrail は deny/review/allow を glob で判定するが、(a) deny ルールの
+  glob が壊れている(`path.Match` ErrBadPattern → 無マッチ扱い)、(b) action が
+  タイポ(`severity()==0` で allow 既定すら上書きできない)の場合、そのルールは
+  Evaluate で**サイレントに不発**となり、本来 deny されるべきパスが allow に落ちて
+  いた(security guardrail の fail-open)。`Policy.Validate()` を追加し、不正 glob /
+  不明 action / 不明 default / 空 path を load 時 error として顕在化。CLI
+  `path-policy`(`.yagura/paths.json` パース直後)と MCP `yagura_path_policy`
+  (Evaluate 前)の両方で呼ぶ。空 action は従来どおり明示 skip として許容。
+  test-first: Validate 6 ケース + CLI 1 ケースを赤で固定 → 緑。zero-dep。
+
 - **Roadmap CLAUDE.md 更新**: #2(Scanner ↔ alert_fix periodic loop、v0.35 で完了)と
   #5(Alert lifecycle、v0.30 で完了)を ✅ に更新。両者は実装済みだったが
   マークが付いていなかった。#4 を 3 scanner 統一で完遂。
