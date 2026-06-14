@@ -42,6 +42,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/config"
+	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/github"
 	"github.com/shizukutanaka/yagura/internal/harness"
@@ -80,6 +81,7 @@ var cliVerbs = map[string]bool{
 	"claudemd-audit": true,
 	"ai-verify":      true, "quality-check": true, "test-audit": true,
 	"alert-fix": true, "ast-check": true, "review-gate": true,
+	"diff-scan": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -146,6 +148,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliASTCheck(args, stdout, stderr)
 	case "review-gate":
 		err = cliReviewGate(args, stdout, stderr)
+	case "diff-scan":
+		err = cliDiffScan(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -1832,6 +1836,64 @@ func cliReviewGate(args []string, stdout, stderr io.Writer) error {
 	}
 	if *strict && dec.Tier == reviewgate.TierBlock {
 		return fmt.Errorf("review gate: block — %s", strings.Join(dec.Blockers, "; "))
+	}
+	return nil
+}
+
+// ─── diff-scan (v0.36.0, delta 視点) ──────────────────────────
+
+// diffSecretHit は diff の追加行に混入した secret 検出 1 件(diff の file:line 付き)。
+type diffSecretHit struct {
+	Path     string `json:"path"`
+	Line     int    `json:"line"`
+	RuleID   string `json:"rule_id"`
+	Severity string `json:"severity"`
+}
+
+// cliDiffScan は unified diff(stdin か --file)の *追加行のみ* に secret 混入が
+// ないか検査する。スナップショット全体ではなく「この変更が新たに持ち込んだもの」
+// を採点する delta 視点(既存負債で PR を落とさない)。
+func cliDiffScan(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("diff-scan", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	file := fset.String("file", "", "read unified diff from this file (default: stdin)")
+	strict := fset.Bool("strict", false, "exit non-zero if the diff introduces any secret (CI gate)")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	var data []byte
+	var err error
+	if *file != "" {
+		data, err = os.ReadFile(*file)
+		if err != nil {
+			return fmt.Errorf("read diff %s: %w", *file, err)
+		}
+	} else {
+		data, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+	}
+
+	added := diffscan.AddedLines(string(data))
+	sc := secretscan.New()
+	var hits []diffSecretHit
+	for _, al := range added {
+		for _, f := range sc.Scan(al.Text, al.Path) {
+			hits = append(hits, diffSecretHit{Path: al.Path, Line: al.Line, RuleID: f.RuleID, Severity: string(f.Severity)})
+		}
+	}
+
+	if *jsonOut {
+		if err := emitJSON(stdout, map[string]any{"added_lines": len(added), "findings": hits}); err != nil {
+			return err
+		}
+	} else {
+		humanDiffScan(stdout, len(added), hits)
+	}
+	if *strict && len(hits) > 0 {
+		return fmt.Errorf("diff introduced %d secret(s) — failing because --strict is set", len(hits))
 	}
 	return nil
 }

@@ -1794,6 +1794,54 @@ func TestCLI_ASTCheck_CleanDir(t *testing.T) {
 	}
 }
 
+// ─── diff-scan (v0.36.0, delta secret detection) ─────────────
+
+func TestCLI_DiffScan_Clean(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	df := filepath.Join(dir, "clean.diff")
+	if err := os.WriteFile(df, []byte("--- a/x.go\n+++ b/x.go\n@@ -1 +1,2 @@\n package x\n+var n = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "diff-scan", "--file", df)
+	if code != 0 {
+		t.Fatalf("clean diff: code=%d", code)
+	}
+	if !strings.Contains(out, "no secrets introduced") {
+		t.Errorf("expected clean verdict, got: %q", out)
+	}
+}
+
+// Uses the canonical AWS docs example key (push-protection allowlisted; already
+// used in secretscan's own tests) to verify a secret ADDED by a diff is caught,
+// and that --strict exits non-zero.
+func TestCLI_DiffScan_DetectsAddedSecret(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	df := filepath.Join(dir, "leak.diff")
+	body := "--- a/c.go\n+++ b/c.go\n@@ -1 +1,2 @@\n package c\n+const k = \"AKIA" + "IOSFODNN7EXAMPLE\"\n"
+	if err := os.WriteFile(df, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "diff-scan", "--file", df, "--json")
+	if code != 0 {
+		t.Fatalf("diff-scan: code=%d", code)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	findings, _ := res["findings"].([]any)
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 secret introduced, got %d: %s", len(findings), out)
+	}
+	// --strict must exit non-zero
+	code, _, _ = runCLICapture(t, "diff-scan", "--file", df, "--strict")
+	if code == 0 {
+		t.Error("--strict with an introduced secret must exit non-zero")
+	}
+}
+
 // ─── review-gate (v0.36.0, composite ② Review verdict) ───────
 
 func TestCLI_ReviewGate_CleanAllows(t *testing.T) {

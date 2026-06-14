@@ -8,6 +8,20 @@ All notable changes to Yagura are documented here. Format follows
 
 ### Theme — "Custom rule loading (3 scanners) + CLI parity for the quality/health tools"
 
+- **新視点: delta 分析(`internal/diffscan` + CLI `diff-scan`)**
+  ソクラテス的に導出: 既存 scanner は全て **snapshot**(ファイル/内容全体)を採点
+  するが、AI エージェントのレビューで問うべきは「この **変更** が何を新しく持ち込んだ
+  か」。既存負債(古い TODO 等)で PR を落とすのではなく diff が *追加* した行のみを
+  見るのが正しい粒度 = **delta** の視点。`diffscan.AddedLines(unifiedDiff) []AddedLine`
+  が unified diff から追加行を新ファイル側行番号つきで抽出する純粋プリミティブ
+  (削除行は新側カウンタを進めない・`+++` ヘッダは追加行と誤認しない・複数ファイル・
+  /dev/null 新規ファイル対応)。stdlib のみ・git 不要。CLI `diff-scan [--file f]
+  [--json] [--strict]` が追加行のみに secretscan を適用し「この変更が秘密を混入したか」
+  を file:line つきで報告(--strict で混入時 exit 非ゼロ = pre-commit/CI gate)。
+  test-first: parser 6 ケース + CLI 2 ケース(clean / 追加 secret 検出 + --strict)を
+  赤で固定 → 緑。zero-dep。
+  What's not yet: 追加行への injection/quality 検査の拡張、削除行の追跡。
+
 - **新視点: composite review gate(`internal/reviewgate` + CLI `review-gate`)**
   ソクラテス的に導出: ② Review の scanner は各々独立した数値を返すが、変更した
   agent/人間が本当に欲しいのは「merge してよいか?」の 1 答。opsrisk(操作)/

@@ -739,6 +739,20 @@ func humanASTCheck(w io.Writer, res astcheck.Result) {
 	_ = tw.Flush()
 }
 
+func humanDiffScan(w io.Writer, addedLines int, hits []diffSecretHit) {
+	fmt.Fprintf(w, "added_lines: %d   secret_findings: %d\n", addedLines, len(hits))
+	if len(hits) == 0 {
+		fmt.Fprintln(w, "no secrets introduced by this change")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tRULE")
+	for _, h := range hits {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", h.Severity, h.Path, h.Line, h.RuleID)
+	}
+	_ = tw.Flush()
+}
+
 func humanReviewGate(w io.Writer, sig reviewgate.Signals, dec reviewgate.Decision) {
 	fmt.Fprintf(w, "verdict: %s\n", dec.Tier)
 	fmt.Fprintf(w, "signals: secrets=%d ai_risk=%d ai_critical=%d lint_prohibited=%d ast_high=%d\n",

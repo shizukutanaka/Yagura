@@ -21,7 +21,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 53 internal packages
+## Map — 54 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -83,6 +83,9 @@ cortex flywheel 4 段階すべてを単体で機械化:
 
 ### Graph / dependencies
 - `internal/projectgraph` — depends_on graph(neighbors / impact / stats)
+- `internal/diffscan` — unified diff から追加行を抽出する純粋プリミティブ。
+  snapshot ではなく delta の視点(「この変更が新たに持ち込んだもの」)。CLI `diff-scan`
+  が追加行のみに secretscan を適用し「変更が秘密を混入したか」を判定★ v0.36
 
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23
