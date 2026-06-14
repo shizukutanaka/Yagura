@@ -8,6 +8,15 @@ All notable changes to Yagura are documented here. Format follows
 
 ### Theme — "Custom rule loading (3 scanners) + CLI parity for the quality/health tools"
 
+- **fail-open 修正: injectscan の base64 encoding evasion を封鎖**
+  間接プロンプトインジェクション検出器は base64 blob を復号後、狭い固定キーワード
+  (`b64SuspectRe`: ignore/system prompt/api key/…)とだけ照合していた。このため
+  既知パターン(例: `you are now …` の override や role-marker `<|im_start|>system`)
+  に合致する injection でも、base64 で包むだけでキーワードに当たらず**すり抜けて**
+  いた(検出の fail-open)。復号ペイロードを `matchesAnyPattern` で**本体パターン
+  集合にも再走査**するよう修正 — plaintext と同じ検出力を encoded にも適用。
+  test-first: encoded injection 検出 + benign base64 非検出の 2 ケースを赤で固定 → 緑。
+
 - **AST analysis 着手(Roadmap #6): 新 package `internal/astcheck` + CLI `ast-check`**
   go/parser + go/ast(stdlib のみ、ADR-0001 維持)で Go ソースを構造解析し、
   **行 regex では原理的に不可能**な検査を決定論的に提供する:
