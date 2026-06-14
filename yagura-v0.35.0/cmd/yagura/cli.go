@@ -1753,6 +1753,7 @@ func cliASTCheck(args []string, stdout, stderr io.Writer) error {
 	fset := newFlagSet("ast-check", stderr)
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively")
+	surface := fset.Bool("surface", false, "report capability surface (exec/network/unsafe/reflect/crypto) instead of defect findings")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
@@ -1762,6 +1763,15 @@ func cliASTCheck(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("read source files: %w", err)
 	}
 	warnIncompleteScan(stderr, sr, *dir)
+
+	if *surface {
+		res := astcheck.Surface(sr.Files)
+		if *jsonOut {
+			return emitJSON(stdout, res)
+		}
+		humanASTSurface(stdout, res)
+		return nil
+	}
 
 	res := astcheck.ScanFiles(sr.Files)
 	if *jsonOut {

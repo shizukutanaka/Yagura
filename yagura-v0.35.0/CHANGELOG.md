@@ -8,6 +8,20 @@ All notable changes to Yagura are documented here. Format follows
 
 ### Theme — "Custom rule loading (3 scanners) + CLI parity for the quality/health tools"
 
+- **新視点: astcheck に capability surface 分析を追加(`Surface` + `ast-check --surface`)**
+  ソクラテス的に導出: 既存 scanner は全て「コードの *どこが間違っているか*」(defect)
+  を問うが、「コードは *何ができるのか*(何に触れるか)」という least-privilege /
+  attack-surface の視点が欠けていた。opsrisk が *操作* を capability で tier 分類
+  するのに対し、本機能は *コード* の capability を import から静的にプロファイルする
+  (静的な対)。検出: exec(os/exec, syscall)/ network(net, net/http, net/rpc,
+  net/smtp。net/url 等の純パースは除外)/ unsafe / reflect / crypto。go/parser
+  ImportsOnly で型不要・zero-dep。CLI `ast-check --surface [--json]`、capability ごとに
+  該当ファイルを昇順で返す(決定論)。dogfood: 自リポジトリ 235 Go ファイル →
+  network 29 / exec 11 / crypto 11 / reflect 2 / unsafe 1。
+  test-first: domain 5 ケース + CLI 1 ケースを赤で固定 → 緑。
+  What's not yet: `os.WriteFile`/`os.Getenv` 等の call-level 判定(filesystem/env
+  capability)は import 一意でないため今後の増分。
+
 - **fail-open 修正: injectscan の base64 encoding evasion を封鎖**
   間接プロンプトインジェクション検出器は base64 blob を復号後、狭い固定キーワード
   (`b64SuspectRe`: ignore/system prompt/api key/…)とだけ照合していた。このため

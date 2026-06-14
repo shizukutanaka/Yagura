@@ -156,7 +156,7 @@ CLI direct mode (no MCP client required):
   yagura quality-check [--dir .]           Code lint: prohibited patterns, TODO/FIXME, ts-ignore, as any
   yagura test-audit [--dir .]              Source-test coverage detection (Go/TS/JS/Python/Rust/Java; --untested-only)
   yagura alert-fix [--severity-min high]   Portfolio health sweep over registry sensor data (resolved/snoozed filtered)
-  yagura ast-check [--dir .]               Go AST structural audit (os.Exit in library, empty != nil branch, parse errors)
+  yagura ast-check [--dir .]               Go AST structural audit (os.Exit in library, empty != nil branch, parse errors); --surface for capability profile
   Add --json to any of the above for machine-readable output.
   ai-verify/quality-check/secretscan accept --rules-file (or auto-detect
     .yagura/{aiverify,quality,secretscan}.json) to load project-specific rules.

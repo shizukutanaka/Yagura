@@ -1755,6 +1755,29 @@ func TestCLI_ASTCheck_FindsOsExitInLibrary(t *testing.T) {
 	}
 }
 
+// TestCLI_ASTCheck_Surface exercises the new capability-surface perspective.
+func TestCLI_ASTCheck_Surface(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "net.go"),
+		[]byte("package x\nimport \"net/http\"\nvar _ = http.Get\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "ast-check", "--dir", dir, "--surface", "--json")
+	if code != 0 {
+		t.Fatalf("ast-check --surface: code=%d", code)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	byCap, _ := res["by_capability"].(map[string]any)
+	net, _ := byCap["network"].([]any)
+	if len(net) != 1 {
+		t.Errorf("expected net.go under network capability, got %v", byCap)
+	}
+}
+
 func TestCLI_ASTCheck_CleanDir(t *testing.T) {
 	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
 	dir := t.TempDir()

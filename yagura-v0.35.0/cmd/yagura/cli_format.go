@@ -738,6 +738,26 @@ func humanASTCheck(w io.Writer, res astcheck.Result) {
 	_ = tw.Flush()
 }
 
+func humanASTSurface(w io.Writer, res astcheck.SurfaceResult) {
+	fmt.Fprintf(w, "files_scanned: %d  capabilities: %d\n", res.FilesScanned, len(res.ByCapability))
+	if len(res.ByCapability) == 0 {
+		fmt.Fprintln(w, "no exec/network/unsafe/reflect/crypto surface detected")
+		return
+	}
+	caps := make([]string, 0, len(res.ByCapability))
+	for c := range res.ByCapability {
+		caps = append(caps, c)
+	}
+	sort.Strings(caps)
+	for _, c := range caps {
+		files := res.ByCapability[c]
+		fmt.Fprintf(w, "%s (%d):\n", c, len(files))
+		for _, f := range files {
+			fmt.Fprintf(w, "  %s\n", f)
+		}
+	}
+}
+
 // ─── alert-fix (v0.36.0) ─────────────────────────────────────
 
 func humanAlertFix(w io.Writer, r alertfix.Report) {
