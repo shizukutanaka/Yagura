@@ -8,6 +8,17 @@ All notable changes to Yagura are documented here. Format follows
 
 ### Theme — "Custom rule loading (3 scanners) + CLI parity for the quality/health tools"
 
+- **新視点: guard-removal 検出(delta の *削除* 軸、`RemovedLines` / `RemovedGuards`)**
+  ソクラテス的に導出: diff-scan は *追加* 行を見るが、危険な変更は *削除* でも起きる
+  ——エラーチェック・panic 回復・後始末を**消す**変更。エージェントが「修正」と称して
+  `if err != nil` を削るのは典型的失敗。`diffscan.RemovedLines` が削除行を旧ファイル
+  行番号つきで抽出(追加行は旧側カウンタを進めない・`---` ヘッダ除外)、`RemovedGuards`
+  が高シグナルな削除を分類: `recover-removed` / `error-check-removed` /
+  `cleanup-removed`(defer Close/Unlock/RUnlock/Done/Stop)。CLI `diff-scan` が
+  "guards removed" セクションで file:line + kind を報告。正当な refactor を CI で
+  落とさないよう **review-only**(--strict は secret 混入のみに連動)。
+  test-first: RemovedLines 3 + RemovedGuards 4 + CLI 1 ケースを赤で固定 → 緑。
+
 - **新視点: delta 分析(`internal/diffscan` + CLI `diff-scan`)**
   ソクラテス的に導出: 既存 scanner は全て **snapshot**(ファイル/内容全体)を採点
   するが、AI エージェントのレビューで問うべきは「この **変更** が何を新しく持ち込んだ

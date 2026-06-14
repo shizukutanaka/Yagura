@@ -1884,13 +1884,14 @@ func cliDiffScan(args []string, stdout, stderr io.Writer) error {
 			hits = append(hits, diffSecretHit{Path: al.Path, Line: al.Line, RuleID: f.RuleID, Severity: string(f.Severity)})
 		}
 	}
+	guards := diffscan.RemovedGuards(string(data))
 
 	if *jsonOut {
-		if err := emitJSON(stdout, map[string]any{"added_lines": len(added), "findings": hits}); err != nil {
+		if err := emitJSON(stdout, map[string]any{"added_lines": len(added), "findings": hits, "guards_removed": guards}); err != nil {
 			return err
 		}
 	} else {
-		humanDiffScan(stdout, len(added), hits)
+		humanDiffScan(stdout, len(added), hits, guards)
 	}
 	if *strict && len(hits) > 0 {
 		return fmt.Errorf("diff introduced %d secret(s) — failing because --strict is set", len(hits))

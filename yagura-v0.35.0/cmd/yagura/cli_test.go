@@ -1842,6 +1842,35 @@ func TestCLI_DiffScan_DetectsAddedSecret(t *testing.T) {
 	}
 }
 
+// TestCLI_DiffScan_GuardRemoval flags a deleted safety construct (delta removed
+// axis) without failing --strict (guard removals are review-only, not blocking).
+func TestCLI_DiffScan_GuardRemoval(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	df := filepath.Join(dir, "g.diff")
+	body := "--- a/c.go\n+++ b/c.go\n@@ -1,2 +1,1 @@\n mu.Lock()\n-defer mu.Unlock()\n"
+	if err := os.WriteFile(df, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "diff-scan", "--file", df, "--json")
+	if code != 0 {
+		t.Fatalf("diff-scan: code=%d", code)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	guards, _ := res["guards_removed"].([]any)
+	if len(guards) != 1 {
+		t.Fatalf("expected 1 guard removal, got %d: %s", len(guards), out)
+	}
+	// guard removal alone must not trip --strict (only secrets do).
+	code, _, _ = runCLICapture(t, "diff-scan", "--file", df, "--strict")
+	if code != 0 {
+		t.Errorf("guard removal must not fail --strict (review-only), got code=%d", code)
+	}
+}
+
 // ─── review-gate (v0.36.0, composite ② Review verdict) ───────
 
 func TestCLI_ReviewGate_CleanAllows(t *testing.T) {

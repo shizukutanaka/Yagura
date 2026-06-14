@@ -83,9 +83,10 @@ cortex flywheel 4 段階すべてを単体で機械化:
 
 ### Graph / dependencies
 - `internal/projectgraph` — depends_on graph(neighbors / impact / stats)
-- `internal/diffscan` — unified diff から追加行を抽出する純粋プリミティブ。
-  snapshot ではなく delta の視点(「この変更が新たに持ち込んだもの」)。CLI `diff-scan`
-  が追加行のみに secretscan を適用し「変更が秘密を混入したか」を判定★ v0.36
+- `internal/diffscan` — unified diff から追加行/削除行を抽出する純粋プリミティブ。
+  snapshot ではなく delta の視点。`AddedLines`(「変更が新たに持ち込んだもの」)+
+  `RemovedLines`/`RemovedGuards`(「外された安全装置」= error-check/recover/cleanup の
+  削除)。CLI `diff-scan` が追加行に secretscan を適用 + 削除 guard を review-only 報告★ v0.36
 
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23

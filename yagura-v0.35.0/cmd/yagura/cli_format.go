@@ -22,6 +22,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
+	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
@@ -739,18 +740,27 @@ func humanASTCheck(w io.Writer, res astcheck.Result) {
 	_ = tw.Flush()
 }
 
-func humanDiffScan(w io.Writer, addedLines int, hits []diffSecretHit) {
-	fmt.Fprintf(w, "added_lines: %d   secret_findings: %d\n", addedLines, len(hits))
-	if len(hits) == 0 {
+func humanDiffScan(w io.Writer, addedLines int, hits []diffSecretHit, guards []diffscan.GuardRemoval) {
+	fmt.Fprintf(w, "added_lines: %d   secret_findings: %d   guards_removed: %d\n", addedLines, len(hits), len(guards))
+	if len(hits) > 0 {
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tRULE")
+		for _, h := range hits {
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", h.Severity, h.Path, h.Line, h.RuleID)
+		}
+		_ = tw.Flush()
+	} else {
 		fmt.Fprintln(w, "no secrets introduced by this change")
-		return
 	}
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tRULE")
-	for _, h := range hits {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", h.Severity, h.Path, h.Line, h.RuleID)
+	if len(guards) > 0 {
+		fmt.Fprintln(w, "guards removed (review — a safety construct was deleted):")
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "KIND\tFILE\tLINE\tTEXT")
+		for _, g := range guards {
+			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", g.Kind, g.Path, g.Line, g.Text)
+		}
+		_ = tw.Flush()
 	}
-	_ = tw.Flush()
 }
 
 func humanReviewGate(w io.Writer, sig reviewgate.Signals, dec reviewgate.Decision) {

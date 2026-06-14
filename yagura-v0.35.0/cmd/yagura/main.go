@@ -158,7 +158,7 @@ CLI direct mode (no MCP client required):
   yagura alert-fix [--severity-min high]   Portfolio health sweep over registry sensor data (resolved/snoozed filtered)
   yagura ast-check [--dir .]               Go AST structural audit (os.Exit in library, empty != nil branch, parse errors); --surface for capability profile
   yagura review-gate [--dir .] [--strict] Composite ② Review verdict (allow/review/block) over secretscan+aiverify+qualitycheck+astcheck
-  yagura diff-scan [--file f] [--strict]   Scan only a unified diff's ADDED lines for introduced secrets (stdin or --file)
+  yagura diff-scan [--file f] [--strict]   Delta scan of a unified diff: secrets in ADDED lines (--strict gate) + removed safety guards (review)
   Add --json to any of the above for machine-readable output.
   ai-verify/quality-check/secretscan accept --rules-file (or auto-detect
     .yagura/{aiverify,quality,secretscan}.json) to load project-specific rules.
