@@ -46,7 +46,8 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - `internal/testcoverage` — source-test 対応検出 ★ v0.26
 - `internal/astcheck` — Go 構造解析(go/ast、zero-dep)。行 regex では不能な検査:
   os.Exit in library(package 文脈)/ 空 `!= nil` 分岐(block 構造)/ defer-in-loop
-  (ループ×関数スコープ)/ parse-error。CLI `ast-check`(Roadmap #6 の増分)★ v0.36
+  (ループ×関数スコープ)/ err 文字列比較 / parse-error。CLI `ast-check`
+  (Roadmap #6 の増分、自リポジトリ 233 ファイルで dogfood 済み)★ v0.36
 - `internal/ccsecurity` — Claude Code プロジェクトのセキュリティ姿勢を決定論的に監査
   (機械判定可能な対策 = .env 同梱/危険フラグ/deny ルール/CLAUDE.md ルール/git/MCP 最小化 を
   スコア化、人手プロセス項目はガイダンス提示。CLI `cc-security`)★ v0.36

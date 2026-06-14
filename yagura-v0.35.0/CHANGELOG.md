@@ -18,12 +18,17 @@ All notable changes to Yagura are documented here. Format follows
   - `defer-in-loop`: ループ内の `defer`。defer は関数 return 時にまとめて走るため
     毎イテレーションで資源が解放されず蓄積する古典的 leak。**ループ/関数スコープを
     跨いだ文脈**が必要(毎回呼ばれる closure 内の defer は正しい使い方なので除外)。
+  - `error-string-compare`: `err.Error() == "..."` の err 文字列比較。メッセージは
+    変わりうるので脆い(errors.Is/As か sentinel を使う)。**`.Error()` 呼出が
+    ==/!= の被演算子である**ことの判定が必要(logging 用途は除外)。
   - `parse-error`: 解析失敗した Go ファイルを surface(黙ってスキップしない)。
   `ScanFiles` は .go のみ対象、findings は全順序(File→Line→Column→Rule)で整列
   (map 走査順に依存しない determinism)。CLI `yagura ast-check [--dir .] [--json]`。
-  test-first: domain 12 ケース(os.Exit lib/main/test・空/非空 nil 分岐・defer in
-  for/range/closure-exempt/top-level・parse-error・非go skip・determinism)+ CLI 2
-  ケースを赤で固定 → 緑。zero-dep。
+  test-first: domain 16 ケース(os.Exit lib/main/test・空/非空 nil 分岐・defer in
+  for/range/closure-exempt/top-level・err 文字列比較 ==/!=/logging-exempt/errors.Is・
+  parse-error・非go skip・determinism)+ CLI 2 ケースを赤で固定 → 緑。zero-dep。
+  dogfood: `yagura ast-check --dir .` を自リポジトリ 233 Go ファイルに適用 → 0 件
+  (false positive なし、決定論)。
   What's not yet: go/types を要する検査(未使用 error 返り値の型確認等)は
   パッケージロードが必要で zero-dep と要相談。現状は型不要の構造検査に限定。
 
