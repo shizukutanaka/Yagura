@@ -29,6 +29,9 @@ All notable changes to Yagura are documented here. Format follows
   parse-error・非go skip・determinism)+ CLI 2 ケースを赤で固定 → 緑。zero-dep。
   dogfood: `yagura ast-check --dir .` を自リポジトリ 233 Go ファイルに適用 → 0 件
   (false positive なし、決定論)。
+  MCP `yagura_ast_check`(tool #63)も追加。`files` map(path→content)を受けて
+  CLI と同じ `astcheck.ScanFiles` を実行 — daemon/agent からも構造監査を呼べる
+  (CLI はディレクトリ walk、MCP は本文を request で受ける、の従来パターン)。
   What's not yet: go/types を要する検査(未使用 error 返り値の型確認等)は
   パッケージロードが必要で zero-dep と要相談。現状は型不要の構造検査に限定。
 

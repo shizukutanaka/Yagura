@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
+	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 )
@@ -269,6 +270,43 @@ func buildTestAuditTool(d Deps) *Tool {
 				"by_language":       res.ByLanguage,
 			}
 			return out, nil
+		},
+	}
+}
+
+// ─── yagura_ast_check (v0.36.0, Roadmap #6) ───────────────────
+//
+// go/ast による構造解析。行 regex では原理的に書けない検査
+// (os.Exit in library / 空 != nil 分岐 / defer-in-loop / err 文字列比較 /
+// parse-error)を決定論的に返す。CLI `ast-check` と同じ astcheck.ScanFiles。
+func buildASTCheckTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_ast_check",
+		Description: "[G] Go AST structural audit. os.Exit in library, empty != nil branch, defer in loop, err-string compare, parse errors.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{"type": "object"},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			res := astcheck.ScanFiles(in.Files)
+			return map[string]any{
+				"files_scanned": res.FilesScanned,
+				"findings":      res.Findings,
+				"by_severity":   res.BySeverity,
+				"by_rule":       res.ByRule,
+			}, nil
 		},
 	}
 }

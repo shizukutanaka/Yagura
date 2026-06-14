@@ -26,7 +26,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 62 tool definitions
+- `internal/mcp` — MCP server + 63 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 
