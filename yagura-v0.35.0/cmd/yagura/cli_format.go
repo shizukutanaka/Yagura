@@ -29,6 +29,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
+	"github.com/shizukutanaka/yagura/internal/reviewgate"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
@@ -736,6 +737,18 @@ func humanASTCheck(w io.Writer, res astcheck.Result) {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.Severity, f.File, f.Line, f.Rule, f.Message)
 	}
 	_ = tw.Flush()
+}
+
+func humanReviewGate(w io.Writer, sig reviewgate.Signals, dec reviewgate.Decision) {
+	fmt.Fprintf(w, "verdict: %s\n", dec.Tier)
+	fmt.Fprintf(w, "signals: secrets=%d ai_risk=%d ai_critical=%d lint_prohibited=%d ast_high=%d\n",
+		sig.SecretFindings, sig.AIRiskScore, sig.AICritical, sig.LintProhibited, sig.ASTHigh)
+	for _, b := range dec.Blockers {
+		fmt.Fprintf(w, "  blocker: %s\n", b)
+	}
+	for _, r := range dec.Reasons {
+		fmt.Fprintf(w, "  %s\n", r)
+	}
 }
 
 func humanASTSurface(w io.Writer, res astcheck.SurfaceResult) {

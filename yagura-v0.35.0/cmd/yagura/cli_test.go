@@ -1794,6 +1794,53 @@ func TestCLI_ASTCheck_CleanDir(t *testing.T) {
 	}
 }
 
+// ─── review-gate (v0.36.0, composite ② Review verdict) ───────
+
+func TestCLI_ReviewGate_CleanAllows(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ok.go"),
+		[]byte("package x\nfunc Add(a, b int) int { return a + b }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "review-gate", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("review-gate clean: code=%d out=%s", code, out)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	dec, _ := res["decision"].(map[string]any)
+	if dec["tier"] != "allow" {
+		t.Errorf("clean code should allow, got %v", dec["tier"])
+	}
+}
+
+// A high-severity AST finding (os.Exit in a library package) is a hard signal
+// → block, and --strict must exit non-zero.
+func TestCLI_ReviewGate_HardSignalBlocksStrict(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lib.go"),
+		[]byte("package lib\nimport \"os\"\nfunc Boom() { os.Exit(1) }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// non-strict: prints verdict, exit 0
+	code, out, _ := runCLICapture(t, "review-gate", "--dir", dir)
+	if code != 0 {
+		t.Fatalf("non-strict should exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "verdict: block") {
+		t.Errorf("expected block verdict, got: %q", out)
+	}
+	// strict: block → non-zero exit
+	code, _, _ = runCLICapture(t, "review-gate", "--dir", dir, "--strict")
+	if code == 0 {
+		t.Error("--strict on a block verdict must exit non-zero")
+	}
+}
+
 // ─── secretscan custom rules (v0.36.0) ───────────────────────
 
 // TestCLI_SecretScan_CustomRulesFile seeds a project whose notes contain an

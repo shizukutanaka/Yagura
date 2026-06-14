@@ -8,6 +8,23 @@ All notable changes to Yagura are documented here. Format follows
 
 ### Theme — "Custom rule loading (3 scanners) + CLI parity for the quality/health tools"
 
+- **新視点: composite review gate(`internal/reviewgate` + CLI `review-gate`)**
+  ソクラテス的に導出: ② Review の scanner は各々独立した数値を返すが、変更した
+  agent/人間が本当に欲しいのは「merge してよいか?」の 1 答。opsrisk(操作)/
+  pathpolicy(パス)が tier 判定を出すのに、② Review にはそれを束ねる合成判定が
+  無かった。`reviewgate.Evaluate(Signals) Decision` が secretscan/aiverify/
+  qualitycheck/astcheck のサマリを決定論的に 1 つの tier(allow/review/block)へ
+  集約する。secure-by-default: 秘密 / 禁止 lint / CRITICAL AI risk / high AST は
+  いずれも即 block。CLI `review-gate --dir . [--json] [--strict]`(--strict で
+  block 時 exit 非ゼロ = CI gate)。これら ② scanner を --dir に対し一括実行。
+  test-first: domain 8 ケース + CLI 2 ケースを赤で固定 → 緑。zero-dep。
+  dogfood: 自リポジトリは block(自身の scanner test fixture / パターン定義が
+  検出に当たるため — security tool の self-scan の性質、誤検出ではない)。
+  Synergy: opsrisk(操作 capability tier)/ astcheck surface(コード capability)/
+  reviewgate(② 合成 tier)が「capability/tier」共通語彙で接続。
+  What's not yet: injectscan は untrusted content 用途のため code-review gate には
+  含めず。閾値の policy 設定(`.yagura/reviewgate.json`)も今後。
+
 - **新視点: astcheck に capability surface 分析を追加(`Surface` + `ast-check --surface`)**
   ソクラテス的に導出: 既存 scanner は全て「コードの *どこが間違っているか*」(defect)
   を問うが、「コードは *何ができるのか*(何に触れるか)」という least-privilege /

@@ -21,7 +21,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 52 internal packages
+## Map — 53 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -53,6 +53,10 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - `internal/ccsecurity` — Claude Code プロジェクトのセキュリティ姿勢を決定論的に監査
   (機械判定可能な対策 = .env 同梱/危険フラグ/deny ルール/CLAUDE.md ルール/git/MCP 最小化 を
   スコア化、人手プロセス項目はガイダンス提示。CLI `cc-security`)★ v0.36
+- `internal/reviewgate` — ② Review scanner 群(secretscan/aiverify/qualitycheck/astcheck)
+  の結果を 1 つの合成判定(allow/review/block)へ束ねる deterministic gate。hard signal は
+  secure-by-default で即 block。opsrisk(操作)/pathpolicy(パス)の ② Review 版の対。
+  CLI `review-gate --dir . [--strict]`★ v0.36
 
 ### Security sensors (observation)
 - `internal/osv` — OSV.dev 脆弱性 API client

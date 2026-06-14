@@ -53,6 +53,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/registry"
+	"github.com/shizukutanaka/yagura/internal/reviewgate"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
@@ -78,7 +79,7 @@ var cliVerbs = map[string]bool{
 	"path-policy": true, "inject-scan": true, "cc-security": true,
 	"claudemd-audit": true,
 	"ai-verify":      true, "quality-check": true, "test-audit": true,
-	"alert-fix": true, "ast-check": true,
+	"alert-fix": true, "ast-check": true, "review-gate": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -143,6 +144,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliAlertFix(args, stdout, stderr)
 	case "ast-check":
 		err = cliASTCheck(args, stdout, stderr)
+	case "review-gate":
+		err = cliReviewGate(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -1778,6 +1781,58 @@ func cliASTCheck(args []string, stdout, stderr io.Writer) error {
 		return emitJSON(stdout, res)
 	}
 	humanASTCheck(stdout, res)
+	return nil
+}
+
+// ─── review-gate (v0.36.0, 新視点) ────────────────────────────
+
+// cliReviewGate は cortex flywheel ② Review の scanner 群(secretscan / aiverify /
+// qualitycheck / astcheck)を --dir に対して走らせ、reviewgate で 1 つの合成判定
+// (allow / review / block)へ束ねる。--strict で block 時に exit 非ゼロ(CI gate)。
+func cliReviewGate(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("review-gate", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively")
+	strict := fset.Bool("strict", false, "exit non-zero if the gate verdict is block (CI gate)")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	sr, err := readSourceFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("read source files: %w", err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	files := sr.Files
+
+	ai := aiverify.Scan(files)
+	ql := qualitycheck.ScanFiles(files, qualitycheck.DefaultRules())
+	ast := astcheck.ScanFiles(files)
+	sc := secretscan.New()
+	secretTotal := 0
+	for path, content := range files {
+		secretTotal += len(sc.Scan(content, path))
+	}
+
+	sig := reviewgate.Signals{
+		SecretFindings: secretTotal,
+		AIRiskScore:    ai.RiskScore,
+		AICritical:     ai.BySeverity[aiverify.RiskCritical],
+		LintProhibited: ql.BySeverity[qualitycheck.SevProhibited],
+		ASTHigh:        ast.BySeverity["high"],
+	}
+	dec := reviewgate.Evaluate(sig)
+
+	if *jsonOut {
+		if err := emitJSON(stdout, map[string]any{"signals": sig, "decision": dec}); err != nil {
+			return err
+		}
+	} else {
+		humanReviewGate(stdout, sig, dec)
+	}
+	if *strict && dec.Tier == reviewgate.TierBlock {
+		return fmt.Errorf("review gate: block — %s", strings.Join(dec.Blockers, "; "))
+	}
 	return nil
 }
 
