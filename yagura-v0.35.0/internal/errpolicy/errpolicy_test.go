@@ -88,15 +88,16 @@ func TestScan_NakedReturn(t *testing.T) {
 	if r.WrapRatio != 0.0 {
 		t.Errorf("WrapRatio: want 0.0 got %f", r.WrapRatio)
 	}
-	// naked returns should each produce a low-severity finding
-	naked := 0
+	// naked returns are an aggregate metric, NOT per-site findings (package
+	// contract: blank-discard is the actionable finding; naked feeds the ratio).
+	// nakedSrc has no discards / parse errors, so Findings must be empty.
 	for _, f := range r.Findings {
 		if f.Rule == "naked-error-return" {
-			naked++
+			t.Errorf("naked returns must not produce findings (noise); got %+v", f)
 		}
 	}
-	if naked != 2 {
-		t.Errorf("naked-error-return findings: want 2 got %d", naked)
+	if len(r.Findings) != 0 {
+		t.Errorf("Findings: want 0 (naked is metric-only) got %d: %+v", len(r.Findings), r.Findings)
 	}
 }
 

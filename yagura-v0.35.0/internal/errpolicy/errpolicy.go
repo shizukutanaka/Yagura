@@ -145,13 +145,11 @@ func classifyReturns(path string, body *ast.BlockStmt, fset *token.FileSet, r *R
 			if e.Name == "nil" || isExported(e.Name) {
 				return true
 			}
+			// naked return は集計指標(NakedReturns / wrap_ratio)に畳み込む。
+			// `return err` は Go では idiomatic で、per-site finding にすると
+			// 大量の低価値ノイズが actionable な error-discarded を埋もれさせる
+			// (package doc: blank-discard が actionable finding、naked は metric)。
 			r.NakedReturns++
-			pos := fset.Position(ret.Pos())
-			r.Findings = append(r.Findings, Finding{
-				File: path, Line: pos.Line, Column: pos.Column,
-				Rule: "naked-error-return", Severity: "low",
-				Message: "error returned without context — consider fmt.Errorf(\"...: %w\", " + e.Name + ")",
-			})
 		case *ast.CallExpr:
 			if isErrorfWrap(e) {
 				r.WrappedReturns++
