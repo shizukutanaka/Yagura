@@ -13,6 +13,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
+	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
@@ -363,6 +364,55 @@ func buildErrPolicyTool(d Deps) *Tool {
 				"blank_discards":  rep.BlankDiscards,
 				"wrap_ratio":      rep.WrapRatio,
 				"findings":        rep.Findings,
+			}, nil
+		},
+	}
+}
+
+// ─── yagura_complexity (v0.36.0) ──────────────────────────────
+//
+// ソクラテス的動機: 「このコードはそもそも完全にテストできるか?」という testability
+// の前提条件。循環的複雑度 = 全パス網羅に要するテストケースの下限。assertcheck/
+// coverage が検証の結果なら、本 tool は検証可能性そのものを測る。
+
+func buildComplexityTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_complexity",
+		Description: "[Q] Cyclomatic complexity (Go, gocyclo-compatible). Per-function McCabe score; flags functions over threshold (default 10).",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for .go files to analyse",
+				},
+				"threshold": map[string]any{
+					"type":        "integer",
+					"description": "complexity threshold for findings (default 10)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files     map[string]string `json:"files"`
+				Threshold int               `json:"threshold"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := complexity.Scan(in.Files, in.Threshold)
+			return map[string]any{
+				"files_scanned":  rep.FilesScanned,
+				"threshold":      rep.Threshold,
+				"max_complexity": rep.MaxComplexity,
+				"avg_complexity": rep.AvgComplexity,
+				"over_threshold": rep.OverThreshold,
+				"functions":      rep.Functions,
+				"findings":       rep.Findings,
 			}, nil
 		},
 	}

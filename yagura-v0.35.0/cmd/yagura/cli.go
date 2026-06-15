@@ -42,6 +42,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
+	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/config"
 	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
@@ -86,7 +87,7 @@ var cliVerbs = map[string]bool{
 	"ai-verify":      true, "quality-check": true, "test-audit": true,
 	"alert-fix": true, "ast-check": true, "review-gate": true,
 	"diff-scan": true, "flow-risk": true, "coverage": true,
-	"assert-check": true, "err-policy": true,
+	"assert-check": true, "err-policy": true, "complexity": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -163,6 +164,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliAssertCheck(args, stdout, stderr)
 	case "err-policy":
 		err = cliErrPolicy(args, stdout, stderr)
+	case "complexity":
+		err = cliComplexity(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -2099,6 +2102,42 @@ func cliErrPolicy(args []string, stdout, stderr io.Writer) error {
 		if d > 0 && rep.WrapRatio < *minRatio {
 			return fmt.Errorf("wrap ratio %.2f below --min-wrap %.2f (%d naked of %d error returns)", rep.WrapRatio, *minRatio, rep.NakedReturns, d)
 		}
+	}
+	return nil
+}
+
+// ─── complexity (v0.36.0) ────────────────────────────────────
+
+// cliComplexity は `yagura complexity` を処理する。Go 関数の循環的複雑度を計測し、
+// しきい値(--max、既定 10)超過の関数を flag する。--strict で超過時に exit 1。
+// ソクラテス的動機: テストできる前提条件(全パス網羅に要するテスト数の下限)を数値化。
+// token 不要(ローカル静的解析)。capped+warned walker を共有(fail-open 防止)。
+func cliComplexity(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("complexity", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	max := fset.Int("max", 10, "complexity threshold; functions above this are flagged")
+	strict := fset.Bool("strict", false, "exit non-zero if any function exceeds --max")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return err
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+
+	rep := complexity.Scan(sr.Files, *max)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanComplexity(stdout, rep)
+	}
+	if *strict && rep.OverThreshold > 0 {
+		return fmt.Errorf("%d function(s) exceed complexity threshold %d (max observed %d)", rep.OverThreshold, rep.Threshold, rep.MaxComplexity)
 	}
 	return nil
 }

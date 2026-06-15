@@ -23,6 +23,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
+	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
@@ -768,6 +769,25 @@ func humanAssertCheck(w io.Writer, r assertcheck.Report) {
 			status = "HOLLOW"
 		}
 		fmt.Fprintf(tw, "%s\t%d\t%d\t%.2f\t%s\n", f.Path, f.TestFuncs, f.Assertions, f.Density, status)
+	}
+	_ = tw.Flush()
+}
+
+func humanComplexity(w io.Writer, r complexity.Report) {
+	fmt.Fprintf(w, "files_scanned: %d   functions: %d   max: %d   avg: %.1f   over_threshold(>%d): %d\n",
+		r.FilesScanned, len(r.Functions), r.MaxComplexity, r.AvgComplexity, r.Threshold, r.OverThreshold)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no functions over the complexity threshold")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tCOMPLEXITY\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		if f.Rule == "parse-error" {
+			fmt.Fprintf(tw, "%s\t-\t%s\t%d\t%s\n", f.Severity, f.File, f.Line, f.Message)
+			continue
+		}
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Complexity, f.File, f.Line, f.Func)
 	}
 	_ = tw.Flush()
 }

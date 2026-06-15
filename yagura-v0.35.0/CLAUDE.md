@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 58 internal packages
+## Map — 59 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 65 tool definitions
+- `internal/mcp` — MCP server + 66 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 
@@ -101,6 +101,10 @@ cortex flywheel 4 段階すべてを単体で機械化:
   「失敗時に *どこで・なぜ* 分かるか」の軸。naked `return err`(context 喪失)vs
   wrapped `fmt.Errorf(...%w...)` の wrap 率 + `_ = call()` の blank-discard 検出。
   type-free(Go の慣習に依拠)。CLI `err-policy --dir . [--min-wrap R]`★ v0.36
+- `internal/complexity` — 循環的複雑度(McCabe、gocyclo 互換)を go/ast で計測
+  (ソクラテス新視点)。「そもそも完全にテストできるか」という testability の前提
+  条件 = 全パス網羅に要するテスト数の下限。関数別スコア + しきい値超過 flag。
+  CLI `complexity --dir . [--max N] [--strict]`、MCP `yagura_complexity`★ v0.36
 
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23
