@@ -45,6 +45,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/config"
 	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
+	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/github"
@@ -85,7 +86,7 @@ var cliVerbs = map[string]bool{
 	"ai-verify":      true, "quality-check": true, "test-audit": true,
 	"alert-fix": true, "ast-check": true, "review-gate": true,
 	"diff-scan": true, "flow-risk": true, "coverage": true,
-	"assert-check": true,
+	"assert-check": true, "err-policy": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -160,6 +161,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliCoverage(args, stdout, stderr)
 	case "assert-check":
 		err = cliAssertCheck(args, stdout, stderr)
+	case "err-policy":
+		err = cliErrPolicy(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -2083,6 +2086,68 @@ func cliAssertCheck(args []string, stdout, stderr io.Writer) error {
 		hollowFrac := float64(rep.HollowFiles) / float64(rep.TestFiles)
 		if hollowFrac > *maxDensity {
 			return fmt.Errorf("hollow fraction %.2f exceeds --max-hollow %.2f (%d/%d test files)", hollowFrac, *maxDensity, rep.HollowFiles, rep.TestFiles)
+		}
+	}
+	return nil
+}
+
+// ─── err-policy (v0.36.0) ────────────────────────────────────
+
+// cliErrPolicy は `yagura err-policy` を処理する。Go ソースのエラー診断可能性を計測:
+// naked `return err`(context 喪失)vs wrapped `fmt.Errorf(...%w...)` の wrap 率 +
+// `_ = call()` の blank-discard 検出。token 不要(ローカル静的解析)。
+func cliErrPolicy(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("err-policy", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	minRatio := fset.Float64("min-wrap", 0, "exit non-zero if wrap ratio is below this (0 = no gate)")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	files := map[string]string{}
+	walkErr := filepath.WalkDir(*dir, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "vendor" || name == "node_modules" || name == ".git" || name == ".yagura" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "warning: cannot read %s: %v\n", path, err)
+			return nil
+		}
+		rel, relErr := filepath.Rel(*dir, path)
+		if relErr != nil {
+			rel = path
+		}
+		files[rel] = string(data)
+		return nil
+	})
+	if walkErr != nil {
+		return fmt.Errorf("walk %s: %w", *dir, walkErr)
+	}
+
+	rep := errpolicy.Scan(files)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanErrPolicy(stdout, rep)
+	}
+	if *minRatio > 0 {
+		d := rep.WrappedReturns + rep.NakedReturns
+		if d > 0 && rep.WrapRatio < *minRatio {
+			return fmt.Errorf("wrap ratio %.2f below --min-wrap %.2f (%d naked of %d error returns)", rep.WrapRatio, *minRatio, rep.NakedReturns, d)
 		}
 	}
 	return nil

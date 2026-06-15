@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 57 internal packages
+## Map — 58 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 64 tool definitions
+- `internal/mcp` — MCP server + 65 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 
@@ -97,6 +97,10 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - `internal/assertcheck` — テストのアサーション密度を分析(ソクラテス新視点)。
   hollow test(assertion 無し)= 常に緑でも何も証明しない。`Scan(files)` →
   `Report{HollowFiles, AvgDensity, ...}`。CLI `assert-check --dir . [--max-hollow F]`★ v0.36
+- `internal/errpolicy` — エラー診断可能性を go/ast で計測(ソクラテス新視点)。
+  「失敗時に *どこで・なぜ* 分かるか」の軸。naked `return err`(context 喪失)vs
+  wrapped `fmt.Errorf(...%w...)` の wrap 率 + `_ = call()` の blank-discard 検出。
+  type-free(Go の慣習に依拠)。CLI `err-policy --dir . [--min-wrap R]`★ v0.36
 
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23

@@ -13,6 +13,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
+	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 )
@@ -319,6 +320,49 @@ func buildAssertCheckTool(d Deps) *Tool {
 				"hollow_files":     rep.HollowFiles,
 				"avg_density":      rep.AvgDensity,
 				"files":            rep.Files,
+			}, nil
+		},
+	}
+}
+
+// ─── yagura_err_policy (v0.36.0) ──────────────────────────────
+//
+// ソクラテス的動機: 「失敗が起きたとき、どこで・なぜ かが分かるか?」という診断
+// 可能性の軸。naked `return err`(context 喪失)vs wrapped `fmt.Errorf(...%w...)`
+// の wrap 率を計測し、`_ = call()` の blank-discard を surface する。
+
+func buildErrPolicyTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_err_policy",
+		Description: "[Q] Error-context discipline (Go). Wrap ratio (fmt.Errorf %w vs naked return err) + blank-discard (`_ = call()`) detection.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for .go files to analyse",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := errpolicy.Scan(in.Files)
+			return map[string]any{
+				"files_scanned":   rep.FilesScanned,
+				"wrapped_returns": rep.WrappedReturns,
+				"naked_returns":   rep.NakedReturns,
+				"blank_discards":  rep.BlankDiscards,
+				"wrap_ratio":      rep.WrapRatio,
+				"findings":        rep.Findings,
 			}, nil
 		},
 	}

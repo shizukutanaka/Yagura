@@ -165,6 +165,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_ast_check",
 		// v0.36 — test assertion density (hollow test detection)
 		"yagura_assert_check",
+		// v0.36 — error-context discipline (wrap ratio + blank-discard)
+		"yagura_err_policy",
 		// v0.27 — cortex flywheel ④ Alert-Fix
 		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
 		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",

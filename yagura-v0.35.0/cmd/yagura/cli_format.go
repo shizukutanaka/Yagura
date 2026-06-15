@@ -25,6 +25,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
+	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/harness"
@@ -767,6 +768,30 @@ func humanAssertCheck(w io.Writer, r assertcheck.Report) {
 			status = "HOLLOW"
 		}
 		fmt.Fprintf(tw, "%s\t%d\t%d\t%.2f\t%s\n", f.Path, f.TestFuncs, f.Assertions, f.Density, status)
+	}
+	_ = tw.Flush()
+}
+
+func humanErrPolicy(w io.Writer, r errpolicy.Report) {
+	fmt.Fprintf(w, "files_scanned: %d   wrap_ratio: %.2f   wrapped: %d   naked: %d   blank_discards: %d\n",
+		r.FilesScanned, r.WrapRatio, r.WrappedReturns, r.NakedReturns, r.BlankDiscards)
+	// surface だけ表示: blank-discard(medium)と parse-error は actionable。
+	// naked-error-return(low)は件数が多いので findings 表からは省き、上の指標に集約。
+	var actionable []errpolicy.Finding
+	for _, f := range r.Findings {
+		if f.Rule == "naked-error-return" {
+			continue
+		}
+		actionable = append(actionable, f)
+	}
+	if len(actionable) == 0 {
+		fmt.Fprintln(w, "no discarded-error / parse issues (naked returns folded into wrap_ratio)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tRULE\tMESSAGE")
+	for _, f := range actionable {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.Severity, f.File, f.Line, f.Rule, f.Message)
 	}
 	_ = tw.Flush()
 }
