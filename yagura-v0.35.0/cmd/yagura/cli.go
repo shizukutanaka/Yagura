@@ -43,6 +43,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/config"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
+	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/github"
 	"github.com/shizukutanaka/yagura/internal/harness"
@@ -81,7 +82,7 @@ var cliVerbs = map[string]bool{
 	"claudemd-audit": true,
 	"ai-verify":      true, "quality-check": true, "test-audit": true,
 	"alert-fix": true, "ast-check": true, "review-gate": true,
-	"diff-scan": true,
+	"diff-scan": true, "flow-risk": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -150,6 +151,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliReviewGate(args, stdout, stderr)
 	case "diff-scan":
 		err = cliDiffScan(args, stdout, stderr)
+	case "flow-risk":
+		err = cliFlowRisk(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -1897,6 +1900,71 @@ func cliDiffScan(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("diff introduced %d secret(s) — failing because --strict is set", len(hits))
 	}
 	return nil
+}
+
+// ─── flow-risk (v0.36.0, temporal/flow 視点) ──────────────────
+
+// cliFlowRisk は操作シーケンス(stdin か --file、1 行 1 ツール/操作名)を読み、
+// 各行を capability に正規化して危険な順序(exfiltration / injection-to-exec /
+// untrusted-to-disk)を検出する。--strict で high flow 検出時 exit 非ゼロ。
+func cliFlowRisk(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("flow-risk", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	file := fset.String("file", "", "read the op sequence from this file (default: stdin); one tool/op name per line")
+	strict := fset.Bool("strict", false, "exit non-zero if a high-severity flow is detected (CI gate)")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	var data []byte
+	var err error
+	if *file != "" {
+		data, err = os.ReadFile(*file)
+		if err != nil {
+			return fmt.Errorf("read sequence %s: %w", *file, err)
+		}
+	} else {
+		data, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+	}
+
+	var steps []flowrisk.Step
+	for _, line := range strings.Split(string(data), "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		steps = append(steps, flowrisk.Step{Name: name, Capability: flowrisk.ClassifyTool(name)})
+	}
+	risks := flowrisk.Analyze(steps)
+
+	if *jsonOut {
+		if err := emitJSON(stdout, map[string]any{"steps": len(steps), "flows": risks}); err != nil {
+			return err
+		}
+	} else {
+		humanFlowRisk(stdout, len(steps), risks)
+	}
+	if *strict {
+		for _, r := range risks {
+			if r.Severity == "high" {
+				return fmt.Errorf("%d high-severity flow(s) detected — failing because --strict is set", countHighFlows(risks))
+			}
+		}
+	}
+	return nil
+}
+
+func countHighFlows(risks []flowrisk.FlowRisk) int {
+	n := 0
+	for _, r := range risks {
+		if r.Severity == "high" {
+			n++
+		}
+	}
+	return n
 }
 
 // ─── alert-fix (v0.36.0) ─────────────────────────────────────

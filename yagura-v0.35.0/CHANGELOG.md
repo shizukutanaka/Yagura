@@ -8,6 +8,19 @@ All notable changes to Yagura are documented here. Format follows
 
 ### Theme — "Custom rule loading (3 scanners) + CLI parity for the quality/health tools"
 
+- **新視点: flow risk 分析(temporal/flow 軸、`internal/flowrisk` + CLI `flow-risk`)**
+  ソクラテス的に導出: 既存レンズ(capability surface / review gate / diff added・removed)
+  は全て *単一時点* を見るが、AI エージェントは時間をかけて複数操作を行い、個々は無害でも
+  合わさると kill chain になる順序がある。injectscan が *内容* で見るインジェクションを、
+  本 package は *行動シーケンス* の層で見る(taint-flow 的な source→sink 順序判定)。検出:
+  secret-read→network(exfiltration, high)/ fetch-untrusted→exec(injection-to-exec,
+  high)/ fetch-untrusted→write(untrusted-to-disk, medium)。順序が重要(network→secret は
+  非検出)。`Analyze([]Step)`(純関数、各 kind 最早ペアで決定論)+ `ClassifyTool`(ツール名
+  →capability の best-effort 正規化)。CLI `flow-risk [--file f] [--json] [--strict]`
+  (1 行 1 操作名、--strict で high flow 検出時 exit 非ゼロ)。
+  test-first: Analyze 6 + ClassifyTool 1 + CLI 2 ケースを赤で固定 → 緑。zero-dep。
+  What's not yet: session event(agentevent/sessionsummary)からの直接取込、複数 source の追跡。
+
 - **新視点: guard-removal 検出(delta の *削除* 軸、`RemovedLines` / `RemovedGuards`)**
   ソクラテス的に導出: diff-scan は *追加* 行を見るが、危険な変更は *削除* でも起きる
   ——エラーチェック・panic 回復・後始末を**消す**変更。エージェントが「修正」と称して

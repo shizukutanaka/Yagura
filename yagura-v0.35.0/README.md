@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.36.0** — 63 MCP tools, 54 internal packages, CLI direct mode + `ai-verify`/`quality-check`/`ast-check`, 31 consecutive reproducible releases.
+Status: **v0.36.0** — 63 MCP tools, 55 internal packages, CLI direct mode + `ai-verify`/`quality-check`/`ast-check`, 31 consecutive reproducible releases.
 
 ---
 
@@ -266,7 +266,7 @@ sha256sum -c SHA256SUMS
 ```
 .
 ├── cmd/yagura/              # Entry point (single binary)
-├── internal/                # 54 packages, none exported
+├── internal/                # 55 packages, none exported
 │   ├── mcp/                 # MCP server, tool registration
 │   ├── registry/            # Project registry (JSON file per project)
 │   ├── scanner/             # Background sensor loop (24 h)

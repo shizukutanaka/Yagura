@@ -1871,6 +1871,51 @@ func TestCLI_DiffScan_GuardRemoval(t *testing.T) {
 	}
 }
 
+// ─── flow-risk (v0.36.0, temporal sequence risk) ─────────────
+
+func TestCLI_FlowRisk_Exfiltration(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	seq := filepath.Join(dir, "seq.txt")
+	if err := os.WriteFile(seq, []byte("os.Getenv\nprocess\nhttp.Post\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "flow-risk", "--file", seq, "--json")
+	if code != 0 {
+		t.Fatalf("flow-risk: code=%d", code)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	flows, _ := res["flows"].([]any)
+	if len(flows) != 1 {
+		t.Fatalf("expected 1 exfiltration flow, got %d: %s", len(flows), out)
+	}
+	// a high-severity flow must trip --strict
+	code, _, _ = runCLICapture(t, "flow-risk", "--file", seq, "--strict")
+	if code == 0 {
+		t.Error("--strict on a high-severity flow must exit non-zero")
+	}
+}
+
+func TestCLI_FlowRisk_CleanSequence(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	seq := filepath.Join(dir, "seq.txt")
+	// network before secret-read is not the exfiltration pattern.
+	if err := os.WriteFile(seq, []byte("http.Get\nos.Getenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ := runCLICapture(t, "flow-risk", "--file", seq)
+	if code != 0 {
+		t.Fatalf("flow-risk: code=%d", code)
+	}
+	if !strings.Contains(out, "no risky operation sequences") {
+		t.Errorf("expected clean verdict, got: %q", out)
+	}
+}
+
 // ─── review-gate (v0.36.0, composite ② Review verdict) ───────
 
 func TestCLI_ReviewGate_CleanAllows(t *testing.T) {

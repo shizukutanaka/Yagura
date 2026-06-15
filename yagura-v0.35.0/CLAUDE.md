@@ -21,7 +21,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 54 internal packages
+## Map — 55 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -87,6 +87,10 @@ cortex flywheel 4 段階すべてを単体で機械化:
   snapshot ではなく delta の視点。`AddedLines`(「変更が新たに持ち込んだもの」)+
   `RemovedLines`/`RemovedGuards`(「外された安全装置」= error-check/recover/cleanup の
   削除)。CLI `diff-scan` が追加行に secretscan を適用 + 削除 guard を review-only 報告★ v0.36
+- `internal/flowrisk` — 操作シーケンスの危険な *順序* を検出(temporal/flow の視点)。
+  secret-read→network(exfiltration)/ fetch-untrusted→exec(injection→実行)/
+  fetch-untrusted→write を taint-flow 的に走査。`Analyze`(純関数)+ `ClassifyTool`
+  (ツール名→capability)。CLI `flow-risk`(1 行 1 操作名、--strict で high flow gate)★ v0.36
 
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23

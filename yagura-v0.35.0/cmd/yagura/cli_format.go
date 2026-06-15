@@ -23,6 +23,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
+	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
@@ -736,6 +737,20 @@ func humanASTCheck(w io.Writer, res astcheck.Result) {
 	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tRULE\tMESSAGE")
 	for _, f := range res.Findings {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.Severity, f.File, f.Line, f.Rule, f.Message)
+	}
+	_ = tw.Flush()
+}
+
+func humanFlowRisk(w io.Writer, steps int, risks []flowrisk.FlowRisk) {
+	fmt.Fprintf(w, "steps: %d   flows: %d\n", steps, len(risks))
+	if len(risks) == 0 {
+		fmt.Fprintln(w, "no risky operation sequences detected")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tKIND\tFROM\tTO\tMESSAGE")
+	for _, r := range risks {
+		fmt.Fprintf(tw, "%s\t%s\t#%d %s\t#%d %s\t%s\n", r.Severity, r.Kind, r.From, r.FromName, r.To, r.ToName, r.Message)
 	}
 	_ = tw.Flush()
 }
