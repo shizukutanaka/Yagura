@@ -19,6 +19,7 @@ import (
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/alertfix"
+	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
@@ -749,6 +750,25 @@ func humanCoverage(w io.Writer, r coverage.Report) {
 	if len(r.UncoveredByExt) > 0 {
 		printCountMap(w, "blind spots (uncovered source, by ext)", r.UncoveredByExt)
 	}
+}
+
+func humanAssertCheck(w io.Writer, r assertcheck.Report) {
+	fmt.Fprintf(w, "test_files: %d   test_funcs: %d   assertions: %d   hollow_files: %d   avg_density: %.2f\n",
+		r.TestFiles, r.TotalTestFuncs, r.TotalAssertions, r.HollowFiles, r.AvgDensity)
+	if r.HollowFiles == 0 {
+		fmt.Fprintln(w, "no hollow test files (all test functions have at least one assertion)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "FILE\tTEST_FUNCS\tASSERTIONS\tDENSITY\tSTATUS")
+	for _, f := range r.Files {
+		status := "ok"
+		if f.Hollow {
+			status = "HOLLOW"
+		}
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%.2f\t%s\n", f.Path, f.TestFuncs, f.Assertions, f.Density, status)
+	}
+	_ = tw.Flush()
 }
 
 func humanFlowRisk(w io.Writer, steps int, risks []flowrisk.FlowRisk) {

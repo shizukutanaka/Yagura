@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 56 internal packages
+## Map — 57 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 63 tool definitions
+- `internal/mcp` — MCP server + 64 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 
@@ -91,6 +91,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
   secret-read→network(exfiltration)/ fetch-untrusted→exec(injection→実行)/
   fetch-untrusted→write を taint-flow 的に走査。`Analyze`(純関数)+ `ClassifyTool`
   (ツール名→capability)。CLI `flow-risk`(1 行 1 操作名、--strict で high flow gate)★ v0.36
+- `internal/coverage` — scan の盲点を meta 視点で数値化。全ファイルを「解析可能/
+  未対応ソース(盲点)/非ソース」に分類し coverage 比率を報告。CLI `coverage --dir .
+  [--min R]`★ v0.36
+- `internal/assertcheck` — テストのアサーション密度を分析(ソクラテス新視点)。
+  hollow test(assertion 無し)= 常に緑でも何も証明しない。`Scan(files)` →
+  `Report{HollowFiles, AvgDensity, ...}`。CLI `assert-check --dir . [--max-hollow F]`★ v0.36
 
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23

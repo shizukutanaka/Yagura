@@ -38,6 +38,7 @@ import (
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/alertfix"
+	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
@@ -84,6 +85,7 @@ var cliVerbs = map[string]bool{
 	"ai-verify":      true, "quality-check": true, "test-audit": true,
 	"alert-fix": true, "ast-check": true, "review-gate": true,
 	"diff-scan": true, "flow-risk": true, "coverage": true,
+	"assert-check": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -156,6 +158,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliFlowRisk(args, stdout, stderr)
 	case "coverage":
 		err = cliCoverage(args, stdout, stderr)
+	case "assert-check":
+		err = cliAssertCheck(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -2017,6 +2021,69 @@ func cliCoverage(args []string, stdout, stderr io.Writer) error {
 	}
 	if *minRatio > 0 && rep.CoverageRatio < *minRatio {
 		return fmt.Errorf("coverage %.2f below --min %.2f (%d uncovered source file(s))", rep.CoverageRatio, *minRatio, rep.UncoveredSource)
+	}
+	return nil
+}
+
+// ─── assert-check (v0.36.0) ──────────────────────────────────
+
+// cliAssertCheck は `yagura assert-check` を処理する。
+// テストのアサーション密度を計測し、hollow (assertion なし) テストファイルを検出する。
+// ソクラテス的動機: テスト存在(testcoverage)と異なり、テストが "何かを主張して
+// いるか" を計測する。assertion 密度が 0 のテストは常に緑になるが証明にはならない。
+func cliAssertCheck(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("assert-check", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for *_test.go files")
+	maxDensity := fset.Float64("max-hollow", 0, "exit non-zero if hollow file count exceeds this fraction of test files (0 = no gate)")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	files := map[string]string{}
+	walkErr := filepath.WalkDir(*dir, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "vendor" || name == "node_modules" || name == ".git" || name == ".yagura" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "warning: cannot read %s: %v\n", path, err)
+			return nil
+		}
+		rel, relErr := filepath.Rel(*dir, path)
+		if relErr != nil {
+			rel = path
+		}
+		files[rel] = string(data)
+		return nil
+	})
+	if walkErr != nil {
+		return fmt.Errorf("walk %s: %w", *dir, walkErr)
+	}
+
+	rep := assertcheck.Scan(files)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanAssertCheck(stdout, rep)
+	}
+	if *maxDensity > 0 && rep.TestFiles > 0 {
+		hollowFrac := float64(rep.HollowFiles) / float64(rep.TestFiles)
+		if hollowFrac > *maxDensity {
+			return fmt.Errorf("hollow fraction %.2f exceeds --max-hollow %.2f (%d/%d test files)", hollowFrac, *maxDensity, rep.HollowFiles, rep.TestFiles)
+		}
 	}
 	return nil
 }

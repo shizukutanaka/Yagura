@@ -161,6 +161,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildTestAuditTool(d))
 	// [G] v0.36.0 — Go AST structural audit (Roadmap #6)
 	s.Register(buildASTCheckTool(d))
+	// [Q] v0.36.0 — test assertion density (hollow test detection)
+	s.Register(buildAssertCheckTool(d))
 	// [S] v0.27.0 — cortex flywheel ④ Alert-Fix (rule-based recommendation hub)
 	s.Register(buildAlertFixTool(d, s.cache, s.alertStore))
 	// [G] v0.30.0 — alert lifecycle (resolve/snooze/reopen)

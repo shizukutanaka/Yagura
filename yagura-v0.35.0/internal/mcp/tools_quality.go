@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
+	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
@@ -279,6 +280,50 @@ func buildTestAuditTool(d Deps) *Tool {
 // go/ast による構造解析。行 regex では原理的に書けない検査
 // (os.Exit in library / 空 != nil 分岐 / defer-in-loop / err 文字列比較 /
 // parse-error)を決定論的に返す。CLI `ast-check` と同じ astcheck.ScanFiles。
+// ─── yagura_assert_check (v0.36.0) ────────────────────────────
+//
+// ソクラテス的動機: testcoverage は test の "存在" を検査するが、assertion density
+// (test 内で何を主張しているか)は別問題。hollow test(assertion 無し)は常に緑
+// になるが証明にはならない。本 tool はアサーション密度を数値化する。
+
+func buildAssertCheckTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_assert_check",
+		Description: "[Q] Test assertion density analysis. Detects hollow test files (zero assertions), reports avg density per test function.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for *_test.go files to analyse",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := assertcheck.Scan(in.Files)
+			return map[string]any{
+				"files_scanned":    rep.FilesScanned,
+				"test_files":       rep.TestFiles,
+				"total_test_funcs": rep.TotalTestFuncs,
+				"total_assertions": rep.TotalAssertions,
+				"hollow_files":     rep.HollowFiles,
+				"avg_density":      rep.AvgDensity,
+				"files":            rep.Files,
+			}, nil
+		},
+	}
+}
+
 func buildASTCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_ast_check",
