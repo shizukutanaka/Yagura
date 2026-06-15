@@ -44,6 +44,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/config"
+	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
@@ -88,6 +89,7 @@ var cliVerbs = map[string]bool{
 	"alert-fix": true, "ast-check": true, "review-gate": true,
 	"diff-scan": true, "flow-risk": true, "coverage": true,
 	"assert-check": true, "err-policy": true, "complexity": true,
+	"coupling": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -166,6 +168,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliErrPolicy(args, stdout, stderr)
 	case "complexity":
 		err = cliComplexity(args, stdout, stderr)
+	case "coupling":
+		err = cliCoupling(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -2140,6 +2144,75 @@ func cliComplexity(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("%d function(s) exceed complexity threshold %d (max observed %d)", rep.OverThreshold, rep.Threshold, rep.MaxComplexity)
 	}
 	return nil
+}
+
+// ─── coupling (v0.36.0) ──────────────────────────────────────
+
+// cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
+// fan-in/fan-out/instability を算出し、Stable Dependencies Principle 違反を flag する。
+// module path は --module、無指定なら <dir>/go.mod から自動検出。--strict で違反時 exit 1。
+// ソクラテス的動機: complexity が関数内部の絡まりなら、これは package 同士(アーキ
+// テクチャ)の絡まり。capped+warned walker(readGoFiles)を共有し fail-open を防止。
+func cliCoupling(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("coupling", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "module root to scan recursively for .go files")
+	module := fset.String("module", "", "go.mod module path (default: auto-detect from <dir>/go.mod)")
+	strict := fset.Bool("strict", false, "exit non-zero if any SDP violation is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	mp := *module
+	if mp == "" {
+		detected, derr := readModulePath(*dir)
+		if derr != nil {
+			return fmt.Errorf("module path: %w (pass --module to override)", derr)
+		}
+		mp = detected
+	}
+
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return err
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+
+	rep := coupling.Scan(sr.Files, mp)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanCoupling(stdout, rep)
+	}
+	if *strict {
+		var violations int
+		for _, f := range rep.Findings {
+			if f.Rule == "sdp-violation" {
+				violations++
+			}
+		}
+		if violations > 0 {
+			return fmt.Errorf("%d Stable Dependencies Principle violation(s)", violations)
+		}
+	}
+	return nil
+}
+
+// readModulePath は <dir>/go.mod の `module <path>` 行を読む。
+func readModulePath(dir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return "", fmt.Errorf("read go.mod: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module")), nil
+		}
+	}
+	return "", fmt.Errorf("no module directive in %s/go.mod", dir)
 }
 
 // ─── alert-fix (v0.36.0) ─────────────────────────────────────

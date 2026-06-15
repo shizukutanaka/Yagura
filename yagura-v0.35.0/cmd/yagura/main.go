@@ -164,6 +164,7 @@ CLI direct mode (no MCP client required):
   yagura assert-check [--dir .] [--max-hollow F]  Test assertion density: detect hollow *_test.go files (zero assertions always pass, proving nothing)
   yagura err-policy [--dir .] [--min-wrap R]      Error-context discipline: wrap ratio (fmt.Errorf %w vs naked return err) + blank-discard (_ = call()) detection
   yagura complexity [--dir .] [--max N] [--strict]  Cyclomatic complexity (McCabe, gocyclo-compatible): per-function score, flags functions over --max (default 10) = testability precondition
+  yagura coupling [--dir .] [--module M] [--strict]  Package import coupling: fan-in/out + instability + Stable Dependencies Principle violations (module path auto-detected from go.mod)
   Add --json to any of the above for machine-readable output.
   ai-verify/quality-check/secretscan accept --rules-file (or auto-detect
     .yagura/{aiverify,quality,secretscan}.json) to load project-specific rules.

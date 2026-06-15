@@ -24,6 +24,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/complexity"
+	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
@@ -771,6 +772,45 @@ func humanAssertCheck(w io.Writer, r assertcheck.Report) {
 		fmt.Fprintf(tw, "%s\t%d\t%d\t%.2f\t%s\n", f.Path, f.TestFuncs, f.Assertions, f.Density, status)
 	}
 	_ = tw.Flush()
+}
+
+func humanCoupling(w io.Writer, r coupling.Report) {
+	var violations int
+	for _, f := range r.Findings {
+		if f.Rule == "sdp-violation" {
+			violations++
+		}
+	}
+	fmt.Fprintf(w, "module: %s   packages: %d   sdp_violations: %d\n", r.ModulePath, r.PackageCount, violations)
+	// fan-in 降順(チョークポイントを上に)で上位を表示。fan-in 同点は name 昇順。
+	pkgs := append([]coupling.Package(nil), r.Packages...)
+	sort.Slice(pkgs, func(i, j int) bool {
+		if pkgs[i].FanIn != pkgs[j].FanIn {
+			return pkgs[i].FanIn > pkgs[j].FanIn
+		}
+		return pkgs[i].Name < pkgs[j].Name
+	})
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "FAN_IN\tFAN_OUT\tINSTABILITY\tPACKAGE")
+	shown := pkgs
+	if len(shown) > 15 {
+		shown = shown[:15]
+	}
+	for _, p := range shown {
+		fmt.Fprintf(tw, "%d\t%d\t%.2f\t%s\n", p.FanIn, p.FanOut, p.Instability, p.Name)
+	}
+	_ = tw.Flush()
+	if len(pkgs) > 15 {
+		fmt.Fprintf(w, "... %d more packages (use --json for the full graph)\n", len(pkgs)-15)
+	}
+	if violations > 0 {
+		fmt.Fprintln(w, "SDP violations (stable package depends on more-unstable one):")
+		for _, f := range r.Findings {
+			if f.Rule == "sdp-violation" {
+				fmt.Fprintf(w, "  %s → %s\n", f.From, f.To)
+			}
+		}
+	}
 }
 
 func humanComplexity(w io.Writer, r complexity.Report) {

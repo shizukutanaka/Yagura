@@ -14,6 +14,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/complexity"
+	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
@@ -413,6 +414,59 @@ func buildComplexityTool(d Deps) *Tool {
 				"over_threshold": rep.OverThreshold,
 				"functions":      rep.Functions,
 				"findings":       rep.Findings,
+			}, nil
+		},
+	}
+}
+
+// ─── yagura_coupling (v0.36.0) ────────────────────────────────
+//
+// ソクラテス的動機: complexity が関数内部の絡まりを測るのに対し、本 tool は package
+// *同士* の結合(アーキテクチャ)を測る。fan-in/fan-out/instability + Stable
+// Dependencies Principle 違反(安定 package が より不安定な package に依存)を検出。
+
+func buildCouplingTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_coupling",
+		Description: "[Q] Package import coupling (Go). Fan-in/out + instability (Ce/(Ca+Ce)) + Stable Dependencies Principle violations.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for .go files (paths relative to module root)",
+				},
+				"module_path": map[string]any{
+					"type":        "string",
+					"description": "go.mod module path for internal-import detection (defaults to the server's main module)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files      map[string]string `json:"files"`
+				ModulePath string            `json:"module_path"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			mp := in.ModulePath
+			if mp == "" {
+				mp = d.MainModulePath
+			}
+			if mp == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "module_path required (no server default configured)"}
+			}
+			rep := coupling.Scan(in.Files, mp)
+			return map[string]any{
+				"module_path":   rep.ModulePath,
+				"package_count": rep.PackageCount,
+				"packages":      rep.Packages,
+				"findings":      rep.Findings,
 			}, nil
 		},
 	}

@@ -169,6 +169,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_err_policy",
 		// v0.36 — cyclomatic complexity (testability precondition)
 		"yagura_complexity",
+		// v0.36 — package import coupling (architecture / SDP)
+		"yagura_coupling",
 		// v0.27 — cortex flywheel ④ Alert-Fix
 		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
 		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",

@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 59 internal packages
+## Map — 60 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 66 tool definitions
+- `internal/mcp` — MCP server + 67 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 
@@ -105,6 +105,11 @@ cortex flywheel 4 段階すべてを単体で機械化:
   (ソクラテス新視点)。「そもそも完全にテストできるか」という testability の前提
   条件 = 全パス網羅に要するテスト数の下限。関数別スコア + しきい値超過 flag。
   CLI `complexity --dir . [--max N] [--strict]`、MCP `yagura_complexity`★ v0.36
+- `internal/coupling` — package 間 import 結合度(アーキテクチャの絡まり)を計測
+  (ソクラテス新視点)。fan-in(Ca)/fan-out(Ce)/instability I=Ce/(Ca+Ce)+ Stable
+  Dependencies Principle 違反(安定 package が より不安定な package に依存)。
+  projectgraph(registry の宣言的 depends_on)と違い実ソース import から導出。
+  CLI `coupling --dir . [--module M] [--strict]`、MCP `yagura_coupling`★ v0.36
 
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23
