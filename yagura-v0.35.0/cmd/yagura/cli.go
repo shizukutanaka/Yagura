@@ -42,6 +42,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/config"
+	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
@@ -82,7 +83,7 @@ var cliVerbs = map[string]bool{
 	"claudemd-audit": true,
 	"ai-verify":      true, "quality-check": true, "test-audit": true,
 	"alert-fix": true, "ast-check": true, "review-gate": true,
-	"diff-scan": true, "flow-risk": true,
+	"diff-scan": true, "flow-risk": true, "coverage": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -153,6 +154,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliDiffScan(args, stdout, stderr)
 	case "flow-risk":
 		err = cliFlowRisk(args, stdout, stderr)
+	case "coverage":
+		err = cliCoverage(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -1965,6 +1968,57 @@ func countHighFlows(risks []flowrisk.FlowRisk) int {
 		}
 	}
 	return n
+}
+
+// ─── coverage (v0.36.0, blind-spot meta 視点) ─────────────────
+
+// cliCoverage は --dir の全ファイルを拡張子分類し、yagura の scanner が解析できる
+// 割合(coverage)と盲点(未対応言語のソース)を報告する。clean 判定が「どれだけの
+// コードを実際に見たか」を可視化する。
+func cliCoverage(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("coverage", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively")
+	minRatio := fset.Float64("min", 0, "exit non-zero if coverage ratio is below this (0 = no gate)")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	var paths []string
+	walkErr := filepath.WalkDir(*dir, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "vendor" || name == "node_modules" || name == ".git" || name == ".yagura" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, relErr := filepath.Rel(*dir, path)
+		if relErr != nil {
+			rel = path
+		}
+		paths = append(paths, rel)
+		return nil
+	})
+	if walkErr != nil {
+		return fmt.Errorf("walk %s: %w", *dir, walkErr)
+	}
+
+	rep := coverage.Classify(paths)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanCoverage(stdout, rep)
+	}
+	if *minRatio > 0 && rep.CoverageRatio < *minRatio {
+		return fmt.Errorf("coverage %.2f below --min %.2f (%d uncovered source file(s))", rep.CoverageRatio, *minRatio, rep.UncoveredSource)
+	}
+	return nil
 }
 
 // ─── alert-fix (v0.36.0) ─────────────────────────────────────

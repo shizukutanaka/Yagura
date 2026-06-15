@@ -1871,6 +1871,38 @@ func TestCLI_DiffScan_GuardRemoval(t *testing.T) {
 	}
 }
 
+// ─── coverage (v0.36.0, blind-spot meta lens) ────────────────
+
+func TestCLI_Coverage_MixedTree(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"main.go":   "package x\n",
+		"legacy.rb": "puts 1\n",
+		"README.md": "# hi\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, out, _ := runCLICapture(t, "coverage", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("coverage: code=%d", code)
+	}
+	var r map[string]any
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if cr, _ := r["coverage_ratio"].(float64); cr != 0.5 {
+		t.Errorf("1 go + 1 rb → coverage 0.5, got %v", cr)
+	}
+	// --min gate: 0.9 required but actual 0.5 → non-zero exit
+	code, _, _ = runCLICapture(t, "coverage", "--dir", dir, "--min", "0.9")
+	if code == 0 {
+		t.Error("--min 0.9 on 0.5 coverage must exit non-zero")
+	}
+}
+
 // ─── flow-risk (v0.36.0, temporal sequence risk) ─────────────
 
 func TestCLI_FlowRisk_Exfiltration(t *testing.T) {

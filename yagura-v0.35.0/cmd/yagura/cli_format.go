@@ -22,6 +22,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
+	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
@@ -739,6 +740,15 @@ func humanASTCheck(w io.Writer, res astcheck.Result) {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.Severity, f.File, f.Line, f.Rule, f.Message)
 	}
 	_ = tw.Flush()
+}
+
+func humanCoverage(w io.Writer, r coverage.Report) {
+	fmt.Fprintf(w, "coverage_ratio: %.2f   total_files: %d   analyzable: %d   uncovered_source: %d   non_source: %d\n",
+		r.CoverageRatio, r.TotalFiles, r.Analyzable, r.UncoveredSource, r.NonSource)
+	printCountMap(w, "analyzable by language", r.ByLanguage)
+	if len(r.UncoveredByExt) > 0 {
+		printCountMap(w, "blind spots (uncovered source, by ext)", r.UncoveredByExt)
+	}
 }
 
 func humanFlowRisk(w io.Writer, steps int, risks []flowrisk.FlowRisk) {

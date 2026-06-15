@@ -21,7 +21,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 55 internal packages
+## Map — 56 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD

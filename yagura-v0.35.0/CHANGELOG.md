@@ -8,6 +8,19 @@ All notable changes to Yagura are documented here. Format follows
 
 ### Theme — "Custom rule loading (3 scanners) + CLI parity for the quality/health tools"
 
+- **新視点: coverage / blind-spot 報告(meta 軸、`internal/coverage` + CLI `coverage`)**
+  ソクラテス的に導出: 既存レンズは「対象の中に何があるか」(findings)を答えるが、
+  「その clean 判定が *どれだけのコードを実際に見たか*」(判定そのものの信頼性)は
+  答えない。scanner は covered 言語(Go/TS/JS/Python/Rust/Java)だけ解析し、それ以外の
+  ソース(.rb/.php/.c/.sh …)は黙って捨てる。半分が Ruby のリポで "clean" は誤導。
+  `coverage.Classify([]string)` が全ファイルを「解析可能 / 未対応ソース(=盲点)/
+  非ソース」に拡張子分類し coverage 比率(analyzable / (analyzable+uncovered_source))を
+  返す純関数。CLI `coverage --dir . [--json] [--min R]`(--min で比率不足時 exit 非ゼロ)。
+  dogfood: 自リポジトリ coverage 0.99(243 Go / 盲点 3 shell script / 非ソース 63)。
+  test-first: Classify 6 + CLI 1 ケースを赤で固定 → 緑。zero-dep。
+  Synergy: review-gate の clean 判定の脇に置けば「90% covered で allow」のように
+  判定の射程を併示できる。
+
 - **新視点: flow risk 分析(temporal/flow 軸、`internal/flowrisk` + CLI `flow-risk`)**
   ソクラテス的に導出: 既存レンズ(capability surface / review gate / diff added・removed)
   は全て *単一時点* を見るが、AI エージェントは時間をかけて複数操作を行い、個々は無害でも
