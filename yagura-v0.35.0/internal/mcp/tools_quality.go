@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
+	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/complexity"
@@ -467,6 +468,49 @@ func buildCouplingTool(d Deps) *Tool {
 				"package_count": rep.PackageCount,
 				"packages":      rep.Packages,
 				"findings":      rep.Findings,
+			}, nil
+		},
+	}
+}
+
+// ─── yagura_api_doc (v0.36.0) ─────────────────────────────────
+//
+// ソクラテス的動機: coupling が package 間の依存を測るのに対し、本 tool は package が
+// 依存側に *約束* する exported API とその文書化を測る。doc コメントの無い exported
+// シンボル = 仕様の無い契約。godoc 規律(golint 互換)を機械化。
+
+func buildAPIDocTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_api_doc",
+		Description: "[Q] Exported-API doc discipline (Go). Documented ratio + undocumented exported funcs/types/consts/vars/methods.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for .go files to analyse",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := apidoc.Scan(in.Files)
+			return map[string]any{
+				"files_scanned":    rep.FilesScanned,
+				"exported_total":   rep.ExportedTotal,
+				"documented":       rep.Documented,
+				"documented_ratio": rep.DocumentedRatio,
+				"by_kind":          rep.ByKind,
+				"findings":         rep.Findings,
 			}, nil
 		},
 	}

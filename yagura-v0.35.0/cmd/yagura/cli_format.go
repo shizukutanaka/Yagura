@@ -19,6 +19,7 @@ import (
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/alertfix"
+	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
@@ -810,6 +811,34 @@ func humanCoupling(w io.Writer, r coupling.Report) {
 				fmt.Fprintf(w, "  %s → %s\n", f.From, f.To)
 			}
 		}
+	}
+}
+
+func humanAPIDoc(w io.Writer, r apidoc.Report) {
+	fmt.Fprintf(w, "exported: %d   documented: %d   documented_ratio: %.2f\n",
+		r.ExportedTotal, r.Documented, r.DocumentedRatio)
+	printCountMap(w, "exported by kind", r.ByKind)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "all exported symbols are documented")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "KIND\tFILE\tLINE\tNAME")
+	shown := r.Findings
+	const cap = 25
+	if len(shown) > cap {
+		shown = shown[:cap]
+	}
+	for _, f := range shown {
+		if f.Rule == "parse-error" {
+			fmt.Fprintf(tw, "parse-error\t%s\t%d\t%s\n", f.File, f.Line, f.Message)
+			continue
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", f.Kind, f.File, f.Line, f.Name)
+	}
+	_ = tw.Flush()
+	if len(r.Findings) > cap {
+		fmt.Fprintf(w, "... %d more undocumented (use --json for the full list)\n", len(r.Findings)-cap)
 	}
 }
 

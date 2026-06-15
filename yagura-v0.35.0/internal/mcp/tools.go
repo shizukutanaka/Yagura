@@ -169,6 +169,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildComplexityTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
+	// [Q] v0.36.0 — exported-API doc discipline (public contract)
+	s.Register(buildAPIDocTool(d))
 	// [S] v0.27.0 — cortex flywheel ④ Alert-Fix (rule-based recommendation hub)
 	s.Register(buildAlertFixTool(d, s.cache, s.alertStore))
 	// [G] v0.30.0 — alert lifecycle (resolve/snooze/reopen)

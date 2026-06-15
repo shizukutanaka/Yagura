@@ -38,6 +38,7 @@ import (
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/alertfix"
+	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
@@ -89,7 +90,7 @@ var cliVerbs = map[string]bool{
 	"alert-fix": true, "ast-check": true, "review-gate": true,
 	"diff-scan": true, "flow-risk": true, "coverage": true,
 	"assert-check": true, "err-policy": true, "complexity": true,
-	"coupling": true,
+	"coupling": true, "api-doc": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -170,6 +171,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliComplexity(args, stdout, stderr)
 	case "coupling":
 		err = cliCoupling(args, stdout, stderr)
+	case "api-doc":
+		err = cliAPIDoc(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -2213,6 +2216,42 @@ func readModulePath(dir string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no module directive in %s/go.mod", dir)
+}
+
+// ─── api-doc (v0.36.0) ───────────────────────────────────────
+
+// cliAPIDoc は `yagura api-doc` を処理する。exported API のドキュメント率を計測し、
+// doc コメントの無い exported シンボル(undocumented public contract)を flag する。
+// --min-doc R で documented 率が R 未満なら exit 1。ソクラテス的動機: package が
+// 依存側に約束する公開契約とその文書化。capped+warned walker を共有(fail-open 防止)。
+func cliAPIDoc(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("api-doc", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	minDoc := fset.Float64("min-doc", 0, "exit non-zero if documented ratio is below this (0 = no gate)")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return err
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+
+	rep := apidoc.Scan(sr.Files)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanAPIDoc(stdout, rep)
+	}
+	if *minDoc > 0 && rep.ExportedTotal > 0 && rep.DocumentedRatio < *minDoc {
+		return fmt.Errorf("documented ratio %.2f below --min-doc %.2f (%d of %d exported symbols undocumented)",
+			rep.DocumentedRatio, *minDoc, rep.ExportedTotal-rep.Documented, rep.ExportedTotal)
+	}
+	return nil
 }
 
 // ─── alert-fix (v0.36.0) ─────────────────────────────────────
