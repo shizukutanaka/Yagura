@@ -2136,6 +2136,51 @@ func TestReadSourceFilesLimited_UnreadableReported(t *testing.T) {
 	}
 }
 
+// TestReadGoTestFiles_FiltersAndInheritsCaps pins that the filtered reader
+// used by assert-check (a) picks up only *_test.go and (b) inherits the same
+// truncation signal as the source reader — the fail-open guard must not be
+// lost when a new scanner reuses the walker via a predicate.
+func TestReadGoTestFiles_FiltersAndInheritsCaps(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a_test.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sr, err := readGoTestFiles(dir)
+	if err != nil {
+		t.Fatalf("readGoTestFiles: %v", err)
+	}
+	if _, ok := sr.Files["a_test.go"]; !ok {
+		t.Error("a_test.go should be collected")
+	}
+	if _, ok := sr.Files["b.go"]; ok {
+		t.Error("non-test b.go must be excluded by the predicate")
+	}
+}
+
+func TestReadGoFiles_AllGoAndCaps(t *testing.T) {
+	dir := t.TempDir()
+	writeNGoFiles(t, dir, 3, "package x\n")
+	if err := os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sr, err := readFilesLimited(dir, 2, 1<<30, func(n string) bool { return strings.HasSuffix(n, ".go") })
+	if err != nil {
+		t.Fatalf("readFilesLimited: %v", err)
+	}
+	if len(sr.Files) != 2 {
+		t.Errorf("expected cap at 2 .go files, got %d", len(sr.Files))
+	}
+	if !sr.Truncated {
+		t.Error("expected truncated=true when .go count exceeds cap (fail-open guard)")
+	}
+	if _, ok := sr.Files["readme.md"]; ok {
+		t.Error("non-.go file must not be collected by the predicate")
+	}
+}
+
 // TestCLI_AIVerify_TruncationWarns proves the warning reaches stderr through a
 // real handler: a >maxFiles repo must not be scanned silently.
 func TestCLI_AIVerify_TruncationWarns(t *testing.T) {

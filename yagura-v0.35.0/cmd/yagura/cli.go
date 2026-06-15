@@ -2043,38 +2043,13 @@ func cliAssertCheck(args []string, stdout, stderr io.Writer) error {
 		return errUsage
 	}
 
-	files := map[string]string{}
-	walkErr := filepath.WalkDir(*dir, func(path string, d fs.DirEntry, werr error) error {
-		if werr != nil {
-			return werr
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == "vendor" || name == "node_modules" || name == ".git" || name == ".yagura" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(d.Name(), "_test.go") {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			fmt.Fprintf(stderr, "warning: cannot read %s: %v\n", path, err)
-			return nil
-		}
-		rel, relErr := filepath.Rel(*dir, path)
-		if relErr != nil {
-			rel = path
-		}
-		files[rel] = string(data)
-		return nil
-	})
-	if walkErr != nil {
-		return fmt.Errorf("walk %s: %w", *dir, walkErr)
+	sr, err := readGoTestFiles(*dir)
+	if err != nil {
+		return err
 	}
+	warnIncompleteScan(stderr, sr, *dir)
 
-	rep := assertcheck.Scan(files)
+	rep := assertcheck.Scan(sr.Files)
 	if *jsonOut {
 		if err := emitJSON(stdout, rep); err != nil {
 			return err
@@ -2105,38 +2080,13 @@ func cliErrPolicy(args []string, stdout, stderr io.Writer) error {
 		return errUsage
 	}
 
-	files := map[string]string{}
-	walkErr := filepath.WalkDir(*dir, func(path string, d fs.DirEntry, werr error) error {
-		if werr != nil {
-			return werr
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == "vendor" || name == "node_modules" || name == ".git" || name == ".yagura" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(d.Name(), ".go") {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			fmt.Fprintf(stderr, "warning: cannot read %s: %v\n", path, err)
-			return nil
-		}
-		rel, relErr := filepath.Rel(*dir, path)
-		if relErr != nil {
-			rel = path
-		}
-		files[rel] = string(data)
-		return nil
-	})
-	if walkErr != nil {
-		return fmt.Errorf("walk %s: %w", *dir, walkErr)
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return err
 	}
+	warnIncompleteScan(stderr, sr, *dir)
 
-	rep := errpolicy.Scan(files)
+	rep := errpolicy.Scan(sr.Files)
 	if *jsonOut {
 		if err := emitJSON(stdout, rep); err != nil {
 			return err
@@ -2309,7 +2259,36 @@ func readSourceFiles(dir string) (scanResult, error) {
 }
 
 // readSourceFilesLimited は readSourceFiles の本体(上限を引数化してテスト可能に)。
+// Go/TS/JS/Python/Rust/Java のソースを対象にする。
 func readSourceFilesLimited(dir string, maxFiles int, maxTotalBytes int64) (scanResult, error) {
+	return readFilesLimited(dir, maxFiles, maxTotalBytes, isSourceFile)
+}
+
+// readGoFiles は dir 配下の *.go を capped+warned walker で読む(err-policy 用)。
+// readSourceFilesLimited と同じ上限・同じ不完全スキャン通知を継承する。
+func readGoFiles(dir string) (scanResult, error) {
+	const maxFiles = 1000
+	const maxTotalBytes = 50 * 1024 * 1024
+	return readFilesLimited(dir, maxFiles, maxTotalBytes, func(name string) bool {
+		return strings.HasSuffix(name, ".go")
+	})
+}
+
+// readGoTestFiles は dir 配下の *_test.go を capped+warned walker で読む(assert-check 用)。
+func readGoTestFiles(dir string) (scanResult, error) {
+	const maxFiles = 1000
+	const maxTotalBytes = 50 * 1024 * 1024
+	return readFilesLimited(dir, maxFiles, maxTotalBytes, func(name string) bool {
+		return strings.HasSuffix(name, "_test.go")
+	})
+}
+
+// readFilesLimited は dir を再帰的に走査し、accept(filename)==true のファイルを
+// {relpath: content} で読む共通 walker。vendor/node_modules/.git/.yagura を skip し、
+// maxFiles / maxTotalBytes の上限と、不完全スキャン(truncated / unreadable)の
+// シグナルを scanResult に記録する。新しいスキャナはこの 1 本を predicate 付きで
+// 再利用すること(独自 WalkDir を書くと caps と fail-open 警告が失われる)。
+func readFilesLimited(dir string, maxFiles int, maxTotalBytes int64, accept func(name string) bool) (scanResult, error) {
 	sr := scanResult{Files: make(map[string]string)}
 	var totalBytes int64
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, werr error) error {
@@ -2323,7 +2302,7 @@ func readSourceFilesLimited(dir string, maxFiles int, maxTotalBytes int64) (scan
 			}
 			return nil
 		}
-		if !isSourceFile(name) {
+		if !accept(name) {
 			return nil
 		}
 		if len(sr.Files) >= maxFiles {
