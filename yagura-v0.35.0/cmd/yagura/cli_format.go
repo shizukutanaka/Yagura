@@ -27,6 +27,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/coverage"
+	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
@@ -839,6 +840,33 @@ func humanAPIDoc(w io.Writer, r apidoc.Report) {
 	_ = tw.Flush()
 	if len(r.Findings) > cap {
 		fmt.Fprintf(w, "... %d more undocumented (use --json for the full list)\n", len(r.Findings)-cap)
+	}
+}
+
+func humanDeadCode(w io.Writer, r deadcode.Report) {
+	fmt.Fprintf(w, "packages: %d   declared_unexported: %d   dead: %d\n",
+		r.PackagesScanned, r.DeclaredUnexported, r.Dead)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no dead unexported declarations")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "KIND\tPACKAGE\tFILE\tLINE\tNAME")
+	shown := r.Findings
+	const cap = 30
+	if len(shown) > cap {
+		shown = shown[:cap]
+	}
+	for _, f := range shown {
+		if f.Rule == "parse-error" {
+			fmt.Fprintf(tw, "parse-error\t%s\t%s\t%d\t%s\n", f.Package, f.File, f.Line, f.Message)
+			continue
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", f.Kind, f.Package, f.File, f.Line, f.Name)
+	}
+	_ = tw.Flush()
+	if len(r.Findings) > cap {
+		fmt.Fprintf(w, "... %d more (use --json for the full list)\n", len(r.Findings)-cap)
 	}
 }
 

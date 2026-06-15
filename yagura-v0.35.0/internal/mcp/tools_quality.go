@@ -16,6 +16,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
+	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
@@ -511,6 +512,48 @@ func buildAPIDocTool(d Deps) *Tool {
 				"documented_ratio": rep.DocumentedRatio,
 				"by_kind":          rep.ByKind,
 				"findings":         rep.Findings,
+			}, nil
+		},
+	}
+}
+
+// ─── yagura_dead_code (v0.36.0) ───────────────────────────────
+//
+// ソクラテス的動機: apidoc が未文書化の公開契約を見るのに対し、本 tool は非公開側の
+// 双対――自 package 内で誰からも参照されない unexported 宣言(dead code)を検出する。
+// unexported は閉じた世界なので保守的かつ安全に到達不能を断定できる。
+
+func buildDeadCodeTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_dead_code",
+		Description: "[Q] Dead unexported declarations (Go). Package-level funcs/types/consts/vars never referenced within their package.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for .go files (paths relative to package root)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := deadcode.Scan(in.Files)
+			return map[string]any{
+				"files_scanned":       rep.FilesScanned,
+				"packages_scanned":    rep.PackagesScanned,
+				"declared_unexported": rep.DeclaredUnexported,
+				"dead":                rep.Dead,
+				"findings":            rep.Findings,
 			}, nil
 		},
 	}

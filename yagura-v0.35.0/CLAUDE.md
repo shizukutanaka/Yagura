@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 61 internal packages
+## Map — 62 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 68 tool definitions
+- `internal/mcp` — MCP server + 69 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 
@@ -115,6 +115,11 @@ cortex flywheel 4 段階すべてを単体で機械化:
   exported func/type/const/var/method = 仕様の無い契約。documented 率 + 未文書化
   シンボル一覧。godoc 規律(golint 互換)。CLI `api-doc --dir . [--min-doc R]`、
   MCP `yagura_api_doc`★ v0.36
+- `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
+  (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
+  レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に
+  到達不能を断定(method/init/main/test 宣言は除外)。CLI `dead-code --dir .
+  [--strict]`、MCP `yagura_dead_code`★ v0.36
 
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23

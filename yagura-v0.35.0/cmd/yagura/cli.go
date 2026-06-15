@@ -47,6 +47,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/config"
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/coverage"
+	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
@@ -90,7 +91,7 @@ var cliVerbs = map[string]bool{
 	"alert-fix": true, "ast-check": true, "review-gate": true,
 	"diff-scan": true, "flow-risk": true, "coverage": true,
 	"assert-check": true, "err-policy": true, "complexity": true,
-	"coupling": true, "api-doc": true,
+	"coupling": true, "api-doc": true, "dead-code": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -173,6 +174,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliCoupling(args, stdout, stderr)
 	case "api-doc":
 		err = cliAPIDoc(args, stdout, stderr)
+	case "dead-code":
+		err = cliDeadCode(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -2250,6 +2253,40 @@ func cliAPIDoc(args []string, stdout, stderr io.Writer) error {
 	if *minDoc > 0 && rep.ExportedTotal > 0 && rep.DocumentedRatio < *minDoc {
 		return fmt.Errorf("documented ratio %.2f below --min-doc %.2f (%d of %d exported symbols undocumented)",
 			rep.DocumentedRatio, *minDoc, rep.ExportedTotal-rep.Documented, rep.ExportedTotal)
+	}
+	return nil
+}
+
+// ─── dead-code (v0.36.0) ─────────────────────────────────────
+
+// cliDeadCode は `yagura dead-code` を処理する。自 package 内で参照されない unexported
+// 宣言を検出する。--strict で dead が 1 件でもあれば exit 1。ソクラテス的動機: apidoc の
+// 双対(非公開側)。capped+warned walker を共有(fail-open 防止)。
+func cliDeadCode(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("dead-code", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any dead unexported declaration is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return err
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+
+	rep := deadcode.Scan(sr.Files)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanDeadCode(stdout, rep)
+	}
+	if *strict && rep.Dead > 0 {
+		return fmt.Errorf("%d dead unexported declaration(s)", rep.Dead)
 	}
 	return nil
 }
