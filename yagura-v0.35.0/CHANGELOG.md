@@ -4,6 +4,32 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.48.0] - 2026-06-16
+
+### Theme — "astcheck bare-goroutine: smarter lifecycle detection + 5 new tests"
+
+#### Code quality
+- `internal/astcheck` `bare-goroutine` rule upgraded with four lifecycle detection improvements:
+  1. **Test file exemption**: `_test.go` files are now exempt (consistent with `blank-error-discard`)
+  2. **Typed parameters**: goroutines with explicit parameters (`go func(n int){...}(42)`) are exempt — explicit closure binding indicates intent
+  3. **WaitGroup synchronization**: goroutines referencing `Done`/`Wait`/`Add`/`close` are exempt
+  4. **Channel synchronization**: goroutines containing `<-` send or receive operations are exempt
+- 5 new tests: `TestScanFile_BareGoroutine_NoLifecycle_Flagged`, `_TestFile_OK`, `_WithParams_OK`, `_WithWaitGroup_OK`, `_WithChannel_OK`
+- `cmd/yagura-tray/tray_windows.go`: removed dead constant `tpmReturnCmd` (0x0100) found by `yagura dead-code`
+- `code-health` overall: A(93) → A(94); `cmd/yagura` F(55) → C(70) (bare-goroutine in tests no longer penalizes)
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 25 consecutive releases).
+
+#### Synergy
+Pairs with v0.43.0 (bare-goroutine rule) and v0.47.0 (blank-error-discard cleanup): `yagura ast-check --dir .` now reports 0 findings across all 263 files. The self-dogfood loop is clean.
+
+#### What's not yet
+High-complexity functions in `internal/mcp` (D, 19 funcs) and `internal/harness` (C, 11 funcs) remain the primary grade drag.
+
+#### Sources
+- Go context propagation: https://pkg.go.dev/context
+
 ## [v0.47.0] - 2026-06-16
 
 ### Theme — "Idiomatic Go: zero blank-error-discard violations codebase-wide"

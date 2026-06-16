@@ -135,7 +135,12 @@ func ScanFile(path, src string) []Finding {
 				})
 			}
 		case *ast.GoStmt:
-			if fl, ok := x.Call.Fun.(*ast.FuncLit); ok && !funcLitReferencesCtx(fl) {
+			// bare-goroutine: 匿名 goroutine がライフサイクル管理なしで起動されている。
+			// 除外: test file / ctx 参照あり / 明示パラメータあり(型付きクロージャ) /
+			//         WaitGroup・channel による同期あり。
+			if fl, ok := x.Call.Fun.(*ast.FuncLit); ok &&
+				!isTest &&
+				!funcLitHasLifecycle(fl) {
 				p := fset.Position(x.Pos())
 				out = append(out, Finding{
 					File: path, Line: p.Line, Column: p.Column,
@@ -252,19 +257,36 @@ func isPanicCall(call *ast.CallExpr) bool {
 	return ok && id.Name == "panic"
 }
 
-// funcLitReferencesCtx は FuncLit の本体が "ctx" または "context" という識別子を
-// 参照しているかを返す(ヒューリスティック: context を使う goroutine はライフサイクル
-// が管理されているとみなして bare-goroutine を除外する)。
-func funcLitReferencesCtx(fl *ast.FuncLit) bool {
+// funcLitHasLifecycle は FuncLit が lifecycle 管理の証拠を持つかを返す。
+// 以下のいずれかで true:
+//   - 明示パラメータあり(型付きクロージャ — 変数キャプチャが意図的)
+//   - 本体が "ctx" / "context" を参照(context.Context 管理下)
+//   - 本体が WaitGroup メソッド(Done/Wait/Add)を呼出(同期あり)
+//   - 本体が channel 操作(<- / close)を含む(同期あり)
+func funcLitHasLifecycle(fl *ast.FuncLit) bool {
+	if fl.Type.Params != nil && len(fl.Type.Params.List) > 0 {
+		return true
+	}
 	found := false
 	ast.Inspect(fl.Body, func(n ast.Node) bool {
 		if found {
 			return false
 		}
-		id, ok := n.(*ast.Ident)
-		if ok && (id.Name == "ctx" || id.Name == "context") {
+		switch x := n.(type) {
+		case *ast.Ident:
+			if x.Name == "ctx" || x.Name == "context" ||
+				x.Name == "Done" || x.Name == "Wait" || x.Name == "Add" || x.Name == "close" {
+				found = true
+				return false
+			}
+		case *ast.SendStmt:
 			found = true
 			return false
+		case *ast.UnaryExpr:
+			if x.Op.String() == "<-" {
+				found = true
+				return false
+			}
 		}
 		return true
 	})

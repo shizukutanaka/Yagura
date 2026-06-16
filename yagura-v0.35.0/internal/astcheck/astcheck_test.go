@@ -400,3 +400,71 @@ func riskyOp() (int, error) { return 0, nil }
 		t.Errorf("expected 1 blank-error-discard for _ = riskyOp(), got %d", got["blank-error-discard"])
 	}
 }
+
+// ─── bare-goroutine: lifecycle detection improvements ────────────────────────
+
+func TestScanFile_BareGoroutine_NoLifecycle_Flagged(t *testing.T) {
+	src := `package mylib
+import "fmt"
+func F() {
+	go func() { fmt.Println("hi") }()
+}
+`
+	got := ruleSet(ScanFile("lib.go", src))
+	if got["bare-goroutine"] != 1 {
+		t.Errorf("expected 1 bare-goroutine for plain anon goroutine, got %d", got["bare-goroutine"])
+	}
+}
+
+func TestScanFile_BareGoroutine_TestFile_OK(t *testing.T) {
+	src := `package mylib
+import "fmt"
+func F() {
+	go func() { fmt.Println("hi") }()
+}
+`
+	// test file suffix skips the rule
+	got := ruleSet(ScanFile("lib_test.go", src))
+	if got["bare-goroutine"] != 0 {
+		t.Errorf("bare-goroutine should not fire in test files, got %d", got["bare-goroutine"])
+	}
+}
+
+func TestScanFile_BareGoroutine_WithParams_OK(t *testing.T) {
+	src := `package mylib
+func F() {
+	go func(n int) { _ = n }(42)
+}
+`
+	got := ruleSet(ScanFile("lib.go", src))
+	if got["bare-goroutine"] != 0 {
+		t.Errorf("parametric goroutine should not fire bare-goroutine, got %d", got["bare-goroutine"])
+	}
+}
+
+func TestScanFile_BareGoroutine_WithWaitGroup_OK(t *testing.T) {
+	src := `package mylib
+import "sync"
+func F(wg *sync.WaitGroup) {
+	go func() { defer wg.Done() }()
+}
+`
+	got := ruleSet(ScanFile("lib.go", src))
+	if got["bare-goroutine"] != 0 {
+		t.Errorf("WaitGroup goroutine should not fire bare-goroutine, got %d", got["bare-goroutine"])
+	}
+}
+
+func TestScanFile_BareGoroutine_WithChannel_OK(t *testing.T) {
+	src := `package mylib
+func F() chan struct{} {
+	ch := make(chan struct{}, 1)
+	go func() { ch <- struct{}{} }()
+	return ch
+}
+`
+	got := ruleSet(ScanFile("lib.go", src))
+	if got["bare-goroutine"] != 0 {
+		t.Errorf("channel-sync goroutine should not fire bare-goroutine, got %d", got["bare-goroutine"])
+	}
+}
