@@ -201,7 +201,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), follo
 |---|---|---|
 | Inventory | `list`, `get`, `search`, `today`, `stats`, `register`, `unregister`, `update` | Manage the portfolio |
 | Security `[S]` | `vulns`, `scorecard`, `secretscan`, `sbom`, `gha_audit`, `pin_drift`, `ai_verify`, `test_audit`, `quality_check` | Computational sensors |
-| Code quality `[Q]` | `ast_check`, `complexity`, `coupling`, `api_doc`, `dead_code`, `recv_check`, `assert_check`, `err_policy`, `code_health` | Go static-analysis lens family (go/ast, zero-dep) + composite A–F maintainability grade. CLI-only siblings: `review-gate`, `diff-scan`, `flow-risk`, `coverage` |
+| Code quality `[G]` | `ast_check`, `complexity`, `coupling`, `api_doc`, `dead_code`, `recv_check`, `assert_check`, `err_policy`, `code_health` | Go static-analysis lens family (go/ast, zero-dep) + composite A–F maintainability grade. CLI-only siblings: `review-gate`, `diff-scan`, `flow-risk`, `coverage` |
 | Supply chain `[G]` | `sbom`, `vex`, `mcp_audit` | CycloneDX SBOM + OpenVEX exploitability statements + MCP config audit |
 | Injection defense `[S]` | `inject_scan` | Multilingual indirect prompt-injection scan of untrusted content |
 | Harness `[G]` | `agents_md`, `feature_list`, `progress_file`, `init_sh`, `harness_recommend` | Generate handoff artifacts |

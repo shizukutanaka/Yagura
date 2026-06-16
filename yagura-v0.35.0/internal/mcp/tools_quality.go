@@ -296,7 +296,7 @@ func buildTestAuditTool(d Deps) *Tool {
 func buildAssertCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_assert_check",
-		Description: "[Q] Test assertion density analysis. Detects hollow test files (zero assertions), reports avg density per test function.",
+		Description: "[G] Test assertion density analysis. Detects hollow test files (zero assertions), reports avg density per test function.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -340,7 +340,7 @@ func buildAssertCheckTool(d Deps) *Tool {
 func buildErrPolicyTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_err_policy",
-		Description: "[Q] Error-context discipline (Go). Wrap ratio (fmt.Errorf %w vs naked return err) + blank-discard (`_ = call()`) detection.",
+		Description: "[G] Error-context discipline (Go). Wrap ratio (fmt.Errorf %w vs naked return err) + blank-discard (`_ = call()`) detection.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -383,7 +383,7 @@ func buildErrPolicyTool(d Deps) *Tool {
 func buildComplexityTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_complexity",
-		Description: "[Q] Cyclomatic complexity (Go, gocyclo-compatible). Per-function McCabe score; flags functions over threshold (default 10).",
+		Description: "[G] Cyclomatic complexity (Go, gocyclo-compatible). Per-function McCabe score; flags functions over threshold (default 10).",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -432,7 +432,7 @@ func buildComplexityTool(d Deps) *Tool {
 func buildCouplingTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_coupling",
-		Description: "[Q] Package import coupling (Go). Fan-in/out + instability (Ce/(Ca+Ce)) + Stable Dependencies Principle violations.",
+		Description: "[G] Package import coupling (Go). Fan-in/out + instability (Ce/(Ca+Ce)) + Stable Dependencies Principle violations.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -485,7 +485,7 @@ func buildCouplingTool(d Deps) *Tool {
 func buildAPIDocTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_api_doc",
-		Description: "[Q] Exported-API doc discipline (Go). Documented ratio + undocumented exported funcs/types/consts/vars/methods.",
+		Description: "[G] Exported-API doc discipline (Go). Documented ratio + undocumented exported funcs/types/consts/vars/methods.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -528,7 +528,7 @@ func buildAPIDocTool(d Deps) *Tool {
 func buildDeadCodeTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_dead_code",
-		Description: "[Q] Dead unexported declarations (Go). Package-level funcs/types/consts/vars never referenced within their package.",
+		Description: "[G] Dead unexported declarations (Go). Package-level funcs/types/consts/vars never referenced within their package.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -570,7 +570,7 @@ func buildDeadCodeTool(d Deps) *Tool {
 func buildRecvCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_recv_check",
-		Description: "[Q] Method receiver consistency (Go). Inconsistent receiver names, mixed value/pointer receivers, un-idiomatic names (this/self).",
+		Description: "[G] Method receiver consistency (Go). Inconsistent receiver names, mixed value/pointer receivers, un-idiomatic names (this/self).",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -610,7 +610,7 @@ func buildRecvCheckTool(d Deps) *Tool {
 func buildCodeHealthTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_code_health",
-		Description: "[Q] Composite maintainability grade (Go). Per-package A-F from complexity/apidoc/deadcode/recvcheck/assertcheck/astcheck.",
+		Description: "[G] Composite maintainability grade (Go). Per-package A-F from complexity/apidoc/deadcode/recvcheck/assertcheck/astcheck.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
