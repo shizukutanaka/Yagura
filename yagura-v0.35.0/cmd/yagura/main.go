@@ -139,6 +139,7 @@ CLI direct mode (no MCP client required):
   yagura list|get|search|stats             Registry read ops
   yagura today [--limit N]                 Top portfolio projects to focus on now (priority/PRs/CI/staleness score)
   yagura register|update|unregister        Registry mutations (audited)
+  yagura graph <impact|neighbors|stats>    Dependency graph queries over registry depends_on (--json, neighbors --depth N)
   yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
   yagura skill-audit                       Audit .claude/skills (score + retire)
   yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)

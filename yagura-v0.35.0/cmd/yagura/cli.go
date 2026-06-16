@@ -60,6 +60,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/project"
+	"github.com/shizukutanaka/yagura/internal/projectgraph"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
@@ -90,6 +91,7 @@ var cliHandlers = map[string]cliHandler{
 	// registry CRUD
 	"list": cliList, "get": cliGet, "search": cliSearch, "stats": cliStats, "today": cliToday,
 	"register": cliRegister, "update": cliUpdate, "unregister": cliUnregister,
+	"graph": cliGraph,
 	// local scans
 	"sbom": cliSbom, "secretscan": cliSecretScan, "gha-audit": cliGhaAudit, "pin-drift": cliPinDrift,
 	// .claude/ + MCP artifact audits
@@ -326,6 +328,80 @@ func cliToday(args []string, stdout, stderr io.Writer) error {
 	humanToday(stdout, now, items)
 	return nil
 }
+
+// cliGraph は `yagura graph <impact|neighbors|stats>` を処理する。registry の
+// depends_on から依存グラフを構築して問い合わせる(MCP yagura_graph_* と同一の
+// internal/projectgraph を共有)。token 不要、registry 読込のみ。
+func cliGraph(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: yagura graph <impact|neighbors|stats> [slug] [--json] [--depth N]")
+		return errUsage
+	}
+	sub := args[0]
+	fs := newFlagSet("graph "+sub, stderr)
+	jsonOut := fs.Bool("json", false, "JSON output")
+	depth := fs.Int("depth", 2, "neighbor walk depth (neighbors only, 1-10)")
+	rest, err := parseArgs(fs, args[1:])
+	if err != nil {
+		return errUsage
+	}
+
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return err
+	}
+	g := projectgraph.Build(toGraphProjects(reg.List()))
+
+	switch sub {
+	case "impact", "neighbors":
+		if len(rest) < 1 {
+			fmt.Fprintf(stderr, "yagura graph %s: slug required\n", sub)
+			return errUsage
+		}
+		slug := rest[0]
+		if sub == "impact" {
+			res := g.Impact(slug)
+			if *jsonOut {
+				return emitJSON(stdout, res)
+			}
+			humanGraphImpact(stdout, res)
+			return nil
+		}
+		if *depth < 1 {
+			*depth = 1
+		}
+		if *depth > 10 {
+			*depth = 10
+		}
+		res := g.Neighbors(slug, *depth)
+		if *jsonOut {
+			return emitJSON(stdout, res)
+		}
+		humanGraphNeighbors(stdout, res)
+		return nil
+	case "stats":
+		out := map[string]any{"stats": g.Stats(), "dangling": g.Dangling()}
+		if *jsonOut {
+			return emitJSON(stdout, out)
+		}
+		humanGraphStats(stdout, g.Stats(), g.Dangling())
+		return nil
+	default:
+		fmt.Fprintf(stderr, "yagura graph: unknown subcommand %q (impact|neighbors|stats)\n", sub)
+		return errUsage
+	}
+}
+
+// toGraphProjects は registry の Project を projectgraph の最小 view に畳む
+// (internal/mcp の同名 helper と同じマッピング)。
+func toGraphProjects(ps []*project.Project) []projectgraph.Project {
+	out := make([]projectgraph.Project, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, projectgraph.Project{Slug: p.Slug, DependsOn: p.DependsOn})
+	}
+	return out
+}
+
 
 // ─── registry mutation commands (audited) ────────────────────
 

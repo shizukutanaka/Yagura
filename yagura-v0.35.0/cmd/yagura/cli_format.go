@@ -37,6 +37,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/project"
+	"github.com/shizukutanaka/yagura/internal/projectgraph"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
@@ -885,6 +886,56 @@ func humanRecvCheck(w io.Writer, r recvcheck.Report) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\n", f.Severity, f.Rule, f.Type, f.File, f.Line)
 	}
 	_ = tw.Flush()
+}
+
+func humanGraphImpact(w io.Writer, r projectgraph.ImpactResult) {
+	fmt.Fprintf(w, "%s — impact_count: %d   has_cycle: %v\n", r.Slug, r.ImpactCount, r.HasCycle)
+	if len(r.DirectImpact) > 0 {
+		fmt.Fprintf(w, "direct dependents: %s\n", strings.Join(r.DirectImpact, ", "))
+	}
+	if len(r.TransitiveImpact) > 0 {
+		fmt.Fprintf(w, "transitive dependents: %s\n", strings.Join(r.TransitiveImpact, ", "))
+	}
+	if r.HasCycle && len(r.CyclePath) > 0 {
+		fmt.Fprintf(w, "cycle: %s\n", strings.Join(r.CyclePath, " → "))
+	}
+	if r.ImpactCount == 0 {
+		fmt.Fprintln(w, "(nothing depends on this project)")
+	}
+}
+
+func humanGraphNeighbors(w io.Writer, r projectgraph.NeighborsResult) {
+	fmt.Fprintf(w, "%s — depth %d\n", r.Slug, r.Depth)
+	printStrList(w, "direct deps", r.DirectDeps)
+	printStrList(w, "direct dependents", r.DirectDependents)
+	printStrList(w, "transitive deps", r.TransitiveDeps)
+	printStrList(w, "transitive dependents", r.TransitiveDependents)
+}
+
+func humanGraphStats(w io.Writer, s projectgraph.Summary, dangling []projectgraph.DanglingDep) {
+	fmt.Fprintf(w, "nodes: %d   edges: %d   roots: %d   leaves: %d   isolated: %d\n",
+		s.NodeCount, s.EdgeCount, s.RootCount, s.LeafCount, s.IsolatedCount)
+	fmt.Fprintf(w, "max_fan_out: %d   max_fan_in: %d   most_depended_on: %s\n",
+		s.MaxFanOut, s.MaxFanIn, orDash(s.MostDependedOn))
+	if len(dangling) > 0 {
+		fmt.Fprintln(w, "dangling deps (depends_on a slug not in registry):")
+		for _, d := range dangling {
+			fmt.Fprintf(w, "  %s → %s\n", d.From, d.To)
+		}
+	}
+}
+
+func printStrList(w io.Writer, label string, xs []string) {
+	if len(xs) > 0 {
+		fmt.Fprintf(w, "%s: %s\n", label, strings.Join(xs, ", "))
+	}
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 func humanToday(w io.Writer, now time.Time, items []today.Item) {
