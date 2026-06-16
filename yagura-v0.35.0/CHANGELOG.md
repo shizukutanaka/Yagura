@@ -4,6 +4,30 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.46.0] - 2026-06-16
+
+### Theme — "API documentation discipline: 6 more packages upgraded to 100% godoc"
+
+#### Documentation
+- `internal/ccsecurity`: 9 Severity/Status constants upgraded from group-block comment to per-constant preceding godoc — 100% (was 47%)
+- `internal/aiverify`: 11 RiskLevel/Category constants upgraded to preceding godoc — 100% (was 62%)
+- `internal/alertfix`: 11 Severity/Source constants (alertfix.go) + 3 LifecycleStatus constants (state.go) upgraded to preceding godoc — 100% (was 62%)
+- `internal/publicityscan`: 3 Severity constants upgraded to preceding godoc — 100% (was 67%)
+- `internal/reviewgate`: 3 Tier constants upgraded to preceding godoc — 100% (was 57%)
+- `internal/pindrift`: 5 DriftStatus constants upgraded to preceding godoc; `CheckPinsParallel` godoc comment detached by blank line → converted to attached godoc — 100% (was 74%)
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 23 consecutive releases).
+
+#### Synergy
+Pairs with v0.45.0 (vex/flowrisk/agentparallel/opsrisk): `yagura api-doc` now reports 100% for 10 of the most actively-used internal packages. Remaining B-grade packages are dominated by complexity metrics, not documentation gaps.
+
+#### What's not yet
+High-complexity functions in `internal/mcp` (F, 19 funcs) and `cmd/yagura` (F, 33 funcs) remain — these require structural refactoring beyond a single-focus release.
+
+#### Sources
+- Go godoc conventions: https://go.dev/blog/godoc
+
 ## [v0.45.0] - 2026-06-16
 
 ### Theme — "API documentation discipline: 4 packages upgraded to 100% godoc"
