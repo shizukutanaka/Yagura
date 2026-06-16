@@ -112,7 +112,7 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 		// v0.35: CLI direct mode — registry CRUD + local scans without an MCP client.
-		if cliVerbs[args[0]] {
+		if isCLIVerb(args[0]) {
 			return runCLI(args[0], args[1:], stdout, stderr)
 		}
 	}

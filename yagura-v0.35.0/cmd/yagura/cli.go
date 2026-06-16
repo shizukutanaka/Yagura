@@ -79,115 +79,47 @@ const mainModulePath = "github.com/shizukutanaka/yagura"
 // FlagSet 側が既に詳細を stderr に出している。
 var errUsage = errors.New("usage error")
 
-// cliVerbs は dispatch() が runCLI に委譲する direct-mode subcommand の集合。
-var cliVerbs = map[string]bool{
-	"list": true, "get": true, "search": true, "stats": true,
-	"register": true, "update": true, "unregister": true,
-	"sbom": true, "secretscan": true, "gha-audit": true, "pin-drift": true,
-	"skill-audit": true, "workflow-audit": true, "settings-audit": true,
-	"agent-config-audit": true, "plugin-audit": true, "publicity-scan": true,
-	"mcp-audit": true, "vex-audit": true, "self-improve-history": true,
-	"path-policy": true, "inject-scan": true, "cc-security": true,
-	"claudemd-audit": true,
-	"ai-verify":      true, "quality-check": true, "test-audit": true,
-	"alert-fix": true, "ast-check": true, "review-gate": true,
-	"diff-scan": true, "flow-risk": true, "coverage": true,
-	"assert-check": true, "err-policy": true, "complexity": true,
-	"coupling": true, "api-doc": true, "dead-code": true,
-	"recv-check": true, "code-health": true,
+// cliHandler は direct-mode subcommand の実装シグネチャ。
+type cliHandler func(args []string, stdout, stderr io.Writer) error
+
+// cliHandlers は verb → handler の単一の真実源。dispatch()(委譲可否判定)と
+// runCLI(実行)が同じ map を参照するので、verb 追加は 1 行で済み、
+// 「集合」と「switch」の二重メンテによる取りこぼしが構造的に起きない。
+var cliHandlers = map[string]cliHandler{
+	// registry CRUD
+	"list": cliList, "get": cliGet, "search": cliSearch, "stats": cliStats,
+	"register": cliRegister, "update": cliUpdate, "unregister": cliUnregister,
+	// local scans
+	"sbom": cliSbom, "secretscan": cliSecretScan, "gha-audit": cliGhaAudit, "pin-drift": cliPinDrift,
+	// .claude/ + MCP artifact audits
+	"skill-audit": cliSkillAudit, "workflow-audit": cliWorkflowAudit, "settings-audit": cliSettingsAudit,
+	"agent-config-audit": cliAgentConfigAudit, "plugin-audit": cliPluginAudit, "mcp-audit": cliMCPAudit,
+	"publicity-scan": cliPublicityScan, "vex-audit": cliVexAudit, "self-improve-history": cliSelfImproveHistory,
+	"path-policy": cliPathPolicy, "inject-scan": cliInjectScan, "cc-security": cliCCSecurity,
+	"claudemd-audit": cliClaudeMdAudit,
+	// ② Review code-quality gates
+	"ai-verify": cliAIVerify, "quality-check": cliQualityCheck, "test-audit": cliTestAudit,
+	"alert-fix": cliAlertFix, "ast-check": cliASTCheck, "review-gate": cliReviewGate,
+	"diff-scan": cliDiffScan, "flow-risk": cliFlowRisk, "coverage": cliCoverage,
+	"assert-check": cliAssertCheck, "err-policy": cliErrPolicy, "complexity": cliComplexity,
+	"coupling": cliCoupling, "api-doc": cliAPIDoc, "dead-code": cliDeadCode,
+	"recv-check": cliRecvCheck, "code-health": cliCodeHealth,
+}
+
+// isCLIVerb は args[0] が direct-mode subcommand かを返す(dispatch 用)。
+func isCLIVerb(verb string) bool {
+	_, ok := cliHandlers[verb]
+	return ok
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
 func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
-	var err error
-	switch verb {
-	case "list":
-		err = cliList(args, stdout, stderr)
-	case "get":
-		err = cliGet(args, stdout, stderr)
-	case "search":
-		err = cliSearch(args, stdout, stderr)
-	case "stats":
-		err = cliStats(args, stdout, stderr)
-	case "register":
-		err = cliRegister(args, stdout, stderr)
-	case "update":
-		err = cliUpdate(args, stdout, stderr)
-	case "unregister":
-		err = cliUnregister(args, stdout, stderr)
-	case "sbom":
-		err = cliSbom(args, stdout, stderr)
-	case "secretscan":
-		err = cliSecretScan(args, stdout, stderr)
-	case "gha-audit":
-		err = cliGhaAudit(args, stdout, stderr)
-	case "pin-drift":
-		err = cliPinDrift(args, stdout, stderr)
-	case "skill-audit":
-		err = cliSkillAudit(args, stdout, stderr)
-	case "workflow-audit":
-		err = cliWorkflowAudit(args, stdout, stderr)
-	case "settings-audit":
-		err = cliSettingsAudit(args, stdout, stderr)
-	case "agent-config-audit":
-		err = cliAgentConfigAudit(args, stdout, stderr)
-	case "plugin-audit":
-		err = cliPluginAudit(args, stdout, stderr)
-	case "mcp-audit":
-		err = cliMCPAudit(args, stdout, stderr)
-	case "publicity-scan":
-		err = cliPublicityScan(args, stdout, stderr)
-	case "vex-audit":
-		err = cliVexAudit(args, stdout, stderr)
-	case "self-improve-history":
-		err = cliSelfImproveHistory(args, stdout, stderr)
-	case "path-policy":
-		err = cliPathPolicy(args, stdout, stderr)
-	case "inject-scan":
-		err = cliInjectScan(args, stdout, stderr)
-	case "cc-security":
-		err = cliCCSecurity(args, stdout, stderr)
-	case "claudemd-audit":
-		err = cliClaudeMdAudit(args, stdout, stderr)
-	case "ai-verify":
-		err = cliAIVerify(args, stdout, stderr)
-	case "quality-check":
-		err = cliQualityCheck(args, stdout, stderr)
-	case "test-audit":
-		err = cliTestAudit(args, stdout, stderr)
-	case "alert-fix":
-		err = cliAlertFix(args, stdout, stderr)
-	case "ast-check":
-		err = cliASTCheck(args, stdout, stderr)
-	case "review-gate":
-		err = cliReviewGate(args, stdout, stderr)
-	case "diff-scan":
-		err = cliDiffScan(args, stdout, stderr)
-	case "flow-risk":
-		err = cliFlowRisk(args, stdout, stderr)
-	case "coverage":
-		err = cliCoverage(args, stdout, stderr)
-	case "assert-check":
-		err = cliAssertCheck(args, stdout, stderr)
-	case "err-policy":
-		err = cliErrPolicy(args, stdout, stderr)
-	case "complexity":
-		err = cliComplexity(args, stdout, stderr)
-	case "coupling":
-		err = cliCoupling(args, stdout, stderr)
-	case "api-doc":
-		err = cliAPIDoc(args, stdout, stderr)
-	case "dead-code":
-		err = cliDeadCode(args, stdout, stderr)
-	case "recv-check":
-		err = cliRecvCheck(args, stdout, stderr)
-	case "code-health":
-		err = cliCodeHealth(args, stdout, stderr)
-	default:
+	h, ok := cliHandlers[verb]
+	if !ok {
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
 	}
-	if err != nil {
+	if err := h(args, stdout, stderr); err != nil {
 		if errors.Is(err, errUsage) {
 			return 2
 		}
