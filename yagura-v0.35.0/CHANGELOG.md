@@ -4,6 +4,29 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.45.0] - 2026-06-16
+
+### Theme — "API documentation discipline: 4 packages upgraded to 100% godoc"
+
+- **`internal/vex`** — 12/20 undocumented → 20/20 documented (C grade → A).
+  Added godoc to: `StatusNotAffected/Affected/Fixed/UnderInvestigation` (4 Status
+  constants), `JustComponentNotPresent/VulnerableCodeNotPresent/NotInExecutePath/
+  CannotBeControlled/InlineMitigationsAlreadyExist` (5 Justification constants),
+  `Product`, `Statement`, `Document` types, `Validate` function.
+
+- **`internal/flowrisk`** — 4/10 undocumented → 10/10 documented (B grade → A).
+  Rewrote `CapSecretRead/Network/Exec/FetchUntrusted/Write/Other` constant block
+  from inline-comment style to godoc-preceding style (so `go doc` and `golint`
+  can render them).
+
+- **`internal/agentparallel`** — `TierAny/Cheap/Mid/Strong` constants upgraded
+  from same-line comments to preceding godoc (api-doc tool now counts them).
+
+- **`internal/opsrisk`** — `TierAuto/Log/Review/Human` constants upgraded
+  from same-line comments to preceding godoc.
+
+All tests pass. Zero behavior change — pure documentation.
+
 ## [v0.44.0] - 2026-06-16
 
 ### Theme — "CLI parity: parallel-plan verb (LPT agent fan-out)"
