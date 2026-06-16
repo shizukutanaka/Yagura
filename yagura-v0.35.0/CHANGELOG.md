@@ -4,6 +4,27 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.43.0] - 2026-06-16
+
+### Theme — "astcheck + sessionsummary quality improvements"
+
+- **`astcheck` 新ルール `blank-error-discard`(MEDIUM、TDD)**:
+  library コード(main/test 以外)での `_ = call()` または `_, _ = call()` を検出。
+  返り値(多くはエラー)を全てブランク識別子に捨てるパターン — エラーの無言の
+  握り潰し。`go/types` 不要: `AssignStmt` の LHS が全て `_` で RHS が `CallExpr`
+  なら AST で確定判定。yagura 自身のコードベースで 20+ 件の既存違反を検出
+  (audit.go / httplimit / hookreceiver 等)。
+  TDD: テスト 5 件先行(Library/Main_OK/Test_OK/DeferClose/MultiBlank)、全 PASS。
+
+- **`sessionsummary` agent-switch 異常検知**:
+  `detectAnomalies` にエージェント切替を追加。セッション中に複数の異なるエージェント
+  が現れた場合(Claude Code → Windsurf 等の handoff)、`Anomalies` に
+  `"agent switch: N distinct agents in session (a, b)"` を報告。
+  handoff 信頼性の観測点として、`session-summary` CLI および dashboard が活用できる。
+  テスト 2 件追加(AgentSwitch_Flagged / SingleAgent_NoSwitch)。
+
+- version bump 0.42.0 → 0.43.0; 新規 Go dep なし(ADR-0001 ゼロ依存維持)。
+
 ## [v0.42.0] - 2026-06-16
 
 ### Theme — "CLI parity: harness scaffold + session observability"
