@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.37.0"
+	version     = "0.38.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -140,6 +140,8 @@ CLI direct mode (no MCP client required):
   yagura today [--limit N]                 Top portfolio projects to focus on now (priority/PRs/CI/staleness score)
   yagura register|update|unregister        Registry mutations (audited)
   yagura graph <impact|neighbors|stats>    Dependency graph queries over registry depends_on (--json, neighbors --depth N)
+  yagura plan-status <slug>                Plan.md progress for a project (checkboxes + required sections)
+  yagura release-radar [--limit N]         Cross-project release readiness ranking (Plan/CI/issues/AI-risk; --scan-code for AI)
   yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
   yagura skill-audit                       Audit .claude/skills (score + retire)
   yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)

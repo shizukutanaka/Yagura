@@ -59,6 +59,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/mcp"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
+	"github.com/shizukutanaka/yagura/internal/plantracker"
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/projectgraph"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
@@ -92,6 +93,7 @@ var cliHandlers = map[string]cliHandler{
 	"list": cliList, "get": cliGet, "search": cliSearch, "stats": cliStats, "today": cliToday,
 	"register": cliRegister, "update": cliUpdate, "unregister": cliUnregister,
 	"graph": cliGraph,
+	"plan-status": cliPlanStatus, "release-radar": cliReleaseRadar,
 	// local scans
 	"sbom": cliSbom, "secretscan": cliSecretScan, "gha-audit": cliGhaAudit, "pin-drift": cliPinDrift,
 	// .claude/ + MCP artifact audits
@@ -2732,6 +2734,215 @@ func newGitHubClient(cfg *config.Config) *github.Client {
 		BaseURL: cfg.GitHubBase,
 		Timeout: cfg.ScanTimeout,
 	})
+}
+
+// ─── plan-status (v0.38.0) ───────────────────────────────────
+
+// cliPlanStatus は `yagura plan-status <slug>` を処理する。
+// MCP yagura_plan_status と同じ domain logic(plantracker.Parse)を呼ぶ。
+// LocalPath 配下から Plan.md を探し、checkboxes + required sections を集計する。
+// token 不要。
+func cliPlanStatus(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("plan-status", stderr)
+	jsonOut := fs.Bool("json", false, "JSON output")
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		return errUsage
+	}
+	if len(pos) < 1 {
+		return fmt.Errorf("usage: yagura plan-status <slug> [--json]")
+	}
+	slug := pos[0]
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return err
+	}
+	p, err := reg.Get(slug)
+	if err != nil {
+		if errors.Is(err, registry.ErrNotFound) {
+			return fmt.Errorf("not found: %s", slug)
+		}
+		return err
+	}
+	content, path, loadErr := loadPlanMdLocal(p.LocalPath)
+	if loadErr != nil {
+		if *jsonOut {
+			return emitJSON(stdout, map[string]any{
+				"slug":    slug,
+				"plan_md": "",
+				"error":   loadErr.Error(),
+			})
+		}
+		return loadErr
+	}
+	state := plantracker.Parse(content)
+	if *jsonOut {
+		return emitJSON(stdout, map[string]any{
+			"slug":    slug,
+			"plan_md": path,
+			"state":   state,
+			"summary": state.Summary(),
+		})
+	}
+	humanPlanStatus(stdout, slug, path, state)
+	return nil
+}
+
+// ─── release-radar (v0.38.0) ─────────────────────────────────
+
+// cliReleaseRadar は `yagura release-radar` を処理する。
+// MCP yagura_release_radar と同じ domain logic(plantracker.ReleaseReadinessExt /
+// plantracker.Rank)を使い、LocalPath がある全 project の Plan.md を読んで
+// release 準備度を 0-100 でランク付けする。token 不要。
+// --scan-code を付けると aiverify で AI risk factor を追加集計する。
+func cliReleaseRadar(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("release-radar", stderr)
+	jsonOut := fs.Bool("json", false, "JSON output")
+	limit := fs.Int("limit", 10, "max projects to show (0 = all)")
+	scanCode := fs.Bool("scan-code", false, "scan project source with ai-verify for AI risk (slower)")
+	if err := fs.Parse(args); err != nil {
+		return errUsage
+	}
+	if *limit < 0 {
+		*limit = 0
+	}
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return err
+	}
+	projects := reg.List()
+	items := make([]plantracker.RankedProject, 0, len(projects))
+	for _, p := range projects {
+		if p.LocalPath == "" {
+			continue
+		}
+		content, _, loadErr := loadPlanMdLocal(p.LocalPath)
+		if loadErr != nil {
+			continue
+		}
+		plan := plantracker.Parse(content)
+		ciStatus := string(p.CIStatus)
+		if ciStatus == "" {
+			ciStatus = "unknown"
+		}
+		openCrit := p.VulnCritical
+		var aiResult aiverify.Result
+		if *scanCode {
+			aiResult = scanProjectAICodeCLI(p.LocalPath)
+		}
+		readiness := plantracker.ReleaseReadinessExt(plan, ciStatus, openCrit,
+			false, aiResult.RiskScore, aiResult.HasCritical)
+		reason := pickReleaseReason(plan, ciStatus, openCrit, aiResult.HasCritical, aiResult.RiskScore)
+		items = append(items, plantracker.RankedProject{
+			Slug:               p.Slug,
+			Readiness:          readiness,
+			PlanProgressPct:    plan.ProgressPct,
+			CurrentPhase:       plan.CurrentPhase,
+			CIStatus:           ciStatus,
+			OpenIssuesCritical: openCrit,
+			AIRiskScore:        aiResult.RiskScore,
+			AIHasCritical:      aiResult.HasCritical,
+			AIGenLineCount:     aiResult.AIGenLines,
+			Reason:             reason,
+		})
+	}
+	ranked := plantracker.Rank(items)
+	if *limit > 0 && len(ranked) > *limit {
+		ranked = ranked[:*limit]
+	}
+	if *jsonOut {
+		return emitJSON(stdout, map[string]any{
+			"ranked":          ranked,
+			"total_projects":  len(projects),
+			"projects_scored": len(items),
+			"scan_code":       *scanCode,
+		})
+	}
+	humanReleaseRadar(stdout, ranked, len(projects), len(items), *scanCode)
+	return nil
+}
+
+// loadPlanMdLocal は LocalPath 配下から Plan.md / PLAN.md / plan.md を探す。
+// internal/mcp.loadPlanMd と同じロジック(循環 import を避けるため複製)。
+func loadPlanMdLocal(localPath string) (string, string, error) {
+	if localPath == "" {
+		return "", "", fmt.Errorf("project has no local_path")
+	}
+	candidates := []string{"Plan.md", "PLAN.md", "plan.md"}
+	for _, name := range candidates {
+		full := filepath.Join(localPath, name)
+		if data, err := os.ReadFile(full); err == nil {
+			return string(data), full, nil
+		}
+	}
+	return "", "", fmt.Errorf("no Plan.md / PLAN.md / plan.md found in %s", localPath)
+}
+
+// pickReleaseReason は readiness 阻害の最大要因を 1 文で返す。
+// internal/mcp.pickReason と同じロジック(循環 import を避けるため複製)。
+func pickReleaseReason(plan plantracker.PlanState, ciStatus string, openCrit int,
+	aiCritical bool, aiRisk int) string {
+	_ = aiRisk // unused in the textual reason (AI critical already captured)
+	if aiCritical {
+		return "AI-generated critical risk (review required)"
+	}
+	if openCrit > 0 {
+		return fmt.Sprintf("%d critical issues blocking", openCrit)
+	}
+	if strings.EqualFold(ciStatus, "failing") {
+		return "CI failing"
+	}
+	if !plan.IsHealthy {
+		return "Plan.md missing required sections"
+	}
+	if plan.ProgressPct < 100 {
+		return fmt.Sprintf("plan %d%% remaining", 100-plan.ProgressPct)
+	}
+	return "ready to release"
+}
+
+// scanProjectAICodeCLI は LocalPath 配下の主要 source file を aiverify で scan する。
+// internal/mcp.scanProjectAICode と同じロジック(循環 import を避けるため複製)。
+// 上位 64 file / 256KB 制限(暴走防止)。
+func scanProjectAICodeCLI(localPath string) aiverify.Result {
+	const maxFiles = 64
+	const maxFileSize = 256 * 1024
+
+	files := map[string]string{}
+	walked := 0
+	_ = filepath.Walk(localPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if walked >= maxFiles {
+			return filepath.SkipDir
+		}
+		base := filepath.Base(path)
+		if strings.HasPrefix(base, ".") || base == "vendor" || base == "node_modules" {
+			return nil
+		}
+		ext := filepath.Ext(path)
+		switch ext {
+		case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs":
+		default:
+			return nil
+		}
+		if info.Size() > maxFileSize {
+			return nil
+		}
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(localPath, path)
+		files[rel] = string(data)
+		walked++
+		return nil
+	})
+	if len(files) == 0 {
+		return aiverify.Result{}
+	}
+	return aiverify.Scan(files)
 }
 
 // auditMutation は registry 変更を audit log に best-effort で追記する。

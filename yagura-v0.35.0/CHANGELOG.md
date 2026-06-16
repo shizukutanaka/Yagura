@@ -4,6 +4,26 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.38.0] - 2026-06-16
+
+### Theme — "CLI parity: plan-status + release-radar"
+
+- **CLI `plan-status <slug>`** — MCP `yagura_plan_status` と同一の `plantracker.Parse`
+  を直接呼ぶ。LocalPath 配下から `Plan.md / PLAN.md / plan.md` を探し、checkboxes と
+  required sections(目的/スコープ/フェーズ/DoD)を集計。`--json` で MCP と同一 shape。
+  token 不要。エラーパス(slug 不在 / local_path なし / Plan.md なし)を適切に伝達。
+
+- **CLI `release-radar [--limit N] [--scan-code]`** — MCP `yagura_release_radar` と
+  同一の `plantracker.ReleaseReadinessExt / plantracker.Rank` を使い、LocalPath が
+  ある全 project の Plan.md を読んで release 準備度(0-100)でランク付け。
+  `--scan-code` で aiverify による AI risk factor を追加集計。token 不要。
+
+- 両 verb を `cliHandlers` map に追加(dispatch の single source of truth を維持)。
+- `cli_format.go` に `humanPlanStatus` / `humanReleaseRadar` formatters 追加。
+- `main.go` の `usageText` に 2 行追記。
+- 新規テスト 11 件(`TestCLI_PlanStatus_*` 6 件 + `TestCLI_ReleaseRadar_*` 5 件)。
+- 新規 Go dep なし(ADR-0001 ゼロ依存維持)。
+
 ## [v0.37.0] - 2026-06-16
 
 ### Theme — "Maintainability lens family + composite code-health (Socratic synthesis)"

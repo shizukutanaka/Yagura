@@ -2195,3 +2195,233 @@ func TestCLI_AIVerify_TruncationWarns(t *testing.T) {
 		t.Errorf("expected truncation warning on stderr, got %q", stderr)
 	}
 }
+
+// ─── plan-status tests (v0.38.0) ────────────────────────────
+
+func TestCLI_PlanStatus_MissingSlug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, stderr := runCLICapture(t, "plan-status")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for missing slug")
+	}
+	if !strings.Contains(stderr+runCLIStdout(t, "plan-status"), "usage") &&
+		!strings.Contains(stderr, "plan-status") {
+		t.Logf("stderr: %q", stderr)
+	}
+}
+
+func TestCLI_PlanStatus_UnknownSlug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, stderr := runCLICapture(t, "plan-status", "no-such-project")
+	if code == 0 {
+		t.Fatal("expected non-zero for unknown slug")
+	}
+	if !strings.Contains(stderr, "not found") {
+		t.Errorf("expected 'not found' in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_PlanStatus_NoLocalPath(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	// register with no local_path
+	code, _, _ := runCLICapture(t, "register", "myproj", "owner/repo")
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, _, stderr := runCLICapture(t, "plan-status", "myproj")
+	if code == 0 {
+		t.Fatal("expected non-zero exit when project has no local_path")
+	}
+	if !strings.Contains(stderr, "local_path") && !strings.Contains(stderr, "Plan.md") {
+		t.Errorf("expected diagnostic about missing local_path/Plan.md, got %q", stderr)
+	}
+}
+
+func TestCLI_PlanStatus_NoPlanMd(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	localDir := t.TempDir() // no Plan.md inside
+	code, _, _ := runCLICapture(t, "register", "myproj", "owner/repo", "--local-path", localDir)
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, _, stderr := runCLICapture(t, "plan-status", "myproj")
+	if code == 0 {
+		t.Fatal("expected non-zero exit when no Plan.md is present")
+	}
+	if !strings.Contains(stderr, "Plan.md") {
+		t.Errorf("expected 'Plan.md' in error, got %q", stderr)
+	}
+}
+
+func TestCLI_PlanStatus_HappyPath(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	localDir := t.TempDir()
+	planContent := `# Purpose
+Project purpose here.
+
+# Scope
+Scope section.
+
+# Phase 1
+- [x] Task A
+- [ ] Task B
+
+# DoD
+- [ ] All tests pass
+`
+	if err := os.WriteFile(filepath.Join(localDir, "Plan.md"), []byte(planContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "register", "myproj", "owner/repo", "--local-path", localDir)
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "plan-status", "myproj")
+	if code != 0 {
+		t.Fatalf("plan-status code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "myproj") {
+		t.Errorf("expected slug in output, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "progress") {
+		t.Errorf("expected 'progress' in output, got %q", stdout)
+	}
+}
+
+func TestCLI_PlanStatus_JSON(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	localDir := t.TempDir()
+	planContent := "# Purpose\nfoo\n# Scope\nbar\n# Phases\nbaz\n# DoD\n- [x] done\n"
+	if err := os.WriteFile(filepath.Join(localDir, "Plan.md"), []byte(planContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "register", "plantest", "o/r", "--local-path", localDir)
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "plan-status", "plantest", "--json")
+	if code != 0 {
+		t.Fatalf("plan-status --json code=%d stderr=%q", code, stderr)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\nout=%q", err, stdout)
+	}
+	if out["slug"] != "plantest" {
+		t.Errorf("expected slug plantest, got %v", out["slug"])
+	}
+	if _, ok := out["state"]; !ok {
+		t.Errorf("expected 'state' key in JSON output")
+	}
+}
+
+// ─── release-radar tests (v0.38.0) ───────────────────────────
+
+func TestCLI_ReleaseRadar_Empty(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	// no projects registered → 0 scored
+	code, stdout, stderr := runCLICapture(t, "release-radar")
+	if code != 0 {
+		t.Fatalf("release-radar code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "total_projects") {
+		t.Errorf("expected 'total_projects' in output, got %q", stdout)
+	}
+}
+
+func TestCLI_ReleaseRadar_NoLocalPath(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, _ := runCLICapture(t, "register", "headless", "o/r") // no local path
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, _ := runCLICapture(t, "release-radar")
+	if code != 0 {
+		t.Fatalf("release-radar code=%d", code)
+	}
+	// scored = 0 because no local_path
+	if !strings.Contains(stdout, "scored: 0") {
+		t.Errorf("expected 'scored: 0', got %q", stdout)
+	}
+}
+
+func TestCLI_ReleaseRadar_WithPlanMd(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	localDir := t.TempDir()
+	planContent := "# Purpose\np\n# Scope\ns\n# Phases\nph\n# DoD\n- [x] done\n"
+	if err := os.WriteFile(filepath.Join(localDir, "Plan.md"), []byte(planContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "register", "alpha", "o/r", "--local-path", localDir)
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "release-radar")
+	if code != 0 {
+		t.Fatalf("release-radar code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "alpha") {
+		t.Errorf("expected slug in output, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "scored: 1") {
+		t.Errorf("expected 'scored: 1', got %q", stdout)
+	}
+}
+
+func TestCLI_ReleaseRadar_JSON(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	localDir := t.TempDir()
+	planContent := "# Purpose\np\n# Scope\ns\n# Phases\nph\n# DoD\n- [ ] todo\n"
+	if err := os.WriteFile(filepath.Join(localDir, "Plan.md"), []byte(planContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "register", "beta", "o/r", "--local-path", localDir)
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "release-radar", "--json")
+	if code != 0 {
+		t.Fatalf("release-radar --json code=%d stderr=%q", code, stderr)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\nout=%q", err, stdout)
+	}
+	if _, ok := out["ranked"]; !ok {
+		t.Errorf("expected 'ranked' key in JSON output")
+	}
+	if _, ok := out["total_projects"]; !ok {
+		t.Errorf("expected 'total_projects' key in JSON output")
+	}
+}
+
+func TestCLI_ReleaseRadar_Limit(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	// register 3 projects with Plan.md
+	for _, slug := range []string{"p1", "p2", "p3"} {
+		localDir := t.TempDir()
+		plan := "# Purpose\np\n# Scope\ns\n# Phases\nph\n# DoD\n- [x] done\n"
+		if err := os.WriteFile(filepath.Join(localDir, "Plan.md"), []byte(plan), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		code, _, _ := runCLICapture(t, "register", slug, "o/r", "--local-path", localDir)
+		if code != 0 {
+			t.Fatalf("register %s failed", slug)
+		}
+	}
+	code, stdout, stderr := runCLICapture(t, "release-radar", "--limit", "2")
+	if code != 0 {
+		t.Fatalf("release-radar --limit 2 code=%d stderr=%q", code, stderr)
+	}
+	// should say scored: 3 but only show 2 rows in the table
+	if !strings.Contains(stdout, "scored: 3") {
+		t.Errorf("expected 'scored: 3', got %q", stdout)
+	}
+}
+
+// runCLIStdout is a helper to get stdout only (for tests that don't need both).
+func runCLIStdout(t *testing.T, args ...string) string {
+	t.Helper()
+	_, out, _ := runCLICapture(t, args...)
+	return out
+}

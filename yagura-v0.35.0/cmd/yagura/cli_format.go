@@ -36,6 +36,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
+	"github.com/shizukutanaka/yagura/internal/plantracker"
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/projectgraph"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
@@ -1087,6 +1088,54 @@ func humanASTSurface(w io.Writer, res astcheck.SurfaceResult) {
 }
 
 // ─── alert-fix (v0.36.0) ─────────────────────────────────────
+
+// ─── plan-status (v0.38.0) ───────────────────────────────────
+
+func humanPlanStatus(w io.Writer, slug, path string, s plantracker.PlanState) {
+	fmt.Fprintf(w, "slug: %s   plan_md: %s\n", slug, path)
+	fmt.Fprintf(w, "summary: %s\n", s.Summary())
+	fmt.Fprintf(w, "progress: %d%%  (%d/%d tasks)   healthy: %v\n",
+		s.ProgressPct, s.CompletedTasks, s.TotalTasks, s.IsHealthy)
+	if s.CurrentPhase != "" {
+		fmt.Fprintf(w, "current_phase: %s\n", s.CurrentPhase)
+	}
+	fmt.Fprintf(w, "sections: purpose=%v scope=%v phases=%v risks=%v dod=%v\n",
+		s.HasPurpose, s.HasScope, s.HasPhases, s.HasRisks, s.HasDoD)
+	if len(s.Issues) > 0 {
+		fmt.Fprintf(w, "issues: %s\n", strings.Join(s.Issues, ", "))
+	}
+	if len(s.Phases) > 0 {
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "PHASE\tLEVEL\tTASKS\tDONE%\tDONE")
+		for _, p := range s.Phases {
+			done := "no"
+			if p.Done {
+				done = "yes"
+			}
+			fmt.Fprintf(tw, "%s\t%d\t%d\t%d%%\t%s\n", p.Name, p.Level, p.TotalTasks, p.ProgressPct, done)
+		}
+		_ = tw.Flush()
+	}
+}
+
+// ─── release-radar (v0.38.0) ─────────────────────────────────
+
+func humanReleaseRadar(w io.Writer, ranked []plantracker.RankedProject, total, scored int, scanCode bool) {
+	fmt.Fprintf(w, "total_projects: %d   scored: %d   scan_code: %v\n", total, scored, scanCode)
+	if len(ranked) == 0 {
+		fmt.Fprintln(w, "no projects with Plan.md and local_path found")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "READY\tSLUG\tPLAN%\tCI\tCRIT\tPHASE\tREASON")
+	for _, r := range ranked {
+		fmt.Fprintf(tw, "%d\t%s\t%d%%\t%s\t%d\t%s\t%s\n",
+			r.Readiness, r.Slug, r.PlanProgressPct,
+			dash(r.CIStatus), r.OpenIssuesCritical,
+			dash(r.CurrentPhase), dash(r.Reason))
+	}
+	_ = tw.Flush()
+}
 
 func humanAlertFix(w io.Writer, r alertfix.Report) {
 	fmt.Fprintln(w, r.Summary())
