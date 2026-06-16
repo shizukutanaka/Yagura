@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 63 internal packages
+## Map — 64 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 70 tool definitions
+- `internal/mcp` — MCP server + 71 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 
@@ -124,6 +124,10 @@ cortex flywheel 4 段階すべてを単体で機械化:
   (ソクラテス新視点、unit を自分自身の他の部分と照らす軸)。レシーバ名の不揃い /
   値・ポインタ混在(満たす interface が変わる実害)/ this・self 等非慣習名。
   golint/govet 隣接。CLI `recv-check --dir . [--strict]`、MCP `yagura_recv_check`★ v0.36
+- `internal/codehealth` — 保守性レンズ群(complexity/apidoc/deadcode/recvcheck/
+  assertcheck)を package 別 grade(A-F)へ合成(ソクラテス新視点 synthesis)。
+  reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
+  (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23

@@ -43,6 +43,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
+	"github.com/shizukutanaka/yagura/internal/codehealth"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/config"
 	"github.com/shizukutanaka/yagura/internal/coupling"
@@ -93,7 +94,7 @@ var cliVerbs = map[string]bool{
 	"diff-scan": true, "flow-risk": true, "coverage": true,
 	"assert-check": true, "err-policy": true, "complexity": true,
 	"coupling": true, "api-doc": true, "dead-code": true,
-	"recv-check": true,
+	"recv-check": true, "code-health": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -180,6 +181,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliDeadCode(args, stdout, stderr)
 	case "recv-check":
 		err = cliRecvCheck(args, stdout, stderr)
+	case "code-health":
+		err = cliCodeHealth(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -2327,6 +2330,68 @@ func cliRecvCheck(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("%d receiver-consistency issue(s)", len(rep.Findings))
 	}
 	return nil
+}
+
+// ─── code-health (v0.36.0) ───────────────────────────────────
+
+// cliCodeHealth は `yagura code-health` を処理する。保守性レンズ群を package 別
+// grade(A-F)へ合成する。--min-grade で総合 grade がそれ未満なら exit 1。
+// ソクラテス的動機: 8 個の別々の問いではなく「総合的に健全か」を 1 つの grade で。
+func cliCodeHealth(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("code-health", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	minGrade := fset.String("min-grade", "", "exit non-zero if overall grade is below this (A-F)")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	if *minGrade != "" && !validGrade(*minGrade) {
+		return fmt.Errorf("invalid --min-grade %q (A/B/C/D/F)", *minGrade)
+	}
+
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return err
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+
+	rep := codehealth.Analyze(sr.Files)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanCodeHealth(stdout, rep)
+	}
+	if *minGrade != "" && gradeRank(rep.OverallGrade) < gradeRank(*minGrade) {
+		return fmt.Errorf("overall grade %s below --min-grade %s (score %d)", rep.OverallGrade, *minGrade, rep.OverallScore)
+	}
+	return nil
+}
+
+// validGrade / gradeRank は --min-grade ゲート用。A が最上位。
+func validGrade(g string) bool {
+	switch strings.ToUpper(g) {
+	case "A", "B", "C", "D", "F":
+		return true
+	}
+	return false
+}
+
+func gradeRank(g string) int {
+	switch strings.ToUpper(g) {
+	case "A":
+		return 5
+	case "B":
+		return 4
+	case "C":
+		return 3
+	case "D":
+		return 2
+	case "F":
+		return 1
+	}
+	return 0
 }
 
 // ─── alert-fix (v0.36.0) ─────────────────────────────────────

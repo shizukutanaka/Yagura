@@ -168,6 +168,7 @@ CLI direct mode (no MCP client required):
   yagura api-doc [--dir .] [--min-doc R]          Exported-API doc discipline: documented ratio + undocumented exported funcs/types/consts/vars/methods (godoc, golint-compatible)
   yagura dead-code [--dir .] [--strict]           Dead unexported declarations: package-level funcs/types/consts/vars never referenced within their own package
   yagura recv-check [--dir .] [--strict]          Method receiver consistency: inconsistent receiver names, mixed value/pointer receivers, un-idiomatic names (this/self)
+  yagura code-health [--dir .] [--min-grade G]    Composite maintainability grade (A-F) per package from complexity/apidoc/deadcode/recv-check/assert-check
   Add --json to any of the above for machine-readable output.
   ai-verify/quality-check/secretscan accept --rules-file (or auto-detect
     .yagura/{aiverify,quality,secretscan}.json) to load project-specific rules.

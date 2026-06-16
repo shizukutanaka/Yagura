@@ -14,6 +14,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
+	"github.com/shizukutanaka/yagura/internal/codehealth"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
@@ -595,6 +596,46 @@ func buildRecvCheckTool(d Deps) *Tool {
 				"files_scanned":      rep.FilesScanned,
 				"types_with_methods": rep.TypesWithMethods,
 				"findings":           rep.Findings,
+			}, nil
+		},
+	}
+}
+
+// ─── yagura_code_health (v0.36.0) ─────────────────────────────
+//
+// ソクラテス的動機: 保守者は「この package は総合的に健全か」を問う。本 tool は
+// complexity/apidoc/deadcode/recvcheck/assertcheck を package 別 grade(A-F)へ
+// 合成する。reviewgate(security 合成)の maintainability 版。
+
+func buildCodeHealthTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_code_health",
+		Description: "[Q] Composite maintainability grade (Go). Per-package A-F from complexity/apidoc/deadcode/recvcheck/assertcheck.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for .go files (paths relative to module root)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := codehealth.Analyze(in.Files)
+			return map[string]any{
+				"overall_score": rep.OverallScore,
+				"overall_grade": rep.OverallGrade,
+				"packages":      rep.Packages,
 			}, nil
 		},
 	}

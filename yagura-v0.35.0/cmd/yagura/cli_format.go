@@ -24,6 +24,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
+	"github.com/shizukutanaka/yagura/internal/codehealth"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/coverage"
@@ -883,6 +884,31 @@ func humanRecvCheck(w io.Writer, r recvcheck.Report) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\n", f.Severity, f.Rule, f.Type, f.File, f.Line)
 	}
 	_ = tw.Flush()
+}
+
+func humanCodeHealth(w io.Writer, r codehealth.Report) {
+	fmt.Fprintf(w, "overall: %s (%d)   packages: %d\n", r.OverallGrade, r.OverallScore, len(r.Packages))
+	if len(r.Packages) == 0 {
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "GRADE\tSCORE\tPACKAGE\tTOP ISSUE")
+	shown := r.Packages
+	const cap = 25
+	if len(shown) > cap {
+		shown = shown[:cap]
+	}
+	for _, p := range shown {
+		top := "-"
+		if len(p.Reasons) > 0 {
+			top = p.Reasons[0]
+		}
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", p.Grade, p.Score, p.Package, top)
+	}
+	_ = tw.Flush()
+	if len(r.Packages) > cap {
+		fmt.Fprintf(w, "... %d more packages (use --json for the full report)\n", len(r.Packages)-cap)
+	}
 }
 
 func humanComplexity(w io.Writer, r complexity.Report) {
