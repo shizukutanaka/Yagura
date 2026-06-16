@@ -154,6 +154,56 @@ func TestScore_Deterministic(t *testing.T) {
 	}
 }
 
+func TestScore_StructuralPenalties(t *testing.T) {
+	// 1 high (-10) + 2 medium (-6) = -16 → 84.
+	r := codehealth.Score([]codehealth.PackageSignals{
+		{Package: "p", StructuralHigh: 1, StructuralMedium: 2},
+	})
+	g := gradeOf(r, "p")
+	if g.Score != 84 {
+		t.Errorf("structural score: want 84 got %d", g.Score)
+	}
+	// high penalty must dominate medium in the ordered reasons.
+	if len(g.Reasons) == 0 || g.Reasons[0] != "1 high-severity structural defect(s) (-10)" {
+		t.Errorf("top reason should be the high-severity defect; got %v", g.Reasons)
+	}
+}
+
+func TestScore_StructuralHighCapped(t *testing.T) {
+	r := codehealth.Score([]codehealth.PackageSignals{{Package: "p", StructuralHigh: 100}})
+	if g := gradeOf(r, "p"); g.Score != 70 {
+		t.Errorf("structural-high cap: want 70 got %d", g.Score)
+	}
+}
+
+func TestAnalyze_StructuralHighFlows(t *testing.T) {
+	// os.Exit in a non-main, non-test package is an astcheck high-severity defect;
+	// the composite must reflect it (signal wiring end-to-end).
+	files := map[string]string{
+		"lib/lib.go": `package lib
+
+import "os"
+
+// Boom exits the whole process from a library — astcheck os-exit-library (high).
+func Boom() { os.Exit(1) }
+`,
+	}
+	r := codehealth.Analyze(files)
+	g := gradeOf(r, "lib")
+	if g.Score >= 100 {
+		t.Errorf("library os.Exit should lower the grade; got %d", g.Score)
+	}
+	hit := false
+	for _, reason := range g.Reasons {
+		if reason == "1 high-severity structural defect(s) (-10)" {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Errorf("expected a structural-defect reason; got %v", g.Reasons)
+	}
+}
+
 func TestAnalyze_Smoke(t *testing.T) {
 	files := map[string]string{
 		"pkg/a.go": `package pkg

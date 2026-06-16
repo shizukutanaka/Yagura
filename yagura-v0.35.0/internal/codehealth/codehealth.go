@@ -24,6 +24,7 @@ import (
 
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
+	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
@@ -39,6 +40,8 @@ type PackageSignals struct {
 	DeadDecls           int    `json:"dead_decls"`
 	RecvIssues          int    `json:"recv_issues"`
 	HollowTestFiles     int    `json:"hollow_test_files"`
+	StructuralHigh      int    `json:"structural_high"`   // astcheck high(例: library 内 os.Exit)
+	StructuralMedium    int    `json:"structural_medium"` // astcheck medium(空 nil 分岐 / defer-in-loop / err 文字列比較)
 }
 
 // PackageGrade は 1 package の合成スコア。
@@ -113,6 +116,14 @@ func scoreOne(s PackageSignals) PackageGrade {
 		p := capPenalty(s.HollowTestFiles*5, 20)
 		ps = append(ps, penalized{p, strconv.Itoa(s.HollowTestFiles) + " hollow test file(s) (-" + strconv.Itoa(p) + ")"})
 	}
+	if s.StructuralHigh > 0 {
+		p := capPenalty(s.StructuralHigh*10, 30)
+		ps = append(ps, penalized{p, strconv.Itoa(s.StructuralHigh) + " high-severity structural defect(s) (-" + strconv.Itoa(p) + ")"})
+	}
+	if s.StructuralMedium > 0 {
+		p := capPenalty(s.StructuralMedium*3, 15)
+		ps = append(ps, penalized{p, strconv.Itoa(s.StructuralMedium) + " medium structural issue(s) (-" + strconv.Itoa(p) + ")"})
+	}
 
 	// 減点の大きい順(同点は text 昇順)で決定論的に並べる。
 	sort.SliceStable(ps, func(i, j int) bool {
@@ -186,6 +197,8 @@ func Analyze(files map[string]string) Report {
 		dc := deadcode.Scan(pkgFiles)
 		rc := recvcheck.Scan(pkgFiles)
 		ac := assertcheck.Scan(pkgFiles)
+		as := astcheck.ScanFiles(pkgFiles)
+		high, med := astBySeverity(as.Findings)
 
 		sigs = append(sigs, PackageSignals{
 			Package:             pkgLabel(dir),
@@ -196,6 +209,8 @@ func Analyze(files map[string]string) Report {
 			DeadDecls:           dc.Dead,
 			RecvIssues:          countReal(rc.Findings),
 			HollowTestFiles:     ac.HollowFiles,
+			StructuralHigh:      high,
+			StructuralMedium:    med,
 		})
 	}
 	return Score(sigs)
@@ -210,6 +225,20 @@ func countReal(fs []recvcheck.Finding) int {
 		}
 	}
 	return n
+}
+
+// astBySeverity は astcheck findings を high / medium に分けて数える
+//(low の parse-error 等は健全性スコアに含めない)。
+func astBySeverity(fs []astcheck.Finding) (high, medium int) {
+	for _, f := range fs {
+		switch f.Severity {
+		case "high":
+			high++
+		case "medium":
+			medium++
+		}
+	}
+	return high, medium
 }
 
 func pkgLabel(dir string) string {

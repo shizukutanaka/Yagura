@@ -604,13 +604,13 @@ func buildRecvCheckTool(d Deps) *Tool {
 // ─── yagura_code_health (v0.36.0) ─────────────────────────────
 //
 // ソクラテス的動機: 保守者は「この package は総合的に健全か」を問う。本 tool は
-// complexity/apidoc/deadcode/recvcheck/assertcheck を package 別 grade(A-F)へ
+// complexity/apidoc/deadcode/recvcheck/assertcheck/astcheck を package 別 grade(A-F)へ
 // 合成する。reviewgate(security 合成)の maintainability 版。
 
 func buildCodeHealthTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_code_health",
-		Description: "[Q] Composite maintainability grade (Go). Per-package A-F from complexity/apidoc/deadcode/recvcheck/assertcheck.",
+		Description: "[Q] Composite maintainability grade (Go). Per-package A-F from complexity/apidoc/deadcode/recvcheck/assertcheck/astcheck.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
