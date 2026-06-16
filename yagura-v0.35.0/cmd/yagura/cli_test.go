@@ -2946,3 +2946,139 @@ func TestCLI_ProgressFile_Note(t *testing.T) {
 		t.Errorf("expected note in output, got %q", stdout)
 	}
 }
+
+// ─── harness-recommend (v0.42.0) ─────────────────────────────────────────
+
+func TestCLI_HarnessRecommend_NoLangOrSlug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, stderr := runCLICapture(t, "harness-recommend")
+	if code == 0 {
+		t.Fatal("expected non-zero exit when no --language or --slug provided")
+	}
+	if !strings.Contains(stderr, "language") && !strings.Contains(stderr, "slug") {
+		t.Errorf("expected error about language/slug in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_HarnessRecommend_Language_Human(t *testing.T) {
+	code, stdout, stderr := runCLICapture(t, "harness-recommend", "--language", "go")
+	if code != 0 {
+		t.Fatalf("harness-recommend --language go: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "go") {
+		t.Errorf("expected 'go' in output, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "CLAUDE.md") {
+		t.Errorf("expected CLAUDE.md template in output, got %q", stdout)
+	}
+}
+
+func TestCLI_HarnessRecommend_Language_JSON(t *testing.T) {
+	code, stdout, stderr := runCLICapture(t, "harness-recommend", "--json", "--language", "typescript")
+	if code != 0 {
+		t.Fatalf("harness-recommend --json: code=%d stderr=%q", code, stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("expected valid JSON, got %q: %v", stdout, err)
+	}
+	if _, ok := result["claude_md"]; !ok {
+		t.Errorf("expected 'claude_md' key in JSON, got keys: %v", result)
+	}
+	if _, ok := result["skills"]; !ok {
+		t.Errorf("expected 'skills' key in JSON, got keys: %v", result)
+	}
+}
+
+func TestCLI_HarnessRecommend_Slug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, _ := runCLICapture(t, "register", "hr-proj", "org/hr-proj", "--language", "python")
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "harness-recommend", "--slug", "hr-proj")
+	if code != 0 {
+		t.Fatalf("harness-recommend --slug: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "python") {
+		t.Errorf("expected 'python' in output, got %q", stdout)
+	}
+}
+
+func TestCLI_HarnessRecommend_UnknownSlug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, stderr := runCLICapture(t, "harness-recommend", "--slug", "no-such-project")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for unknown slug")
+	}
+	if !strings.Contains(stderr, "not found") {
+		t.Errorf("expected 'not found' in stderr, got %q", stderr)
+	}
+}
+
+// ─── session-summary (v0.42.0) ────────────────────────────────────────────
+
+func TestCLI_SessionSummary_Human(t *testing.T) {
+	events := `[{"hook_type":"PreToolUse","tool_name":"Bash","session_id":"s1"},{"hook_type":"PostToolUse","tool_name":"Bash","session_id":"s1","duration_ms":200}]`
+	f := filepath.Join(t.TempDir(), "events.json")
+	if err := os.WriteFile(f, []byte(events), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCLICapture(t, "session-summary", "--file", f)
+	if code != 0 {
+		t.Fatalf("session-summary: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "events") {
+		t.Errorf("expected 'events' in output, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "tool_invocations") {
+		t.Errorf("expected 'tool_invocations' in output, got %q", stdout)
+	}
+}
+
+func TestCLI_SessionSummary_JSON(t *testing.T) {
+	events := `[{"hook_type":"PreToolUse","tool_name":"Read","session_id":"s2"},{"hook_type":"PostToolUse","tool_name":"Read","session_id":"s2"},{"hook_type":"PreToolUse","tool_name":"Edit","session_id":"s2"}]`
+	f := filepath.Join(t.TempDir(), "events2.json")
+	if err := os.WriteFile(f, []byte(events), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCLICapture(t, "session-summary", "--json", "--file", f)
+	if code != 0 {
+		t.Fatalf("session-summary --json: code=%d stderr=%q", code, stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("expected valid JSON, got %q: %v", stdout, err)
+	}
+	if _, ok := result["events"]; !ok {
+		t.Errorf("expected 'events' key in JSON, got keys: %v", result)
+	}
+	if _, ok := result["by_tool"]; !ok {
+		t.Errorf("expected 'by_tool' key in JSON, got keys: %v", result)
+	}
+}
+
+func TestCLI_SessionSummary_EmptyArray(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "empty.json")
+	if err := os.WriteFile(f, []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCLICapture(t, "session-summary", "--json", "--file", f)
+	if code != 0 {
+		t.Fatalf("session-summary with empty array: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, `"events": 0`) {
+		t.Errorf("expected events:0 in JSON, got %q", stdout)
+	}
+}
+
+func TestCLI_SessionSummary_InvalidJSON(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(f, []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "session-summary", "--file", f)
+	if code == 0 {
+		t.Fatal("expected non-zero exit on invalid JSON")
+	}
+}

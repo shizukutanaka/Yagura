@@ -50,6 +50,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
+	"github.com/shizukutanaka/yagura/internal/sessionsummary"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 	"github.com/shizukutanaka/yagura/internal/today"
 )
@@ -1297,4 +1298,62 @@ func humanInitSh(w io.Writer, body, filename string) {
 
 func humanProgressFile(w io.Writer, body string) {
 	fmt.Fprintln(w, body)
+}
+
+// ─── harness-recommend (v0.42.0) ──────────────────────────────────────────
+
+func humanHarnessRecommend(w io.Writer, rec harness.Recommendation) {
+	fmt.Fprintf(w, "language: %s\n", rec.Language)
+	if len(rec.Skills) > 0 {
+		fmt.Fprintf(w, "skills:   %d recommended\n", len(rec.Skills))
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "  PATH\tDESCRIPTION")
+		for _, s := range rec.Skills {
+			fmt.Fprintf(tw, "  %s\t%s\n", s.Path, s.Description)
+		}
+		_ = tw.Flush()
+	}
+	if rec.ClaudeMd != "" {
+		fmt.Fprintf(w, "\n--- CLAUDE.md template ---\n%s\n", rec.ClaudeMd)
+	}
+	if rec.SettingsJSON != "" {
+		fmt.Fprintf(w, "\n--- .claude/settings.json ---\n%s\n", rec.SettingsJSON)
+	}
+}
+
+// ─── session-summary (v0.42.0) ────────────────────────────────────────────
+
+func humanSessionSummary(w io.Writer, sum sessionsummary.Summary) {
+	fmt.Fprintf(w, "events:           %d\n", sum.Events)
+	fmt.Fprintf(w, "tool_invocations: %d\n", sum.ToolInvocations)
+	fmt.Fprintf(w, "distinct_tools:   %d\n", sum.DistinctTools)
+	fmt.Fprintf(w, "error_rate:       %.2f\n", sum.ErrorRate)
+	if sum.DurationMsTotal > 0 {
+		fmt.Fprintf(w, "duration_ms:      %d\n", sum.DurationMsTotal)
+	}
+	if len(sum.Agents) > 0 {
+		fmt.Fprintf(w, "agents:           %s\n", strings.Join(sum.Agents, ", "))
+	}
+	if len(sum.ByTool) > 0 {
+		fmt.Fprintf(w, "\nby_tool:\n")
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		keys := make([]string, 0, len(sum.ByTool))
+		for k := range sum.ByTool {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(tw, "  %s\t%d\n", k, sum.ByTool[k])
+		}
+		_ = tw.Flush()
+	}
+	if len(sum.Anomalies) > 0 {
+		fmt.Fprintf(w, "\nanomalies:\n")
+		for _, a := range sum.Anomalies {
+			fmt.Fprintf(w, "  ! %s\n", a)
+		}
+	}
+	if sum.Summary != "" {
+		fmt.Fprintf(w, "\nsummary: %s\n", sum.Summary)
+	}
 }

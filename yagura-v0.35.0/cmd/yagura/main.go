@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.41.0"
+	version     = "0.42.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -151,6 +151,8 @@ CLI direct mode (no MCP client required):
   yagura agent-event [--file f]            Normalize agent lifecycle event (Claude Code/Gemini/Codex/OTel) to OTel GenAI semconv
   yagura init-sh <slug> [--target posix|powershell] [--write]  Generate init.sh or init.ps1 for long-running agent sessions
   yagura progress-file <slug> [--note txt] [--write]  Generate claude-progress.txt for cross-session handoff (Plan.md + registry)
+  yagura harness-recommend [--slug s|--language l]  Claude Code .claude/ scaffold by language (CLAUDE.md + settings.json + skills)
+  yagura session-summary [--file f]           Aggregate agent event array to structured session summary (tool-calls, errors, anomalies)
   yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
   yagura skill-audit                       Audit .claude/skills (score + retire)
   yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)

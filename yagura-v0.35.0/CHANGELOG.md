@@ -4,6 +4,28 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.42.0] - 2026-06-16
+
+### Theme — "CLI parity: harness scaffold + session observability"
+
+- **CLI `harness-recommend [--slug s|--language l] [--json]`** — MCP
+  `yagura_harness_recommend` と同一の `harness.RecommendForLanguage(lang)` を呼ぶ。
+  `--slug` 指定時は registry から language を自動解決(token 不要)。
+  CLAUDE.md テンプレート + .claude/settings.json + 推奨スキル一覧を返す。
+  Go/TypeScript/JavaScript/Python/Rust + generic fallback 対応。
+
+- **CLI `session-summary [--file f] [--json]`** — MCP `yagura_session_summary` の
+  `events` パス相当。JSON 配列形式のエージェントイベント(Claude Code / Gemini CLI /
+  Codex / OTel いずれでも可)を `--file` または stdin から読み込み、`agentevent.Normalize`
+  で正規化後、`sessionsummary.Summarize` で構造化サマリ(tool 別件数 / 操作位相内訳 /
+  エラー率 / tool 実行順 / 連続エラー・ループ等の異常検知)を返す。
+  daemon の hook timeline(`--slug`)は CLI 非アクセスのため events 入力のみ対応。
+  token 不要。
+
+- `usageText` に 2 行追記; CHANGELOG [v0.42.0] entry。
+- 新規テスト: `TestCLI_HarnessRecommend_*` + `TestCLI_SessionSummary_*`。
+- 新規 Go dep なし(ADR-0001 ゼロ依存維持)。
+
 ## [v0.41.0] - 2026-06-16
 
 ### Theme — "CLI parity: observability + session handoff verbs"

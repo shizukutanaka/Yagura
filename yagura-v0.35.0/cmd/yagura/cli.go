@@ -78,6 +78,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
+	"github.com/shizukutanaka/yagura/internal/sessionsummary"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 	"github.com/shizukutanaka/yagura/internal/today"
 	"github.com/shizukutanaka/yagura/internal/vex"
@@ -107,6 +108,7 @@ var cliHandlers = map[string]cliHandler{
 	"recovery-decide": cliRecoveryDecide, "agents-md": cliAgentsMd,
 	"feature-list": cliFeatureList, "harness-coverage": cliHarnessCoverage,
 	"agent-event": cliAgentEvent, "init-sh": cliInitSh, "progress-file": cliProgressFile,
+	"harness-recommend": cliHarnessRecommend, "session-summary": cliSessionSummary,
 	// local scans
 	"sbom": cliSbom, "secretscan": cliSecretScan, "gha-audit": cliGhaAudit, "pin-drift": cliPinDrift,
 	// .claude/ + MCP artifact audits
@@ -3623,6 +3625,79 @@ func cliPlanStateToFeatureInput(project, content string, state plantracker.PlanS
 		}
 	}
 	return pin
+}
+
+// ─── harness-recommend (v0.42.0) ──────────────────────────────
+
+// cliHarnessRecommend は `yagura harness-recommend [--slug s|--language l] [--json]`
+// を処理する。MCP yagura_harness_recommend と同一の harness.RecommendForLanguage を呼ぶ。
+func cliHarnessRecommend(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("harness-recommend", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	slug := fs.String("slug", "", "project slug (looks up language from registry)")
+	lang := fs.String("language", "", "language override (go/typescript/python/rust/...)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	language := strings.TrimSpace(*lang)
+	if language == "" && *slug != "" {
+		reg, err := openRegistry(stderr)
+		if err != nil {
+			return err
+		}
+		p, err := reg.Get(*slug)
+		if err != nil {
+			return fmt.Errorf("project %q not found", *slug)
+		}
+		language = p.Language
+	}
+	if language == "" {
+		return fmt.Errorf("either --slug (with registered language) or --language must be provided")
+	}
+
+	rec := harness.RecommendForLanguage(language)
+	if *jsonOut {
+		return emitJSON(stdout, rec)
+	}
+	humanHarnessRecommend(stdout, rec)
+	return nil
+}
+
+// ─── session-summary (v0.42.0) ────────────────────────────────
+
+// cliSessionSummary は `yagura session-summary [--file f] [--json]` を処理する。
+// JSON 配列形式のエージェントイベントを読み込み、sessionsummary.Summarize で集約する。
+// daemon の hook timeline は CLI 非アクセスのため、--file/stdin でイベントを渡す。
+func cliSessionSummary(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("session-summary", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	filePath := fs.String("file", "", "path to JSON array of events (default: stdin)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	data, err := readInputData(*filePath, os.Stdin)
+	if err != nil {
+		return fmt.Errorf("session-summary: %w", err)
+	}
+
+	var rawEvents []map[string]any
+	if err := json.Unmarshal(data, &rawEvents); err != nil {
+		return fmt.Errorf("session-summary: expected JSON array of events: %w", err)
+	}
+
+	norm := make([]agentevent.Event, 0, len(rawEvents))
+	for _, raw := range rawEvents {
+		norm = append(norm, agentevent.Normalize(raw))
+	}
+
+	sum := sessionsummary.Summarize(norm)
+	if *jsonOut {
+		return emitJSON(stdout, sum)
+	}
+	humanSessionSummary(stdout, sum)
+	return nil
 }
 
 // auditMutation は registry 変更を audit log に best-effort で追記する。
