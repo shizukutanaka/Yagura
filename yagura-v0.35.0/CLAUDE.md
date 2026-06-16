@@ -21,7 +21,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 64 internal packages
+## Map — 65 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -29,6 +29,9 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - `internal/mcp` — MCP server + 71 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
+- `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
+  スコア)。MCP `yagura_today` の handler から純関数 `Rank` を抽出し CLI `today` と共有
+  (CLI parity)★ v0.37
 
 ### Quality guides (pre-emptive)
 - `internal/qualitycheck` — code lint (as any, TODO/FIXME 等)

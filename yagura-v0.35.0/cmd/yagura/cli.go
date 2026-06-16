@@ -68,6 +68,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
+	"github.com/shizukutanaka/yagura/internal/today"
 	"github.com/shizukutanaka/yagura/internal/vex"
 )
 
@@ -87,7 +88,7 @@ type cliHandler func(args []string, stdout, stderr io.Writer) error
 // 「集合」と「switch」の二重メンテによる取りこぼしが構造的に起きない。
 var cliHandlers = map[string]cliHandler{
 	// registry CRUD
-	"list": cliList, "get": cliGet, "search": cliSearch, "stats": cliStats,
+	"list": cliList, "get": cliGet, "search": cliSearch, "stats": cliStats, "today": cliToday,
 	"register": cliRegister, "update": cliUpdate, "unregister": cliUnregister,
 	// local scans
 	"sbom": cliSbom, "secretscan": cliSecretScan, "gha-audit": cliGhaAudit, "pin-drift": cliPinDrift,
@@ -291,6 +292,38 @@ func cliStats(args []string, stdout, stderr io.Writer) error {
 		return emitJSON(stdout, st)
 	}
 	humanStats(stdout, st)
+	return nil
+}
+
+// cliToday は `yagura today` を処理する。portfolio の「今日注力すべき」プロジェクトを
+// score 順に返す(MCP yagura_today と同一の internal/today.Rank を共有)。token 不要。
+func cliToday(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("today", stderr)
+	jsonOut := fs.Bool("json", false, "JSON output")
+	limit := fs.Int("limit", 5, "max projects to show (1-50)")
+	if err := fs.Parse(args); err != nil {
+		return errUsage
+	}
+	if *limit < 1 {
+		*limit = 1
+	}
+	if *limit > 50 {
+		*limit = 50
+	}
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	items := today.Rank(reg.List(), now, *limit)
+	if *jsonOut {
+		return emitJSON(stdout, map[string]any{
+			"date":  now.Format("2006-01-02"),
+			"count": len(items),
+			"items": items,
+		})
+	}
+	humanToday(stdout, now, items)
 	return nil
 }
 

@@ -44,6 +44,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
+	"github.com/shizukutanaka/yagura/internal/today"
 )
 
 // emitJSON は v を indent 付き JSON + 改行で書く。
@@ -882,6 +883,24 @@ func humanRecvCheck(w io.Writer, r recvcheck.Report) {
 	fmt.Fprintln(tw, "SEVERITY\tRULE\tTYPE\tFILE\tLINE")
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\n", f.Severity, f.Rule, f.Type, f.File, f.Line)
+	}
+	_ = tw.Flush()
+}
+
+func humanToday(w io.Writer, now time.Time, items []today.Item) {
+	fmt.Fprintf(w, "%s — top %d by score\n", now.Format("2006-01-02"), len(items))
+	if len(items) == 0 {
+		fmt.Fprintln(w, "no active/maintenance projects")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SCORE\tSLUG\tWHY")
+	for _, it := range items {
+		why := strings.Join(it.Reasons, ", ")
+		if why == "" {
+			why = "-"
+		}
+		fmt.Fprintf(tw, "%.0f\t%s\t%s\n", it.Score, it.Slug, why)
 	}
 	_ = tw.Flush()
 }

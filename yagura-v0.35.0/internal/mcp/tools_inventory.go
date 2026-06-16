@@ -9,11 +9,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
 	"strings"
 	"time"
+
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/registry"
+	"github.com/shizukutanaka/yagura/internal/today"
 )
 
 // listOut は yagura_list / yagura_search の 1 行分の出力(compact 表現)。
@@ -30,17 +31,9 @@ type listOut struct {
 	DaysSinceCommit int    `json:"days_since_commit"`
 }
 
-// todayItem は yagura_today のランキング 1 件分。
-type todayItem struct {
-	Slug        string   `json:"slug"`
-	DisplayName string   `json:"display_name"`
-	Score       float64  `json:"score"`
-	Reasons     []string `json:"reasons"`
-	Priority    int      `json:"priority"`
-	OpenPRs     int      `json:"open_prs"`
-	CIStatus    string   `json:"ci_status,omitempty"`
-	DaysIdle    int      `json:"days_idle"`
-}
+// todayItem は yagura_today のランキング 1 件分。スコアリングは internal/today に
+// 抽出済み(CLI と共有)。type alias なので既存の出力 shape / テストはそのまま。
+type todayItem = today.Item
 
 func buildListTool(d Deps) *Tool {
 	return &Tool{
@@ -238,57 +231,7 @@ func buildTodayTool(d Deps) *Tool {
 			}
 
 			now := d.Now()
-			projects := d.Registry.Filter(func(p *project.Project) bool {
-				return p.Stage == project.StageActive || p.Stage == project.StageMaintenance
-			})
-
-			items := make([]todayItem, 0, len(projects))
-			for _, p := range projects {
-				score := 0.0
-				reasons := []string{}
-
-				if p.Priority > 0 {
-					inc := float64(p.Priority * 10)
-					score += inc
-					if p.Priority >= 4 {
-						reasons = append(reasons, "high priority")
-					}
-				}
-				if p.OpenPRs > 0 {
-					score += float64(p.OpenPRs * 3)
-					reasons = append(reasons, "open PRs")
-				}
-				if p.CIStatus == project.CIStatusFailing {
-					score += 20
-					reasons = append(reasons, "CI failing")
-				}
-				days := project.DaysSince(p.LatestActivity, now)
-				if days >= 14 && p.Stage == project.StageActive {
-					score += 5
-					reasons = append(reasons, "stale (active but idle)")
-				}
-
-				items = append(items, todayItem{
-					Slug:        p.Slug,
-					DisplayName: p.DisplayName,
-					Score:       score,
-					Reasons:     reasons,
-					Priority:    p.Priority,
-					OpenPRs:     p.OpenPRs,
-					CIStatus:    string(p.CIStatus),
-					DaysIdle:    days,
-				})
-			}
-
-			sort.Slice(items, func(i, j int) bool {
-				if items[i].Score != items[j].Score {
-					return items[i].Score > items[j].Score
-				}
-				return items[i].Slug < items[j].Slug
-			})
-			if len(items) > limit {
-				items = items[:limit]
-			}
+			items := today.Rank(d.Registry.List(), now, limit)
 			return map[string]any{
 				"date":  now.Format("2006-01-02"),
 				"count": len(items),
