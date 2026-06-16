@@ -19,6 +19,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
+	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 )
 
@@ -554,6 +555,46 @@ func buildDeadCodeTool(d Deps) *Tool {
 				"declared_unexported": rep.DeclaredUnexported,
 				"dead":                rep.Dead,
 				"findings":            rep.Findings,
+			}, nil
+		},
+	}
+}
+
+// ─── yagura_recv_check (v0.36.0) ──────────────────────────────
+//
+// ソクラテス的動機: 他レンズは unit を絶対基準で測るが、本 tool は unit を自分自身の
+// 他の部分と照らす自己一貫性の軸。型のメソッドレシーバ名の不揃い / 値・ポインタ混在 /
+// 非慣習的レシーバ名(this/self)を検出。
+
+func buildRecvCheckTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_recv_check",
+		Description: "[Q] Method receiver consistency (Go). Inconsistent receiver names, mixed value/pointer receivers, un-idiomatic names (this/self).",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for .go files to analyse",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := recvcheck.Scan(in.Files)
+			return map[string]any{
+				"files_scanned":      rep.FilesScanned,
+				"types_with_methods": rep.TypesWithMethods,
+				"findings":           rep.Findings,
 			}, nil
 		},
 	}

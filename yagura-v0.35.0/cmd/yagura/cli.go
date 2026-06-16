@@ -61,6 +61,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
+	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/registry"
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
 	"github.com/shizukutanaka/yagura/internal/sbom"
@@ -92,6 +93,7 @@ var cliVerbs = map[string]bool{
 	"diff-scan": true, "flow-risk": true, "coverage": true,
 	"assert-check": true, "err-policy": true, "complexity": true,
 	"coupling": true, "api-doc": true, "dead-code": true,
+	"recv-check": true,
 }
 
 // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
@@ -176,6 +178,8 @@ func runCLI(verb string, args []string, stdout, stderr io.Writer) int {
 		err = cliAPIDoc(args, stdout, stderr)
 	case "dead-code":
 		err = cliDeadCode(args, stdout, stderr)
+	case "recv-check":
+		err = cliRecvCheck(args, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
 		return 2
@@ -2287,6 +2291,40 @@ func cliDeadCode(args []string, stdout, stderr io.Writer) error {
 	}
 	if *strict && rep.Dead > 0 {
 		return fmt.Errorf("%d dead unexported declaration(s)", rep.Dead)
+	}
+	return nil
+}
+
+// ─── recv-check (v0.36.0) ────────────────────────────────────
+
+// cliRecvCheck は `yagura recv-check` を処理する。型のメソッドレシーバ一貫性を検査
+// (名前不揃い / 値・ポインタ混在 / this・self)。--strict で finding が 1 件でも exit 1。
+// ソクラテス的動機: unit を自分自身の他の部分と照らす自己一貫性。capped+warned walker 共有。
+func cliRecvCheck(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("recv-check", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any receiver-consistency issue is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return err
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+
+	rep := recvcheck.Scan(sr.Files)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanRecvCheck(stdout, rep)
+	}
+	if *strict && len(rep.Findings) > 0 {
+		return fmt.Errorf("%d receiver-consistency issue(s)", len(rep.Findings))
 	}
 	return nil
 }

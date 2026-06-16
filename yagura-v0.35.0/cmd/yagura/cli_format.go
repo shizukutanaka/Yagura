@@ -38,6 +38,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
+	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
@@ -868,6 +869,20 @@ func humanDeadCode(w io.Writer, r deadcode.Report) {
 	if len(r.Findings) > cap {
 		fmt.Fprintf(w, "... %d more (use --json for the full list)\n", len(r.Findings)-cap)
 	}
+}
+
+func humanRecvCheck(w io.Writer, r recvcheck.Report) {
+	fmt.Fprintf(w, "types_with_methods: %d   findings: %d\n", r.TypesWithMethods, len(r.Findings))
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "all method receivers are consistent")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tRULE\tTYPE\tFILE\tLINE")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\n", f.Severity, f.Rule, f.Type, f.File, f.Line)
+	}
+	_ = tw.Flush()
 }
 
 func humanComplexity(w io.Writer, r complexity.Report) {
