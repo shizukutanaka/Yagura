@@ -4,6 +4,33 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.39.0] - 2026-06-16
+
+### Theme — "CLI parity: ops-risk + risk-triage; astcheck structural rules expansion"
+
+- **CLI `ops-risk [--file <path>] [--json]`** — MCP `yagura_ops_risk` と同一の
+  `opsrisk.ClassifyAll` を呼び出す。操作配列を JSON(配列直接 or `{"operations":[...]}`)
+  で受け取り、自律 tier(auto/log/review/human)を capability / 可逆性 / 影響範囲から
+  決定論的に分類。token 不要。
+
+- **CLI `risk-triage [--file <path>] [--slug <s>] [--json]`** — MCP `yagura_risk_triage`
+  と同一の `riskreason.ScoreAll` を呼び出す。CVE/脆弱性 findings を JSON で受け取り、
+  CVSS × 資産優先度 × 到達可能性 × 攻撃可能性 × 横展開を複合してリスクスコア化。
+  `--slug` 指定時に registry から資産優先度・Stage・Tags・依存元数を自動付与。
+  結果は Score 降順でソートして出力。token 不要。
+
+- **`astcheck` 新ルール 2 件(v0.39.0)**:
+  - `panic-in-library`(HIGH): library package(main/test 以外)内の `panic(...)` 呼出。
+    `recover` がなければ呼び手のプロセスが落ちる — `os-exit-library` のペア規則。
+  - `bare-goroutine`(MEDIUM): `go func() { ... }()` という匿名 goroutine で、本体が
+    `ctx` / `context` を参照しない場合。ライフサイクル管理の欠如シグナル。
+    context 参照をヒューリスティックに検出して除外。
+
+- TDD: astcheck は失敗テスト → 実装の順(`TestScanFiles_PanicInLibrary` 等 7 件追加)。
+- CLI 新規テスト 10 件(`TestCLI_OpsRisk_*` 5 件 + `TestCLI_RiskTriage_*` 5 件)。
+- `usageText` に 2 行追記; `ast-check` の説明に新ルールを反映。
+- 新規 Go dep なし(ADR-0001 ゼロ依存維持)。
+
 ## [v0.38.0] - 2026-06-16
 
 ### Theme — "CLI parity: plan-status + release-radar"

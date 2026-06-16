@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.38.0"
+	version     = "0.39.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -142,6 +142,8 @@ CLI direct mode (no MCP client required):
   yagura graph <impact|neighbors|stats>    Dependency graph queries over registry depends_on (--json, neighbors --depth N)
   yagura plan-status <slug>                Plan.md progress for a project (checkboxes + required sections)
   yagura release-radar [--limit N]         Cross-project release readiness ranking (Plan/CI/issues/AI-risk; --scan-code for AI)
+  yagura ops-risk [--file f]               Classify operation autonomy tier (auto/log/review/human) from JSON ops array
+  yagura risk-triage [--file f] [--slug s] Compound CVE/vulnerability prioritization (CVSS+asset+reachability+exploitability)
   yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
   yagura skill-audit                       Audit .claude/skills (score + retire)
   yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)
@@ -160,7 +162,7 @@ CLI direct mode (no MCP client required):
   yagura quality-check [--dir .]           Code lint: prohibited patterns, TODO/FIXME, ts-ignore, as any
   yagura test-audit [--dir .]              Source-test coverage detection (Go/TS/JS/Python/Rust/Java; --untested-only)
   yagura alert-fix [--severity-min high]   Portfolio health sweep over registry sensor data (resolved/snoozed filtered)
-  yagura ast-check [--dir .]               Go AST structural audit (os.Exit in library, empty != nil branch, parse errors); --surface for capability profile
+  yagura ast-check [--dir .]               Go AST structural audit (os.Exit/panic in library, bare goroutine, empty != nil branch, parse errors); --surface for capability profile
   yagura review-gate [--dir .] [--strict] Composite ② Review verdict (allow/review/block) over secretscan+aiverify+qualitycheck+astcheck
   yagura diff-scan [--file f] [--strict]   Delta scan of a unified diff: secrets in ADDED lines (--strict gate) + removed safety guards (review)
   yagura flow-risk [--file f] [--strict]   Temporal scan of an op sequence (1 tool/op per line): exfiltration / injection-to-exec / untrusted-to-disk orderings

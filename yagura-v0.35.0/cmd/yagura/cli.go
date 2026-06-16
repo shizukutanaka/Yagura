@@ -57,6 +57,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/injectscan"
 	"github.com/shizukutanaka/yagura/internal/mcp"
+	"github.com/shizukutanaka/yagura/internal/opsrisk"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
@@ -66,6 +67,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/registry"
+	"github.com/shizukutanaka/yagura/internal/riskreason"
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
@@ -94,6 +96,7 @@ var cliHandlers = map[string]cliHandler{
 	"register": cliRegister, "update": cliUpdate, "unregister": cliUnregister,
 	"graph": cliGraph,
 	"plan-status": cliPlanStatus, "release-radar": cliReleaseRadar,
+	"ops-risk": cliOpsRisk, "risk-triage": cliRiskTriage,
 	// local scans
 	"sbom": cliSbom, "secretscan": cliSecretScan, "gha-audit": cliGhaAudit, "pin-drift": cliPinDrift,
 	// .claude/ + MCP artifact audits
@@ -2943,6 +2946,143 @@ func scanProjectAICodeCLI(localPath string) aiverify.Result {
 		return aiverify.Result{}
 	}
 	return aiverify.Scan(files)
+}
+
+// ─── ops-risk (v0.39.0) ───────────────────────────────────────
+
+// cliOpsRisk は `yagura ops-risk [--file <path>] [--json]` を処理する。
+// Operations を JSON で受け取り、自律 tier を決定論的に分類して返す。
+func cliOpsRisk(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("ops-risk", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	filePath := fs.String("file", "", "path to JSON file (default: stdin)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	data, err := readInputData(*filePath, os.Stdin)
+	if err != nil {
+		return fmt.Errorf("ops-risk: %w", err)
+	}
+
+	var ops []opsrisk.Op
+	// accept array directly OR {"operations":[...]} wrapper
+	if err := tryUnmarshalOpsArray(data, &ops); err != nil {
+		return fmt.Errorf("ops-risk: invalid JSON: %w", err)
+	}
+	if len(ops) == 0 {
+		return fmt.Errorf("no operations provided (pass JSON array via --file or stdin)")
+	}
+
+	result := opsrisk.ClassifyAll(ops)
+	if *jsonOut {
+		return emitJSON(stdout, result)
+	}
+	humanOpsRisk(stdout, result)
+	return nil
+}
+
+// tryUnmarshalOpsArray は JSON を []opsrisk.Op として解釈する。
+// 直接配列か {"operations":[...]} ラッパー形式の両方を受け付ける。
+func tryUnmarshalOpsArray(data []byte, ops *[]opsrisk.Op) error {
+	if err := json.Unmarshal(data, ops); err == nil {
+		return nil
+	}
+	var wrapper struct {
+		Operations []opsrisk.Op `json:"operations"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return err
+	}
+	*ops = wrapper.Operations
+	return nil
+}
+
+// readInputData は --file フラグが指定されていれば当該ファイルを、
+// そうでなければ fallback(通常 os.Stdin)を読み込む。
+func readInputData(filePath string, fallback io.Reader) ([]byte, error) {
+	if filePath != "" {
+		return os.ReadFile(filePath)
+	}
+	return io.ReadAll(fallback)
+}
+
+// ─── risk-triage (v0.39.0) ───────────────────────────────────
+
+// cliRiskTriage は `yagura risk-triage [--file <path>] [--slug <s>] [--json]` を処理する。
+// CVE findings の複合リスクスコアを計算して優先度付きで返す。
+func cliRiskTriage(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("risk-triage", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	filePath := fs.String("file", "", "path to JSON file (default: stdin)")
+	slug := fs.String("slug", "", "project slug to enrich findings with registry metadata")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	data, err := readInputData(*filePath, os.Stdin)
+	if err != nil {
+		return fmt.Errorf("risk-triage: %w", err)
+	}
+
+	var inputs []riskreason.Input
+	if err := tryUnmarshalRiskArray(data, &inputs); err != nil {
+		return fmt.Errorf("risk-triage: invalid JSON: %w", err)
+	}
+	if len(inputs) == 0 {
+		return fmt.Errorf("no findings provided (pass JSON array via --file or stdin)")
+	}
+
+	// optional registry enrichment when --slug is given
+	if *slug != "" {
+		if reg, err := openRegistry(stderr); err == nil {
+			if p, err := reg.Get(*slug); err == nil {
+				deps := toRiskGraphDependents(reg, *slug)
+				for i := range inputs {
+					inputs[i].AssetPriority = p.Priority
+					inputs[i].Stage = string(p.Stage)
+					inputs[i].Tags = append(inputs[i].Tags, p.Tags...)
+					inputs[i].Dependents = deps
+				}
+			} else {
+				fmt.Fprintf(stderr, "yagura: warning: project %q not found in registry\n", *slug)
+			}
+		}
+	}
+
+	results := riskreason.ScoreAll(inputs)
+	// sort by Score descending (highest risk first)
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+
+	if *jsonOut {
+		return emitJSON(stdout, results)
+	}
+	humanRiskTriage(stdout, results)
+	return nil
+}
+
+// tryUnmarshalRiskArray は JSON を []riskreason.Input として解釈する。
+// 直接配列か {"findings":[...]} ラッパー形式の両方を受け付ける。
+func tryUnmarshalRiskArray(data []byte, inputs *[]riskreason.Input) error {
+	if err := json.Unmarshal(data, inputs); err == nil {
+		return nil
+	}
+	var wrapper struct {
+		Findings []riskreason.Input `json:"findings"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return err
+	}
+	*inputs = wrapper.Findings
+	return nil
+}
+
+// toRiskGraphDependents は projectgraph から slug の依存元数(transitive impact 件数)を返す。
+// graph が取得できない場合は 0 を返す(best-effort)。
+func toRiskGraphDependents(reg *registry.Registry, slug string) int {
+	g := projectgraph.Build(toGraphProjects(reg.List()))
+	impact := g.Impact(slug)
+	return impact.ImpactCount
 }
 
 // auditMutation は registry 変更を audit log に best-effort で追記する。

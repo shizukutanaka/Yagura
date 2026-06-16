@@ -2425,3 +2425,117 @@ func runCLIStdout(t *testing.T, args ...string) string {
 	_, out, _ := runCLICapture(t, args...)
 	return out
 }
+
+
+// ─── ops-risk (v0.39.0) ──────────────────────────────────────
+
+func TestCLI_OpsRisk_FromStdin(t *testing.T) {
+	// Pipe JSON array via a temp file (simulate stdin by using --file).
+	dir := t.TempDir()
+	ops := `[{"name":"read-config","capability":"read"}]`
+	f := filepath.Join(dir, "ops.json")
+	if err := os.WriteFile(f, []byte(ops), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "ops-risk", "--file", f)
+	if code != 0 {
+		t.Fatalf("ops-risk: code=%d stderr=%q", code, errs)
+	}
+	if !strings.Contains(out, "auto") && !strings.Contains(out, "log") && !strings.Contains(out, "review") && !strings.Contains(out, "human") {
+		t.Errorf("expected a tier in output, got:\n%s", out)
+	}
+}
+
+func TestCLI_OpsRisk_JSON(t *testing.T) {
+	dir := t.TempDir()
+	ops := `[{"name":"delete-db","capability":"delete"}]`
+	f := filepath.Join(dir, "ops.json")
+	if err := os.WriteFile(f, []byte(ops), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "ops-risk", "--file", f, "--json")
+	if code != 0 {
+		t.Fatalf("ops-risk --json: code=%d stderr=%q", code, errs)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("ops-risk --json not valid JSON: %v\n%s", err, out)
+	}
+	if m["worst"] == nil {
+		t.Errorf("expected 'worst' key in JSON output: %v", m)
+	}
+}
+
+func TestCLI_OpsRisk_EmptyInput(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "empty.json")
+	if err := os.WriteFile(f, []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs := runCLICapture(t, "ops-risk", "--file", f)
+	if code == 0 {
+		t.Error("empty ops input should fail")
+	}
+	if !strings.Contains(errs, "no operations provided") {
+		t.Errorf("expected 'no operations provided' error, got: %q", errs)
+	}
+}
+
+// ─── risk-triage (v0.39.0) ───────────────────────────────────
+
+func TestCLI_RiskTriage_FromFile(t *testing.T) {
+	dir := t.TempDir()
+	findings := `[{"cve":"CVE-2025-0001","cvss":9.5,"severity":"critical"}]`
+	f := filepath.Join(dir, "cves.json")
+	if err := os.WriteFile(f, []byte(findings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "risk-triage", "--file", f)
+	if code != 0 {
+		t.Fatalf("risk-triage: code=%d stderr=%q", code, errs)
+	}
+	if !strings.Contains(out, "findings: 1") {
+		t.Errorf("expected 'findings: 1' in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "CVE-2025-0001") {
+		t.Errorf("expected CVE in output, got:\n%s", out)
+	}
+}
+
+func TestCLI_RiskTriage_JSON(t *testing.T) {
+	dir := t.TempDir()
+	findings := `[{"cve":"CVE-2025-0002","cvss":7.5}]`
+	f := filepath.Join(dir, "cves.json")
+	if err := os.WriteFile(f, []byte(findings), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "risk-triage", "--file", f, "--json")
+	if code != 0 {
+		t.Fatalf("risk-triage --json: code=%d stderr=%q", code, errs)
+	}
+	var results []map[string]any
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("risk-triage --json not valid JSON: %v\n%s", err, out)
+	}
+	if len(results) == 0 {
+		t.Errorf("expected at least one finding in JSON output")
+	}
+	if results[0]["cve"] == nil && results[0]["score"] == nil {
+		t.Errorf("expected 'cve' or 'score' key in JSON output: %v", results[0])
+	}
+}
+
+func TestCLI_RiskTriage_NoInput(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "empty.json")
+	if err := os.WriteFile(f, []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs := runCLICapture(t, "risk-triage", "--file", f)
+	if code == 0 {
+		t.Error("empty findings input should fail")
+	}
+	if !strings.Contains(errs, "no findings provided") {
+		t.Errorf("expected 'no findings provided' error, got: %q", errs)
+	}
+}

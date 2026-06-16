@@ -34,9 +34,11 @@ import (
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/harness"
+	"github.com/shizukutanaka/yagura/internal/opsrisk"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
+	"github.com/shizukutanaka/yagura/internal/riskreason"
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/projectgraph"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
@@ -1149,4 +1151,51 @@ func humanAlertFix(w io.Writer, r alertfix.Report) {
 			a.Severity, a.Project, a.Source, a.Title, dash(a.SuggestedTool))
 	}
 	_ = tw.Flush()
+}
+
+// ─── ops-risk (v0.39.0) ───────────────────────────────────────────────────
+
+func humanOpsRisk(w io.Writer, r opsrisk.Result) {
+	fmt.Fprintf(w, "worst: %s\n", r.Worst)
+	printCountMap(w, "by_tier", r.ByTier)
+	if len(r.Decisions) == 0 {
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "TIER\tCAPABILITY\tCONTROLS\tNAME\tRATIONALE")
+	for _, d := range r.Decisions {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			d.Tier, d.Capability, strings.Join(d.Controls, "+"), d.Name, d.Rationale)
+	}
+	_ = tw.Flush()
+}
+
+// ─── risk-triage (v0.39.0) ────────────────────────────────────────────────
+
+func humanRiskTriage(w io.Writer, results []riskreason.Result) {
+	fmt.Fprintf(w, "findings: %d\n", len(results))
+	if len(results) == 0 {
+		return
+	}
+	// aggregate by priority
+	byPriority := map[string]int{}
+	for _, r := range results {
+		byPriority[string(r.Priority)]++
+	}
+	printCountMap(w, "by_priority", byPriority)
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "PRIORITY\tSCORE\tCVE\tSSVC\tRECOMMENDATION")
+	for _, r := range results {
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n",
+			r.Priority, r.Score, dash(r.CVE), string(r.SSVC.Priority), r.Recommendation)
+	}
+	_ = tw.Flush()
+
+	// surface unknowns (context gaps) for any findings that have them
+	for _, r := range results {
+		if len(r.Unknowns) > 0 {
+			fmt.Fprintf(w, "unknowns[%s]: %s\n", dash(r.CVE), strings.Join(r.Unknowns, ", "))
+		}
+	}
 }
