@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.37.0** — 71 MCP tools, 64 internal packages, maintainability lens family (complexity/coupling/api-doc/dead-code/recv-check/assert-check/err-policy) + composite `code-health` grade.
+Status: **v0.37.0** — 71 MCP tools, 64 internal packages, maintainability lens family (complexity/coupling/api-doc/dead-code/recv-check/assert-check/err-policy) + composite `code-health` grade. Reproducible build verified (byte-for-byte identical via `make verify`).
 
 ---
 
