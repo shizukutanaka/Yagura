@@ -40,6 +40,8 @@ type Spawner interface {
 // OSSpawner は os/exec を使う標準実装。
 type OSSpawner struct{}
 
+// Start は cmd を非同期で起動し、終了を待たずに戻る。
+// プロセスのゾンビ防止のため goroutine 内で Wait を呼ぶ。
 func (o *OSSpawner) Start(ctx context.Context, cmd string, args ...string) error {
 	c := exec.CommandContext(ctx, cmd, args...)
 	if err := c.Start(); err != nil {

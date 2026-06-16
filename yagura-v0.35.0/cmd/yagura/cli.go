@@ -122,11 +122,13 @@ var cliHandlers = map[string]cliHandler{
 	"claudemd-audit": cliClaudeMdAudit,
 	// ② Review code-quality gates
 	"ai-verify": cliAIVerify, "quality-check": cliQualityCheck, "test-audit": cliTestAudit,
-	"alert-fix": cliAlertFix, "ast-check": cliASTCheck, "review-gate": cliReviewGate,
+	"alert-fix": cliAlertFix, "alert-resolve": cliAlertResolve, "alert-snapshot": cliAlertSnapshot, "ast-check": cliASTCheck, "review-gate": cliReviewGate,
 	"diff-scan": cliDiffScan, "flow-risk": cliFlowRisk, "coverage": cliCoverage,
 	"assert-check": cliAssertCheck, "err-policy": cliErrPolicy, "complexity": cliComplexity,
 	"coupling": cliCoupling, "api-doc": cliAPIDoc, "dead-code": cliDeadCode,
 	"recv-check": cliRecvCheck, "code-health": cliCodeHealth,
+	// shell completion
+	"completion": cliCompletion,
 }
 
 // isCLIVerb は args[0] が direct-mode subcommand かを返す(dispatch 用)。
@@ -701,6 +703,7 @@ func cliGhaAudit(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fs.Bool("json", false, "JSON output")
 	dir := fs.String("dir", ".github/workflows", "directory containing workflow YAML files")
 	summary := fs.Bool("summary", false, "summary only")
+	minSev := fs.String("min-severity", "", "filter findings at or above this severity: LOW/MEDIUM/HIGH/CRITICAL")
 	if err := fs.Parse(args); err != nil {
 		return errUsage
 	}
@@ -709,6 +712,16 @@ func cliGhaAudit(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	results := ghaaudit.New().AuditDir(*dir, files)
+
+	// min-severity filter
+	if *minSev != "" {
+		m := strings.ToUpper(*minSev)
+		if m != "LOW" && m != "MEDIUM" && m != "HIGH" && m != "CRITICAL" {
+			return fmt.Errorf("gha-audit: --min-severity must be LOW/MEDIUM/HIGH/CRITICAL, got %q", *minSev)
+		}
+		results = filterGhaFindings(results, ghaaudit.Severity(m))
+	}
+
 	if *summary {
 		s := ghaaudit.Summarize(results)
 		if *jsonOut {
@@ -722,6 +735,31 @@ func cliGhaAudit(args []string, stdout, stderr io.Writer) error {
 	}
 	humanGhaAudit(stdout, results)
 	return nil
+}
+
+// filterGhaFindings は severity が min 以上の findings のみ残す。
+// severity rank: CRITICAL(0) > HIGH(1) > MEDIUM(2) > LOW(3)。
+func filterGhaFindings(results map[string][]ghaaudit.Finding, min ghaaudit.Severity) map[string][]ghaaudit.Finding {
+	rank := map[ghaaudit.Severity]int{
+		ghaaudit.SeverityCritical: 0,
+		ghaaudit.SeverityHigh:     1,
+		ghaaudit.SeverityMedium:   2,
+		ghaaudit.SeverityLow:      3,
+	}
+	minRank := rank[min]
+	out := make(map[string][]ghaaudit.Finding, len(results))
+	for file, findings := range results {
+		var kept []ghaaudit.Finding
+		for _, f := range findings {
+			if rank[f.Severity] <= minRank {
+				kept = append(kept, f)
+			}
+		}
+		if len(kept) > 0 {
+			out[file] = kept
+		}
+	}
+	return out
 }
 
 func cliPinDrift(args []string, stdout, stderr io.Writer) error {
@@ -1177,6 +1215,7 @@ func cliPublicityScan(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fs.Bool("json", false, "JSON output")
 	dir := fs.String("dir", ".claude", "file or directory to scan (text files only)")
 	strict := fs.Bool("strict", false, "exit non-zero if any finding is reported (for CI gates)")
+	minSev := fs.String("min-severity", "low", "minimum severity to report: high|medium|low")
 	rest, err := parseArgs(fs, args)
 	if err != nil {
 		return errUsage
@@ -1184,6 +1223,14 @@ func cliPublicityScan(args []string, stdout, stderr io.Writer) error {
 	target := *dir
 	if len(rest) > 0 {
 		target = rest[0]
+	}
+	pubRank := map[publicityscan.Severity]int{
+		publicityscan.SevHigh: 0, publicityscan.SevMedium: 1, publicityscan.SevLow: 2,
+	}
+	minPubSev, err := parsePubSeverity(*minSev)
+	if err != nil {
+		fmt.Fprintf(stderr, "publicity-scan: --min-severity must be high|medium|low, got %q\n", *minSev)
+		return errUsage
 	}
 	paths, err := findScanFiles(target)
 	if err != nil {
@@ -1196,7 +1243,9 @@ func cliPublicityScan(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("read %s: %w", p, err)
 		}
 		for _, f := range publicityscan.Scan(string(data)) {
-			findings = append(findings, publicityFinding{Path: p, Finding: f})
+			if pubRank[f.Severity] <= pubRank[minPubSev] {
+				findings = append(findings, publicityFinding{Path: p, Finding: f})
+			}
 		}
 	}
 	if *jsonOut {
@@ -1219,6 +1268,20 @@ func cliPublicityScan(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("%d publicity finding(s) — failing because --strict is set", len(findings))
 	}
 	return nil
+}
+
+// parsePubSeverity は publicity-scan の --min-severity 値を publicityscan.Severity へ変換する。
+func parsePubSeverity(s string) (publicityscan.Severity, error) {
+	switch strings.ToLower(s) {
+	case "high":
+		return publicityscan.SevHigh, nil
+	case "medium":
+		return publicityscan.SevMedium, nil
+	case "low":
+		return publicityscan.SevLow, nil
+	default:
+		return "", fmt.Errorf("unknown severity %q", s)
+	}
 }
 
 // findScanFiles は target がファイルならそれ 1 件、dir なら配下のテキストファイルを
@@ -1415,8 +1478,18 @@ func cliInjectScan(args []string, stdout, stderr io.Writer) error {
 	dir := fs.String("dir", ".", "file or directory to scan (text files only)")
 	strict := fs.Bool("strict", false, "exit non-zero if any injection signal is found (CI gate)")
 	minScore := fs.Int("min-score", 0, "exit non-zero if any file scores below N (0=off)")
+	minSev := fs.String("min-severity", "low", "minimum severity to report: critical|high|medium|low")
 	rest, err := parseArgs(fs, args)
 	if err != nil {
+		return errUsage
+	}
+	injectRank := map[injectscan.Severity]int{
+		injectscan.SevCritical: 0, injectscan.SevHigh: 1,
+		injectscan.SevMedium: 2, injectscan.SevLow: 3,
+	}
+	minInjectSev, err := parseInjectSeverity(*minSev)
+	if err != nil {
+		fmt.Fprintf(stderr, "inject-scan: --min-severity must be critical|high|medium|low, got %q\n", *minSev)
 		return errUsage
 	}
 	target := *dir
@@ -1437,7 +1510,9 @@ func cliInjectScan(args []string, stdout, stderr io.Writer) error {
 		res := injectscan.Scan(string(data))
 		scored[p] = res.Score
 		for _, f := range res.Findings {
-			findings = append(findings, injectFinding{Path: p, Finding: f})
+			if injectRank[f.Severity] <= injectRank[minInjectSev] {
+				findings = append(findings, injectFinding{Path: p, Finding: f})
+			}
 		}
 	}
 	if *jsonOut {
@@ -1454,6 +1529,22 @@ func cliInjectScan(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("%d prompt-injection signal(s) — failing because --strict is set", len(findings))
 	}
 	return minScoreGate(*minScore, scored)
+}
+
+// parseInjectSeverity は inject-scan の --min-severity 値を injectscan.Severity へ変換する。
+func parseInjectSeverity(s string) (injectscan.Severity, error) {
+	switch strings.ToLower(s) {
+	case "critical":
+		return injectscan.SevCritical, nil
+	case "high":
+		return injectscan.SevHigh, nil
+	case "medium":
+		return injectscan.SevMedium, nil
+	case "low":
+		return injectscan.SevLow, nil
+	default:
+		return "", fmt.Errorf("unknown severity %q", s)
+	}
 }
 
 // cliCCSecurity は Claude Code を使うプロジェクトの「最低限のセキュリティ対策」
@@ -1721,8 +1812,16 @@ func cliAIVerify(args []string, stdout, stderr io.Writer) error {
 	summaryOnly := fset.Bool("summary-only", false, "summary only (no per-finding list)")
 	dir := fset.String("dir", ".", "directory to scan recursively")
 	rulesFile := fset.String("rules-file", "", "path to custom rules JSON (default: auto-detect <dir>/.yagura/aiverify.json)")
+	minRisk := fset.String("min-risk", "", "filter findings at or above this risk: LOW/MEDIUM/HIGH/CRITICAL")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
+	}
+	if *minRisk != "" {
+		m := strings.ToUpper(*minRisk)
+		if m != "LOW" && m != "MEDIUM" && m != "HIGH" && m != "CRITICAL" {
+			return fmt.Errorf("ai-verify: --min-risk must be LOW/MEDIUM/HIGH/CRITICAL, got %q", *minRisk)
+		}
+		*minRisk = m
 	}
 
 	sr, err := readSourceFiles(*dir)
@@ -1754,11 +1853,45 @@ func cliAIVerify(args []string, stdout, stderr io.Writer) error {
 	}
 
 	res := aiverify.ScanWithRules(files, rules)
+
+	// min-risk filter: keep only findings at or above threshold.
+	if *minRisk != "" {
+		res = filterAIVerifyByRisk(res, aiverify.RiskLevel(*minRisk))
+	}
+
 	if *jsonOut {
 		return emitJSON(stdout, res)
 	}
 	humanAIVerify(stdout, res, *summaryOnly)
 	return nil
+}
+
+// filterAIVerifyByRisk は risk が min 以上の findings のみ残し集計を再計算する。
+func filterAIVerifyByRisk(r aiverify.Result, min aiverify.RiskLevel) aiverify.Result {
+	rank := map[aiverify.RiskLevel]int{
+		aiverify.RiskCritical: 0,
+		aiverify.RiskHigh:     1,
+		aiverify.RiskMedium:   2,
+		aiverify.RiskLow:      3,
+	}
+	minRank := rank[min]
+	kept := r.Findings[:0]
+	for _, f := range r.Findings {
+		if rank[f.Risk] <= minRank {
+			kept = append(kept, f)
+		}
+	}
+	r.Findings = kept
+	// recalculate BySeverity, HasCritical
+	r.BySeverity = make(map[aiverify.RiskLevel]int)
+	r.HasCritical = false
+	for _, f := range kept {
+		r.BySeverity[f.Risk]++
+		if f.Risk == aiverify.RiskCritical {
+			r.HasCritical = true
+		}
+	}
+	return r
 }
 
 // ─── quality-check (v0.36.0) ─────────────────────────────────
@@ -1771,8 +1904,17 @@ func cliQualityCheck(args []string, stdout, stderr io.Writer) error {
 	summaryOnly := fset.Bool("summary-only", false, "summary only (no per-finding list)")
 	dir := fset.String("dir", ".", "directory to scan recursively")
 	rulesFile := fset.String("rules-file", "", "path to custom rules JSON [{id,pattern,severity,languages?,description?,suggestion?}]")
+	minSev := fset.String("min-severity", "", "filter findings at or above this severity: info/warning/prohibited")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
+	}
+	if *minSev != "" {
+		switch strings.ToLower(*minSev) {
+		case "info", "warning", "prohibited":
+			*minSev = strings.ToLower(*minSev)
+		default:
+			return fmt.Errorf("quality-check: --min-severity must be info/warning/prohibited, got %q", *minSev)
+		}
 	}
 
 	sr, err := readSourceFiles(*dir)
@@ -1809,11 +1951,39 @@ func cliQualityCheck(args []string, stdout, stderr io.Writer) error {
 	}
 
 	res := qualitycheck.ScanFiles(files, rules)
+
+	if *minSev != "" {
+		res = filterQualityBySeverity(res, qualitycheck.Severity(*minSev))
+	}
+
 	if *jsonOut {
 		return emitJSON(stdout, res)
 	}
 	humanQualityCheck(stdout, res, *summaryOnly)
 	return nil
+}
+
+// filterQualityBySeverity は severity が min 以上の findings のみ残す。
+// rank: prohibited(0) > warning(1) > info(2) — prohibited が最も厳しい。
+func filterQualityBySeverity(r qualitycheck.Result, min qualitycheck.Severity) qualitycheck.Result {
+	rank := map[qualitycheck.Severity]int{
+		qualitycheck.SevProhibited: 0,
+		qualitycheck.SevWarning:    1,
+		qualitycheck.SevInfo:       2,
+	}
+	minRank := rank[min]
+	kept := r.Findings[:0]
+	for _, f := range r.Findings {
+		if rank[f.Severity] <= minRank {
+			kept = append(kept, f)
+		}
+	}
+	r.Findings = kept
+	r.BySeverity = make(map[qualitycheck.Severity]int)
+	for _, f := range kept {
+		r.BySeverity[f.Severity]++
+	}
+	return r
 }
 
 // ─── test-audit (v0.36.0) ────────────────────────────────────
@@ -1826,6 +1996,7 @@ func cliTestAudit(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively")
 	untestedOnly := fset.Bool("untested-only", false, "list only sources without a matching test")
+	strict := fset.Bool("strict", false, "exit non-zero if any source file lacks a matching test (CI gate)")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
@@ -1842,6 +2013,9 @@ func cliTestAudit(args []string, stdout, stderr io.Writer) error {
 		return emitJSON(stdout, res)
 	}
 	humanTestAudit(stdout, res, *untestedOnly)
+	if *strict && len(res.UntestedFiles) > 0 {
+		return fmt.Errorf("%d source file(s) lack a matching test — failing because --strict is set", len(res.UntestedFiles))
+	}
 	return nil
 }
 
@@ -1855,6 +2029,7 @@ func cliASTCheck(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively")
 	surface := fset.Bool("surface", false, "report capability surface (exec/network/unsafe/reflect/crypto) instead of defect findings")
+	minSev := fset.String("min-severity", "low", "minimum severity to report: high|medium|low (ignored with --surface)")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
@@ -1874,12 +2049,40 @@ func cliASTCheck(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 
+	astRank := map[string]int{"high": 0, "medium": 1, "low": 2}
+	minASTSev := strings.ToLower(*minSev)
+	if _, ok := astRank[minASTSev]; !ok {
+		fmt.Fprintf(stderr, "ast-check: --min-severity must be high|medium|low, got %q\n", *minSev)
+		return errUsage
+	}
+
 	res := astcheck.ScanFiles(sr.Files)
+	res = filterASTFindings(res, minASTSev, astRank)
 	if *jsonOut {
 		return emitJSON(stdout, res)
 	}
 	humanASTCheck(stdout, res)
 	return nil
+}
+
+// filterASTFindings は astcheck.Result の Findings を severity >= min でフィルタし
+// BySeverity/ByRule を再集計する。
+func filterASTFindings(r astcheck.Result, minSev string, rank map[string]int) astcheck.Result {
+	minRank := rank[minSev]
+	kept := r.Findings[:0]
+	for _, f := range r.Findings {
+		if rank[strings.ToLower(f.Severity)] <= minRank {
+			kept = append(kept, f)
+		}
+	}
+	r.Findings = kept
+	r.BySeverity = make(map[string]int)
+	r.ByRule = make(map[string]int)
+	for _, f := range kept {
+		r.BySeverity[f.Severity]++
+		r.ByRule[f.Rule]++
+	}
+	return r
 }
 
 // ─── review-gate (v0.36.0, 新視点) ────────────────────────────
@@ -1892,7 +2095,12 @@ func cliReviewGate(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively")
 	strict := fset.Bool("strict", false, "exit non-zero if the gate verdict is block (CI gate)")
+	gate := fset.String("gate", "block", "minimum verdict tier to trigger exit non-zero: block|review (review includes block)")
 	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	if *gate != "block" && *gate != "review" {
+		fmt.Fprintf(stderr, "review-gate: --gate must be block|review, got %q\n", *gate)
 		return errUsage
 	}
 
@@ -1931,6 +2139,9 @@ func cliReviewGate(args []string, stdout, stderr io.Writer) error {
 	if *strict && dec.Tier == reviewgate.TierBlock {
 		return fmt.Errorf("review gate: block — %s", strings.Join(dec.Blockers, "; "))
 	}
+	if *gate == "review" && (dec.Tier == reviewgate.TierReview || dec.Tier == reviewgate.TierBlock) {
+		return fmt.Errorf("review gate: %s — %s", dec.Tier, strings.Join(dec.Blockers, "; "))
+	}
 	return nil
 }
 
@@ -1952,7 +2163,15 @@ func cliDiffScan(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fset.Bool("json", false, "JSON output")
 	file := fset.String("file", "", "read unified diff from this file (default: stdin)")
 	strict := fset.Bool("strict", false, "exit non-zero if the diff introduces any secret (CI gate)")
+	minSev := fset.String("min-severity", "low", "minimum severity to report: critical|high|medium|low")
 	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	diffSecRank := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3}
+	minDiffSev := strings.ToLower(*minSev)
+	if _, ok := diffSecRank[minDiffSev]; !ok {
+		fmt.Fprintf(stderr, "diff-scan: --min-severity must be critical|high|medium|low, got %q\n", *minSev)
 		return errUsage
 	}
 
@@ -1975,7 +2194,10 @@ func cliDiffScan(args []string, stdout, stderr io.Writer) error {
 	var hits []diffSecretHit
 	for _, al := range added {
 		for _, f := range sc.Scan(al.Text, al.Path) {
-			hits = append(hits, diffSecretHit{Path: al.Path, Line: al.Line, RuleID: f.RuleID, Severity: string(f.Severity)})
+			sev := strings.ToLower(string(f.Severity))
+			if diffSecRank[sev] <= diffSecRank[minDiffSev] {
+				hits = append(hits, diffSecretHit{Path: al.Path, Line: al.Line, RuleID: f.RuleID, Severity: string(f.Severity)})
+			}
 		}
 	}
 	guards := diffscan.RemovedGuards(string(data))
@@ -2002,8 +2224,16 @@ func cliFlowRisk(args []string, stdout, stderr io.Writer) error {
 	fset := newFlagSet("flow-risk", stderr)
 	jsonOut := fset.Bool("json", false, "JSON output")
 	file := fset.String("file", "", "read the op sequence from this file (default: stdin); one tool/op name per line")
-	strict := fset.Bool("strict", false, "exit non-zero if a high-severity flow is detected (CI gate)")
+	strict := fset.Bool("strict", false, "exit non-zero if a flow at or above --min-severity is detected (CI gate)")
+	minSev := fset.String("min-severity", "high", "minimum severity to report and gate on: high|medium")
 	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	flowRank := map[string]int{"high": 0, "medium": 1}
+	minFlowSev := strings.ToLower(*minSev)
+	if _, ok := flowRank[minFlowSev]; !ok {
+		fmt.Fprintf(stderr, "flow-risk: --min-severity must be high|medium, got %q\n", *minSev)
 		return errUsage
 	}
 
@@ -2029,7 +2259,15 @@ func cliFlowRisk(args []string, stdout, stderr io.Writer) error {
 		}
 		steps = append(steps, flowrisk.Step{Name: name, Capability: flowrisk.ClassifyTool(name)})
 	}
-	risks := flowrisk.Analyze(steps)
+	allRisks := flowrisk.Analyze(steps)
+
+	// Filter by --min-severity.
+	var risks []flowrisk.FlowRisk
+	for _, r := range allRisks {
+		if flowRank[strings.ToLower(r.Severity)] <= flowRank[minFlowSev] {
+			risks = append(risks, r)
+		}
+	}
 
 	if *jsonOut {
 		if err := emitJSON(stdout, map[string]any{"steps": len(steps), "flows": risks}); err != nil {
@@ -2038,25 +2276,12 @@ func cliFlowRisk(args []string, stdout, stderr io.Writer) error {
 	} else {
 		humanFlowRisk(stdout, len(steps), risks)
 	}
-	if *strict {
-		for _, r := range risks {
-			if r.Severity == "high" {
-				return fmt.Errorf("%d high-severity flow(s) detected — failing because --strict is set", countHighFlows(risks))
-			}
-		}
+	if *strict && len(risks) > 0 {
+		return fmt.Errorf("%d flow(s) at or above %s detected — failing because --strict is set", len(risks), *minSev)
 	}
 	return nil
 }
 
-func countHighFlows(risks []flowrisk.FlowRisk) int {
-	n := 0
-	for _, r := range risks {
-		if r.Severity == "high" {
-			n++
-		}
-	}
-	return n
-}
 
 // ─── coverage (v0.36.0, blind-spot meta 視点) ─────────────────
 
@@ -2068,6 +2293,7 @@ func cliCoverage(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively")
 	minRatio := fset.Float64("min", 0, "exit non-zero if coverage ratio is below this (0 = no gate)")
+	strict := fset.Bool("strict", false, "exit non-zero if any source file is in the scanner blind spot (CI gate)")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
@@ -2103,6 +2329,9 @@ func cliCoverage(args []string, stdout, stderr io.Writer) error {
 	} else {
 		humanCoverage(stdout, rep)
 	}
+	if *strict && rep.UncoveredSource > 0 {
+		return fmt.Errorf("%d source file(s) in scanner blind spot — failing because --strict is set", rep.UncoveredSource)
+	}
 	if *minRatio > 0 && rep.CoverageRatio < *minRatio {
 		return fmt.Errorf("coverage %.2f below --min %.2f (%d uncovered source file(s))", rep.CoverageRatio, *minRatio, rep.UncoveredSource)
 	}
@@ -2120,6 +2349,7 @@ func cliAssertCheck(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively for *_test.go files")
 	maxDensity := fset.Float64("max-hollow", 0, "exit non-zero if hollow file count exceeds this fraction of test files (0 = no gate)")
+	strict := fset.Bool("strict", false, "exit non-zero if any hollow test file exists (CI gate)")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
@@ -2137,6 +2367,9 @@ func cliAssertCheck(args []string, stdout, stderr io.Writer) error {
 		}
 	} else {
 		humanAssertCheck(stdout, rep)
+	}
+	if *strict && rep.HollowFiles > 0 {
+		return fmt.Errorf("%d hollow test file(s) (no assertions) — failing because --strict is set", rep.HollowFiles)
 	}
 	if *maxDensity > 0 && rep.TestFiles > 0 {
 		hollowFrac := float64(rep.HollowFiles) / float64(rep.TestFiles)
@@ -2157,6 +2390,7 @@ func cliErrPolicy(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
 	minRatio := fset.Float64("min-wrap", 0, "exit non-zero if wrap ratio is below this (0 = no gate)")
+	strict := fset.Bool("strict", false, "exit non-zero if any blank-discard (_ = call()) is found (CI gate)")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
@@ -2174,6 +2408,9 @@ func cliErrPolicy(args []string, stdout, stderr io.Writer) error {
 		}
 	} else {
 		humanErrPolicy(stdout, rep)
+	}
+	if *strict && rep.BlankDiscards > 0 {
+		return fmt.Errorf("%d blank-discard (_ = call()) found — failing because --strict is set", rep.BlankDiscards)
 	}
 	if *minRatio > 0 {
 		d := rep.WrappedReturns + rep.NakedReturns
@@ -2300,6 +2537,7 @@ func cliAPIDoc(args []string, stdout, stderr io.Writer) error {
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
 	minDoc := fset.Float64("min-doc", 0, "exit non-zero if documented ratio is below this (0 = no gate)")
+	strict := fset.Bool("strict", false, "exit non-zero if any exported symbol lacks a doc comment (CI gate)")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
@@ -2317,6 +2555,9 @@ func cliAPIDoc(args []string, stdout, stderr io.Writer) error {
 		}
 	} else {
 		humanAPIDoc(stdout, rep)
+	}
+	if *strict && rep.ExportedTotal > rep.Documented {
+		return fmt.Errorf("%d exported symbol(s) lack doc comments — failing because --strict is set", rep.ExportedTotal-rep.Documented)
 	}
 	if *minDoc > 0 && rep.ExportedTotal > 0 && rep.DocumentedRatio < *minDoc {
 		return fmt.Errorf("documented ratio %.2f below --min-doc %.2f (%d of %d exported symbols undocumented)",
@@ -2752,6 +2993,130 @@ func newGitHubClient(cfg *config.Config) *github.Client {
 		BaseURL: cfg.GitHubBase,
 		Timeout: cfg.ScanTimeout,
 	})
+}
+
+// ─── alert-resolve (v0.51.0) ─────────────────────────────────
+
+// cliAlertResolve は `yagura alert-resolve <alert-id> --action <resolve|snooze|reopen>`
+// を処理する。MCP yagura_alert_resolve と同じ alertfix.Store API を使う。
+// state は {state_dir}/alert_state.jsonl に JSONL 永続化される。
+func cliAlertResolve(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("alert-resolve", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	action := fset.String("action", "", "lifecycle action: resolve|snooze|reopen")
+	note := fset.String("note", "", "optional note to attach")
+	snoozeDays := fset.Int("snooze-days", 7, "snooze duration in days (default 7)")
+	pos, err := parseArgs(fset, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) < 1 {
+		fmt.Fprintln(stderr, "usage: yagura alert-resolve <alert-id> --action <resolve|snooze|reopen> [--note TEXT] [--snooze-days N]")
+		return fmt.Errorf("alert-resolve: alert-id required")
+	}
+	alertID := pos[0]
+	if *action == "" {
+		return fmt.Errorf("alert-resolve: --action is required (resolve|snooze|reopen)")
+	}
+	switch *action {
+	case "resolve", "snooze", "reopen":
+	default:
+		return fmt.Errorf("alert-resolve: unknown action %q (must be resolve|snooze|reopen)", *action)
+	}
+
+	sd, err := config.ResolveStateDir()
+	if err != nil {
+		return fmt.Errorf("alert-resolve: %w", err)
+	}
+	statePath := filepath.Join(sd, "alert_state.jsonl")
+	store, err := alertfix.NewStore(statePath)
+	if err != nil {
+		return fmt.Errorf("alert-resolve: open store: %w", err)
+	}
+
+	switch *action {
+	case "resolve":
+		err = store.Resolve(alertID, *note)
+	case "snooze":
+		days := *snoozeDays
+		if days <= 0 {
+			days = 7
+		}
+		until := time.Now().Add(time.Duration(days) * 24 * time.Hour)
+		err = store.Snooze(alertID, until, *note)
+	case "reopen":
+		err = store.Reopen(alertID, *note)
+	}
+	if err != nil {
+		return fmt.Errorf("alert-resolve: %w", err)
+	}
+
+	st, _ := store.Get(alertID)
+	stats := store.Stats()
+
+	if *jsonOut {
+		return emitJSON(stdout, map[string]any{
+			"alert_id":        alertID,
+			"action":          *action,
+			"current_state":   st,
+			"lifecycle_stats": stats,
+		})
+	}
+	humanAlertResolve(stdout, alertID, *action, st, stats)
+	return nil
+}
+
+// cliAlertSnapshot は `yagura alert-snapshot` を処理する。
+// alertfix.Store から全 alert の現在の lifecycle 状態を表示する(read-only)。
+// 表示対象は全ステータス(active/resolved/snoozed)で、--status でフィルタ可能。
+func cliAlertSnapshot(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("alert-snapshot", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	status := fset.String("status", "", "filter by status: active|resolved|snoozed (default: all)")
+	if err := fset.Parse(args); err != nil {
+		return err
+	}
+	if *status != "" {
+		switch *status {
+		case "active", "resolved", "snoozed":
+		default:
+			return fmt.Errorf("alert-snapshot: --status must be active|resolved|snoozed, got %q", *status)
+		}
+	}
+
+	sd, err := config.ResolveStateDir()
+	if err != nil {
+		return fmt.Errorf("alert-snapshot: %w", err)
+	}
+	statePath := filepath.Join(sd, "alert_state.jsonl")
+	store, err := alertfix.NewStore(statePath)
+	if err != nil {
+		return fmt.Errorf("alert-snapshot: open store: %w", err)
+	}
+
+	snap := store.Snapshot()
+	stats := store.Stats()
+
+	// optional filter
+	if *status != "" {
+		want := alertfix.LifecycleStatus(*status)
+		kept := snap[:0]
+		for _, s := range snap {
+			if s.Status == want {
+				kept = append(kept, s)
+			}
+		}
+		snap = kept
+	}
+
+	if *jsonOut {
+		return emitJSON(stdout, map[string]any{
+			"states":          snap,
+			"lifecycle_stats": stats,
+		})
+	}
+	humanAlertSnapshot(stdout, snap, stats)
+	return nil
 }
 
 // ─── plan-status (v0.38.0) ───────────────────────────────────
@@ -3284,24 +3649,47 @@ func cliHarnessCoverage(args []string, stdout, stderr io.Writer) error {
 		"guide": {
 			"computational": {
 				"yagura feature-list (Plan.md → feature-list.json scaffold)",
+				"yagura path-policy (change-path gate against .yagura/paths.json)",
+				"yagura ops-risk (operation autonomy tier: auto/log/review/human)",
+				"yagura recovery-decide (failure recovery: retry/replan/escalate)",
+				"yagura risk-triage (CVE compound prioritization: CVSS+asset+reachability)",
+				"yagura release-radar (cross-project release readiness ranking)",
+				"yagura harness-recommend (Claude Code scaffold by language)",
+				"yagura vex-audit (OpenVEX compliance: validate docs/vex/*.json)",
 			},
 			"inferential": {
 				"yagura agents-md (AGENTS.md scaffold for Claude Code/Codex/Cursor)",
 				"yagura harness-coverage (self-audit: which quadrants are covered?)",
 				"yagura skill-audit / subagent-audit (skill scaffolding)",
+				"yagura parallel-plan (LPT fan-out plan across AI agents)",
 			},
 		},
 		"sensor": {
 			"computational": {
-				"yagura quality-check (static code analysis)",
-				"yagura secretscan (secret detection)",
-				"yagura gha-audit (workflow audit)",
-				"yagura pin-drift (dep pin drift)",
-				"yagura ai-verify (AI-generated code patterns)",
-				"yagura test-audit (source-test coverage)",
-				"yagura sbom (CycloneDX)",
-				"yagura ast-check (Go AST structural audit)",
-				"yagura code-health (composite maintainability grade)",
+				"yagura quality-check (static code analysis: as-any/TODO/ts-ignore)",
+				"yagura secretscan (secret detection: API keys/credentials)",
+				"yagura gha-audit (workflow audit: pinning/permissions)",
+				"yagura pin-drift (dep pin drift: SHA-pinned uses)",
+				"yagura ai-verify (AI-generated code patterns: eval/unsafe/network)",
+				"yagura inject-scan (prompt injection signals in untrusted content)",
+				"yagura publicity-scan (pre-publish leak: home paths/IPs/emails)",
+				"yagura test-audit (source-test counterpart coverage)",
+				"yagura assert-check (test assertion density: hollow test detection)",
+				"yagura err-policy (error diagnostics: wrap ratio + blank-discard)",
+				"yagura diff-scan (diff delta: secrets in added lines + guard removal)",
+				"yagura flow-risk (temporal flow: exfiltration/injection/untrusted-disk)",
+				"yagura sbom (CycloneDX SBOM generation)",
+				"yagura ast-check (Go AST: os.Exit-library/empty-nil-branch/panic)",
+				"yagura complexity (cyclomatic complexity per function)",
+				"yagura coupling (package coupling: fan-in/fan-out/SDP violations)",
+				"yagura dead-code (unreachable unexported declarations)",
+				"yagura recv-check (method receiver consistency)",
+				"yagura api-doc (exported-API doc ratio)",
+				"yagura coverage (scanner blind-spot report)",
+				"yagura code-health (composite maintainability grade A-F per package)",
+				"yagura review-gate (composite ② Review gate: allow/review/block)",
+				"yagura alert-fix (portfolio health sweep: sensor-based alert recommendations)",
+				"yagura cc-security (Claude Code security posture audit)",
 			},
 			"inferential": {
 				"(intentionally none — ADR-0001 zero-dep precludes LLM-as-judge in-process)",
@@ -3916,3 +4304,170 @@ func auditMutation(stderr io.Writer, kind, target string, fields map[string]any)
 		fmt.Fprintf(stderr, "yagura: warning: audit append failed: %v\n", err)
 	}
 }
+
+// ─── Shell completion ──────────────────────────────────────────────────────
+
+// yaguraVerbs is the canonical sorted list of all CLI verbs (cliHandlers + main dispatch).
+// Used by cliCompletion to generate shell completion scripts.
+var yaguraVerbs = []string{
+	"agent-config-audit", "agent-event", "agents-md", "ai-verify",
+	"alert-fix", "alert-resolve", "alert-snapshot", "api-doc",
+	"assert-check", "ast-check", "cc-security", "claudemd-audit",
+	"code-health", "complexity", "completion", "coupling", "coverage",
+	"dead-code", "diff-scan", "err-policy", "feature-list", "flow-risk",
+	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
+	"harness-coverage", "harness-recommend", "help", "init-sh", "inject-scan",
+	"list", "mcp-audit", "ops-risk", "parallel-plan", "path-policy",
+	"pin-drift", "plan-status", "plugin-audit", "progress-file", "publicity-scan",
+	"quality-check", "recv-check", "recovery-decide", "register", "release-radar",
+	"review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
+	"self-improve-history", "session-summary", "settings-audit", "skill-audit",
+	"stats", "test-audit", "today", "unregister", "update", "vex-audit",
+	"verify", "version", "workflow-audit",
+}
+
+// cliCompletion は bash/zsh/fish のシェル補完スクリプトを stdout に出力する。
+// Usage: source <(yagura completion bash)
+//
+//	yagura completion zsh  > ~/.zfunc/_yagura
+//	yagura completion fish > ~/.config/fish/completions/yagura.fish
+func cliCompletion(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("completion", stderr)
+	positionals, err := parseArgs(fs, args)
+	if err != nil {
+		return errUsage
+	}
+	shell := "bash"
+	if len(positionals) > 0 {
+		shell = positionals[0]
+	}
+
+	verbList := strings.Join(yaguraVerbs, " ")
+
+	switch shell {
+	case "bash":
+		fmt.Fprintf(stdout, bashCompletionTmpl, verbList)
+	case "zsh":
+		fmt.Fprintf(stdout, zshCompletionTmpl, buildZshVerbLines())
+	case "fish":
+		fmt.Fprintf(stdout, fishCompletionTmpl, verbList, verbList)
+	default:
+		fmt.Fprintf(stderr, "completion: unknown shell %q — use bash, zsh, or fish\n", shell)
+		return errUsage
+	}
+	return nil
+}
+
+const bashCompletionTmpl = `# yagura bash completion
+# Add to ~/.bashrc: source <(yagura completion bash)
+_yagura_completion() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local verbs="%s"
+    if [[ ${COMP_CWORD} -eq 1 ]]; then
+        COMPREPLY=($(compgen -W "$verbs" -- "$cur"))
+    fi
+}
+complete -F _yagura_completion yagura
+`
+
+const zshCompletionTmpl = `# yagura zsh completion
+# Add to ~/.zshrc: source <(yagura completion zsh)
+# Or: yagura completion zsh > "${fpath[1]}/_yagura"
+_yagura() {
+    local -a verbs
+    verbs=(
+%s    )
+    _describe 'command' verbs
+}
+compdef _yagura yagura
+`
+
+const fishCompletionTmpl = `# yagura fish completion
+# Usage: yagura completion fish | source
+#        or: yagura completion fish > ~/.config/fish/completions/yagura.fish
+complete -c yagura -f
+complete -c yagura -n "not __fish_seen_subcommand_from %s" -a "%s"
+`
+
+// buildZshVerbLines builds the zsh _describe array entries with short descriptions.
+func buildZshVerbLines() string {
+	descriptions := map[string]string{
+		"agent-config-audit":   "audit OpenClaw-style openclaw.json (security/reliability)",
+		"agent-event":          "normalize agent lifecycle event to OTel GenAI semconv",
+		"agents-md":            "generate AGENTS.md from Plan.md + registry facts",
+		"ai-verify":            "AI code risk audit (auth/billing/data/crypto/secret)",
+		"alert-fix":            "portfolio health sweep over sensor data",
+		"alert-resolve":        "manage alert lifecycle (resolve/snooze/reopen)",
+		"alert-snapshot":       "show current lifecycle state of all tracked alerts",
+		"api-doc":              "exported-API doc discipline: documented ratio",
+		"assert-check":         "test assertion density: detect hollow test files",
+		"ast-check":            "Go AST structural audit (os.Exit/panic in library)",
+		"cc-security":          "audit a project's Claude Code security posture",
+		"claudemd-audit":       "audit CLAUDE.md structure (4 sections, instruction budget)",
+		"code-health":          "composite maintainability grade (A-F) per package",
+		"complexity":           "cyclomatic complexity (McCabe, gocyclo-compatible)",
+		"completion":           "generate shell completion script (bash|zsh|fish)",
+		"coupling":             "package import coupling: fan-in/out + instability",
+		"coverage":             "scan blind-spot report: covered vs uncovered-source",
+		"dead-code":            "dead unexported declarations within their own package",
+		"diff-scan":            "delta scan of unified diff: secrets in added lines",
+		"err-policy":           "error-context discipline: wrap ratio + blank-discard",
+		"feature-list":         "convert Plan.md to Anthropic-style feature-list.json",
+		"flow-risk":            "temporal scan of op sequence: exfiltration / injection",
+		"gha-audit":            "GitHub Actions workflow audit (pinning/permissions)",
+		"get":                  "get project by slug",
+		"graph":                "dependency graph queries over registry depends_on",
+		"graph-impact":         "transitive reverse deps (change impact)",
+		"graph-neighbors":      "BFS: direct+transitive deps/dependents",
+		"graph-stats":          "graph summary: nodes/edges/roots/hubs",
+		"harness-coverage":     "Fowler taxonomy self-audit (4 quadrants)",
+		"harness-recommend":    "Claude Code .claude/ scaffold by language",
+		"help":                 "print help message",
+		"init-sh":              "generate init.sh or init.ps1 for agent sessions",
+		"inject-scan":          "scan untrusted content for indirect prompt injection",
+		"list":                 "list registry projects",
+		"mcp-audit":            "audit .mcp.json / tools for poisoning & config risk",
+		"ops-risk":             "classify operation autonomy tier (auto/log/review/human)",
+		"parallel-plan":        "LPT fan-out plan across AI agents",
+		"path-policy":          "gate changed paths against .yagura/paths.json",
+		"pin-drift":            "SHA-pinned dep drift (needs YAGURA_GITHUB_TOKEN)",
+		"plan-status":          "Plan.md progress for a project (checkboxes)",
+		"plugin-audit":         "audit Claude Code plugin.json / marketplace.json",
+		"progress-file":        "generate claude-progress.txt for cross-session handoff",
+		"publicity-scan":       "pre-publish leak scan (home paths, IPs, emails)",
+		"quality-check":        "code lint: prohibited patterns, TODO/FIXME, ts-ignore",
+		"recv-check":           "method receiver consistency: inconsistent names",
+		"recovery-decide":      "pick recovery action for a failed agent task",
+		"register":             "register a project in the registry",
+		"release-radar":        "cross-project release readiness ranking",
+		"review-gate":          "composite Review verdict (allow/review/block)",
+		"risk-triage":          "compound CVE/vulnerability prioritization",
+		"sbom":                 "software bill of materials",
+		"search":               "search registry projects",
+		"secret":               "manage encrypted secrets (list/set/get/delete)",
+		"secretscan":           "secret detection in project text fields",
+		"self-improve-history": "show the recorded RSI self-assessment trajectory",
+		"session-summary":      "aggregate agent event array to session summary",
+		"settings-audit":       "audit .claude/settings.json (permissions/hooks)",
+		"skill-audit":          "audit .claude/skills (score + retire recommendations)",
+		"stats":                "registry statistics",
+		"test-audit":           "source-test coverage detection (Go/TS/JS/Python/Rust)",
+		"today":                "top portfolio projects to focus on now",
+		"unregister":           "unregister a project from the registry",
+		"update":               "update a project in the registry",
+		"vex-audit":            "validate OpenVEX docs/vex/*.json",
+		"verify":               "verify integrity of audit log hash chain",
+		"version":              "print version and exit",
+		"workflow-audit":       "audit .claude/workflows (Dynamic Workflow lint)",
+	}
+	var sb strings.Builder
+	for _, v := range yaguraVerbs {
+		desc := descriptions[v]
+		if desc == "" {
+			desc = v
+		}
+		fmt.Fprintf(&sb, "        %q\n", v+":"+desc)
+	}
+	return sb.String()
+}
+

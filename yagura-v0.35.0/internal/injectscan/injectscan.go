@@ -95,7 +95,10 @@ var patterns = []pattern{
 	{CatOverride, SevHigh, "override-ko", regexp.MustCompile(`이전[^.\n]{0,6}지시[^.\n]{0,6}무시|위[^.\n]{0,4}지시를?\s*무시|시스템\s*프롬프트|이제부터\s*너는`)},
 
 	// exfiltration
-	{CatExfiltration, SevCritical, "read-send-secret", regexp.MustCompile(`(?i)\b(read|cat|open|send|upload|post|exfiltrate|leak|email|copy)\b[^.\n]{0,40}(\.env|\.ssh|id_rsa|/etc/passwd|credential|secret|api[ _-]?key|password|access[ _-]?token|private key)`)},
+	{CatExfiltration, SevCritical, "read-send-secret", regexp.MustCompile(`(?i)\b(read|cat|open|send|upload|post|exfiltrate|leak|email)\b[^.\n]{0,40}(\.env|\.ssh|id_rsa|/etc/passwd|credential|secret|api[ _-]?key|password|access[ _-]?token|private key)`)},
+	// copy-secret is SevMedium because `copy .env` appears in setup documentation ("cp .env.example .env")
+	// and alone cannot exfiltrate data — the companion send-to-url rule catches the full attack chain.
+	{CatExfiltration, SevMedium, "copy-secret", regexp.MustCompile(`(?i)\bcopy\b[^.\n]{0,40}(\.env|\.ssh|id_rsa|/etc/passwd|credential|secret|api[ _-]?key|password|access[ _-]?token|private key)`)},
 	{CatExfiltration, SevCritical, "send-to-url", regexp.MustCompile(`(?i)\b(send|post|upload|forward|exfiltrate)\b[^.\n]{0,40}\bto\b[^.\n]{0,20}https?://`)},
 	{CatExfiltration, SevHigh, "curl-exfil", regexp.MustCompile(`(?i)\bcurl\b[^\n]{0,80}https?://[^\s]*\?[^\s]*=`)},
 

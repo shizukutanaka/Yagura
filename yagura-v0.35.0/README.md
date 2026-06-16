@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.37.0** — 71 MCP tools, 65 internal packages, maintainability lens family (complexity/coupling/api-doc/dead-code/recv-check/assert-check/err-policy) + composite `code-health` grade. Reproducible build verified (byte-for-byte identical via `make verify`).
+Status: **v0.62.0** — 71 MCP tools, 65 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`), inject-scan false-positive fix (`copy .env` downgraded to SevMedium). Reproducible build verified (byte-for-byte identical via `make verify`).
 
 ---
 
@@ -21,7 +21,7 @@ If you maintain more than a handful of repositories at once, the cost of context
 Yagura sits in that gap. It is **one process you run locally** that:
 
 - Knows about all your repositories (registered once with `yagura_register`).
-- Scans them for vulnerabilities, secrets, GitHub Actions drift, and pin staleness (9 computational sensors).
+- Scans them for vulnerabilities, secrets, GitHub Actions drift, and pin staleness (24 computational sensors).
 - Generates the cross-tool agent harness artifacts that Anthropic's 2-agent long-running pattern needs (`AGENTS.md`, `feature-list.json`, `claude-progress.txt`, `init.sh` / `init.ps1`).
 - Receives Claude Code's HTTP hooks at `/hooks/claude-code` and turns them into Prometheus metrics and queryable timelines.
 - Tracks alert lifecycle (active / resolved / snoozed) so the same problem is not nagged twice.
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-31 consecutive releases (v0.6 → v0.36) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+57 consecutive releases (v0.6 → v0.62) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

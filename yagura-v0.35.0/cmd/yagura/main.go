@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.50.0"
+	version     = "0.62.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -157,34 +157,37 @@ CLI direct mode (no MCP client required):
   yagura graph-neighbors <slug> [--depth N]  BFS: direct+transitive deps/dependents
   yagura graph-impact <slug>                 Transitive reverse deps (change impact)
   yagura graph-stats                         Graph summary: nodes/edges/roots/hubs
-  yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
+  yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans (gha-audit/secretscan/inject-scan/publicity-scan/ast-check support --min-severity)
   yagura skill-audit                       Audit .claude/skills (score + retire)
   yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)
   yagura settings-audit                    Audit .claude/settings.json (permissions/hooks)
   yagura agent-config-audit [file]         Audit OpenClaw-style openclaw.json (security/reliability)
   yagura plugin-audit [file]               Audit Claude Code plugin.json / marketplace.json
   yagura mcp-audit [file]                  Audit .mcp.json / tools for poisoning & config risk
-  yagura publicity-scan [path]             Pre-publish leak scan (home paths, internal hosts, IPs, emails)
+  yagura publicity-scan [path]             Pre-publish leak scan (home paths, internal hosts, IPs, emails); --min-severity high|medium|low
   yagura vex-audit [dir]                   Validate OpenVEX docs/vex/*.json (--strict for CI)
   yagura self-improve-history              Show the recorded RSI self-assessment trajectory
   yagura path-policy [paths…]              Gate changed paths against .yagura/paths.json (--strict for CI)
-  yagura inject-scan [path]                Scan untrusted content for indirect prompt injection (--strict)
+  yagura inject-scan [path]                Scan untrusted content for indirect prompt injection (--strict, --min-severity critical|high|medium|low; 'copy .env' is SevMedium — use --min-severity high to skip setup-doc false positives)
   yagura cc-security [dir]                 Audit a project's Claude Code security posture (--min-score for CI)
+  yagura completion [bash|zsh|fish]        Generate shell tab-completion script (default: bash)
   yagura claudemd-audit [file]             Audit CLAUDE.md structure (4 sections, instruction budget)
   yagura ai-verify [--dir .]               AI code risk audit (auth/billing/data/crypto/secret; 2x AI-zone multiplier)
   yagura quality-check [--dir .]           Code lint: prohibited patterns, TODO/FIXME, ts-ignore, as any
-  yagura test-audit [--dir .]              Source-test coverage detection (Go/TS/JS/Python/Rust/Java; --untested-only)
+  yagura test-audit [--dir .] [--strict]   Source-test coverage detection (Go/TS/JS/Python/Rust/Java; --untested-only)
   yagura alert-fix [--severity-min high]   Portfolio health sweep over registry sensor data (resolved/snoozed filtered)
-  yagura ast-check [--dir .]               Go AST structural audit (os.Exit/panic in library, bare goroutine, empty != nil branch, parse errors); --surface for capability profile
-  yagura review-gate [--dir .] [--strict] Composite ② Review verdict (allow/review/block) over secretscan+aiverify+qualitycheck+astcheck
-  yagura diff-scan [--file f] [--strict]   Delta scan of a unified diff: secrets in ADDED lines (--strict gate) + removed safety guards (review)
-  yagura flow-risk [--file f] [--strict]   Temporal scan of an op sequence (1 tool/op per line): exfiltration / injection-to-exec / untrusted-to-disk orderings
-  yagura coverage [--dir .] [--min R]      Scan blind-spot report: how much of the tree is in an analyzable language (covered vs uncovered-source)
-  yagura assert-check [--dir .] [--max-hollow F]  Test assertion density: detect hollow *_test.go files (zero assertions always pass, proving nothing)
-  yagura err-policy [--dir .] [--min-wrap R]      Error-context discipline: wrap ratio (fmt.Errorf %w vs naked return err) + blank-discard (_ = call()) detection
+  yagura alert-resolve <id> --action <resolve|snooze|reopen>  Manage alert lifecycle; --snooze-days N (default 7), --note TEXT
+  yagura alert-snapshot [--status active|resolved|snoozed]   Show current lifecycle state of all tracked alerts
+  yagura ast-check [--dir .]               Go AST structural audit (os.Exit/panic in library, bare goroutine, empty != nil branch, parse errors); --surface for capability profile; --min-severity high|medium|low
+  yagura review-gate [--dir .] [--strict] [--gate block|review] Composite ② Review verdict (allow/review/block) over secretscan+aiverify+qualitycheck+astcheck
+  yagura diff-scan [--file f] [--strict] [--min-severity critical|high|medium|low]  Delta scan of a unified diff: secrets in ADDED lines (--strict gate) + removed safety guards (review)
+  yagura flow-risk [--file f] [--strict] [--min-severity high|medium]  Temporal scan of an op sequence (1 tool/op per line): exfiltration / injection-to-exec / untrusted-to-disk orderings
+  yagura coverage [--dir .] [--min R] [--strict]      Scan blind-spot report: how much of the tree is in an analyzable language (covered vs uncovered-source)
+  yagura assert-check [--dir .] [--max-hollow F] [--strict]  Test assertion density: detect hollow *_test.go files (zero assertions always pass, proving nothing)
+  yagura err-policy [--dir .] [--min-wrap R] [--strict]      Error-context discipline: wrap ratio (fmt.Errorf %w vs naked return err) + blank-discard (_ = call()) detection
   yagura complexity [--dir .] [--max N] [--strict]  Cyclomatic complexity (McCabe, gocyclo-compatible): per-function score, flags functions over --max (default 10) = testability precondition
   yagura coupling [--dir .] [--module M] [--strict]  Package import coupling: fan-in/out + instability + Stable Dependencies Principle violations (module path auto-detected from go.mod)
-  yagura api-doc [--dir .] [--min-doc R]          Exported-API doc discipline: documented ratio + undocumented exported funcs/types/consts/vars/methods (godoc, golint-compatible)
+  yagura api-doc [--dir .] [--min-doc R] [--strict]          Exported-API doc discipline: documented ratio + undocumented exported funcs/types/consts/vars/methods (godoc, golint-compatible)
   yagura dead-code [--dir .] [--strict]           Dead unexported declarations: package-level funcs/types/consts/vars never referenced within their own package
   yagura recv-check [--dir .] [--strict]          Method receiver consistency: inconsistent receiver names, mixed value/pointer receivers, un-idiomatic names (this/self)
   yagura code-health [--dir .] [--min-grade G]    Composite maintainability grade (A-F) per package from complexity/apidoc/deadcode/recv-check/assert-check/ast-check

@@ -1385,3 +1385,59 @@ func humanSessionSummary(w io.Writer, sum sessionsummary.Summary) {
 		fmt.Fprintf(w, "\nsummary: %s\n", sum.Summary)
 	}
 }
+
+// humanAlertResolve は alert-resolve の結果を人間可読で出力する。
+func humanAlertResolve(w io.Writer, alertID, action string, st *alertfix.CurrentState, stats map[alertfix.LifecycleStatus]int) {
+	fmt.Fprintf(w, "alert_id:  %s\n", alertID)
+	fmt.Fprintf(w, "action:    %s\n", action)
+	if st != nil {
+		fmt.Fprintf(w, "status:    %s\n", st.Status)
+		if st.Note != "" {
+			fmt.Fprintf(w, "note:      %s\n", st.Note)
+		}
+		if st.SnoozeUntil != nil {
+			fmt.Fprintf(w, "snooze_until: %s\n", st.SnoozeUntil.Format(time.RFC3339))
+		}
+		fmt.Fprintf(w, "updated_at: %s\n", st.UpdatedAt.Format(time.RFC3339))
+	}
+	if len(stats) > 0 {
+		fmt.Fprintf(w, "\nlifecycle_stats:\n")
+		for _, s := range []alertfix.LifecycleStatus{alertfix.StatusActive, alertfix.StatusResolved, alertfix.StatusSnoozed} {
+			fmt.Fprintf(w, "  %-9s %d\n", string(s)+":", stats[s])
+		}
+	}
+}
+
+// humanAlertSnapshot は alert-snapshot の結果を人間可読で出力する。
+func humanAlertSnapshot(w io.Writer, states []alertfix.CurrentState, stats map[alertfix.LifecycleStatus]int) {
+	if len(states) == 0 {
+		fmt.Fprintln(w, "no alert states recorded")
+	} else {
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "STATUS\tALERT_ID\tUPDATED\tNOTE")
+		sort.Slice(states, func(i, j int) bool {
+			if states[i].Status != states[j].Status {
+				return states[i].Status < states[j].Status
+			}
+			return states[i].AlertID < states[j].AlertID
+		})
+		for _, s := range states {
+			note := s.Note
+			if s.SnoozeUntil != nil {
+				note = "until " + s.SnoozeUntil.Format("2006-01-02") + " " + note
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+				s.Status,
+				s.AlertID,
+				s.UpdatedAt.Format("2006-01-02T15:04"),
+				note,
+			)
+		}
+		tw.Flush()
+	}
+	fmt.Fprintf(w, "\nstats: active=%d resolved=%d snoozed=%d\n",
+		stats[alertfix.StatusActive],
+		stats[alertfix.StatusResolved],
+		stats[alertfix.StatusSnoozed],
+	)
+}

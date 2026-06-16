@@ -4,6 +4,304 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.62.0] - 2026-06-16
+
+### Theme — "inject-scan false positive fix + shell tab-completion"
+
+#### `inject-scan`: `copy .env` downgraded from Critical → Medium
+- The `read-send-secret` rule previously matched `copy` as a verb, causing false positives on
+  common setup documentation ("cp `.env.example` to `.env`") in READMEs and CONTRIBUTING files
+- **Fix**: `copy` split into a new separate rule `copy-secret` at SevMedium
+- The original critical verbs (`read|cat|open|send|upload|post|exfiltrate|leak|email`) are unchanged
+- `send-to-url` (critical) and `curl-exfil` (high) still catch the full exfiltration attack chain
+- Users who want to suppress setup-doc noise can now use `--min-severity high` without losing coverage
+- 2 new tests: `copy-secret` is medium + `read-send-secret` remains critical
+- 2 new CLI tests: verify FP is gone at `--min-severity high`, real pattern still fires
+
+#### New verb: `yagura completion [bash|zsh|fish]`
+- Generates shell tab-completion scripts for all 68 yagura verbs
+- Default (no arg) → bash (most portable)
+- `yagura completion bash` → bash COMPREPLY completion
+- `yagura completion zsh` → zsh `_describe` completion with per-verb descriptions
+- `yagura completion fish` → fish `complete -c yagura` block
+- 5 new CLI tests: bash/zsh/fish output, default=bash, unknown-shell→exit2
+- Zero new Go dependencies (ADR-0001 maintained)
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 57 consecutive releases).
+
+## [v0.61.0] - 2026-06-16
+
+### Theme — "harness-coverage accuracy: 24 sensors + 12 guides, usage text parity"
+
+#### `harness-coverage` matrix update
+- Corrected stale matrix (was: 9 sensor.computational, 1 guide.computational)
+- Now reflects 24 sensor.computational / 1 sensor.inferential / 8 guide.computational / 4 guide.inferential
+- Added all scan verbs added in v0.35-v0.60: inject-scan, publicity-scan, diff-scan, flow-risk, coverage,
+  assert-check, err-policy, api-doc, dead-code, recv-check, complexity, coupling, review-gate,
+  alert-fix, cc-security + guide verbs path-policy, ops-risk, recovery-decide, risk-triage,
+  release-radar, harness-recommend, vex-audit, parallel-plan
+
+#### Usage text parity
+- `test-audit` usage now shows `--strict` flag
+- `review-gate` usage now shows `--gate block|review` flag
+- `diff-scan`/`flow-risk` usage already updated in v0.58
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 38 consecutive releases).
+
+## [v0.60.0] - 2026-06-16
+
+### Theme — "test-audit --strict + review-gate --gate: closing the CI gate loop"
+
+#### CLI: `test-audit --strict`
+- Added `--strict` to `yagura test-audit`
+- Exit non-zero if any source file lacks a matching `_test.go` counterpart
+- Complements `assert-check --strict` (hollow tests) — this gates on absent tests entirely
+- 1 new test: source-without-test fails --strict, source-with-test passes
+
+#### CLI: `review-gate --gate block|review`
+- Added `--gate block|review` flag (default: `block`) to `yagura review-gate`
+- `--gate review`: exit non-zero if verdict is `review` OR `block` (conservative CI)
+- `--gate block` (default): backward-compatible with existing `--strict`
+- `--strict` still works and maps to block-tier gating
+- 2 new tests: clean dir passes `--gate review`, bad `--gate allow` → exit 1
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 37 consecutive releases).
+
+## [v0.59.0] - 2026-06-16
+
+### Theme — "--strict CI gates for coverage / assert-check / err-policy / api-doc"
+
+#### Four new `--strict` CI gates
+- `coverage --strict`: exit non-zero if any source file is in the scanner blind spot
+- `assert-check --strict`: exit non-zero if any hollow test file exists (assertion-free)
+- `err-policy --strict`: exit non-zero if any blank-discard (`_ = call()`) found
+- `api-doc --strict`: exit non-zero if any exported symbol lacks a doc comment
+- All four are additive alongside existing `--min`/`--max-hollow`/`--min-wrap`/`--min-doc` threshold flags
+- 4 new tests (pass + fail case per verb); 67 packages green
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 36 consecutive releases).
+
+## [v0.58.0] - 2026-06-16
+
+### Theme — "diff-scan / flow-risk --min-severity: severity filtering for delta and temporal scans"
+
+#### CLI: `diff-scan --min-severity`
+- Added `--min-severity critical|high|medium|low` to `yagura diff-scan`
+- Filters secretscan findings on added diff lines using rank-based comparison (case-insensitive)
+- `--strict` gate now uses filtered hit count; CI can gate on CRITICAL-only: `yagura diff-scan --min-severity critical --strict`
+- 2 new tests: bad-value → exit 1, filters-critical (AKIA key → only CRITICAL survives `--min-severity critical`)
+
+#### CLI: `flow-risk --min-severity`
+- Added `--min-severity high|medium` to `yagura flow-risk`
+- Default remains `high` (backward-compatible: previous `--strict` only gated on high flows)
+- `--strict` now gates on filtered count instead of hardcoded "high" check
+- Removed unused `countHighFlows` helper
+- 2 new tests: filters-high (exfiltration=high + untrusted-to-disk=medium; verifies medium absent with `--min-severity high`), bad-value ("critical" invalid for flow-risk) → exit 1
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 35 consecutive releases).
+
+#### Synergy
+`--min-severity` is now available on ALL per-finding scan CLIs in Yagura:
+`secretscan`, `gha-audit`, `ai-verify` (--min-risk), `quality-check`,
+`inject-scan`, `publicity-scan`, `ast-check`, `diff-scan`, `flow-risk`.
+Each rejects unknown values with exit 1 and follows the rank-based filter pattern.
+
+#### Sources
+- `internal/diffscan/diffscan.go`: `AddedLines`, `RemovedGuards`
+- `internal/secretscan/secretscan.go`: `Severity` constants (CRITICAL/HIGH/MEDIUM/LOW)
+- `internal/flowrisk/flowrisk.go`: `FlowRisk.Severity` ("high"/"medium")
+
+## [v0.57.0] - 2026-06-16
+
+### Theme — "inject-scan / publicity-scan / ast-check --min-severity: universal severity filtering"
+
+#### CLI: `inject-scan --min-severity`
+- Added `--min-severity critical|high|medium|low` flag to `yagura inject-scan`
+- Filters injection findings by minimum severity using rank: critical(0) > high(1) > medium(2) > low(3)
+- `parseInjectSeverity` validates the flag value (case-insensitive) → exit 1 on unknown value
+- Works alongside `--strict` and `--min-score` (filtered count drives `--strict` gate)
+- 2 new tests: filters-low (plants instruction-override; verifies `--min-severity critical` keeps only critical), bad-value → exit 1
+
+#### CLI: `publicity-scan --min-severity`
+- Added `--min-severity high|medium|low` flag to `yagura publicity-scan`
+- Filters publicity findings by minimum severity using rank: HIGH(0) > MEDIUM(1) > LOW(2)
+- `parsePubSeverity` validates the flag value → exit 1 on unknown value
+- Works alongside `--strict` (filtered count drives the gate)
+- 2 new tests: filters-high (plants home-path=HIGH + private-IP=MEDIUM; verifies only HIGH survives `--min-severity high`), bad-value → exit 1
+
+#### CLI: `ast-check --min-severity`
+- Added `--min-severity high|medium|low` flag to `yagura ast-check`
+- Filters `astcheck.Result.Findings` by severity using rank: high(0) > medium(1) > low(2)
+- `filterASTFindings` recalculates `BySeverity` and `ByRule` after filtering
+- Ignored when `--surface` is set (capability surface has no severity)
+- 2 new tests: high-only (plants os-exit-library=high + empty-nil-branch=medium; verifies medium absent in `BySeverity`), bad-value → exit 1
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 34 consecutive releases).
+
+#### Synergy
+`--min-severity` is now available uniformly across ALL eight CLI scan verbs:
+`secretscan`, `gha-audit`, `ai-verify` (as `--min-risk`), `quality-check`,
+`inject-scan`, `publicity-scan`, `ast-check`, and the existing `--severity-min` in `alert-fix`.
+Every per-finding filter follows the same rank-based pattern and rejects unknown values with exit 1.
+
+#### What's not yet
+`diff-scan`, `flow-risk`, `code-health`, `review-gate` are composite tools that synthesize
+multiple scanners — per-finding severity filtering applies at the inner scanner layer;
+composite tools expose their own gate flags (`--strict`, `--min-grade`).
+
+#### Sources
+- `internal/injectscan/injectscan.go`: `Severity` constants (critical/high/medium/low)
+- `internal/publicityscan/publicityscan.go`: `Severity` constants (HIGH/MEDIUM/LOW)
+- `internal/astcheck/astcheck.go`: `Finding.Severity` string (high/medium/low)
+
+## [v0.56.0] - 2026-06-16
+
+### Theme — "quality-check --min-severity: prohibited-only CI gating"
+
+#### CLI: `quality-check --min-severity`
+- Added `--min-severity info|warning|prohibited` flag to `yagura quality-check`
+- CI pipelines can now fail only on `prohibited` violations: `yagura quality-check --min-severity prohibited`
+- Severity rank: prohibited(0) > warning(1) > info(2) — consistent with the tool's own 3-tier model
+- `filterQualityBySeverity` recalculates `BySeverity` after filtering
+- 2 new tests: bad-value → exit 1, prohibited-only filter (plants `as any` + TODO; verifies only prohibited remains)
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 33 consecutive releases).
+
+#### Synergy
+Severity filtering is now available across ALL five quality/security scan CLIs: `secretscan --min-severity`, `alert-fix --severity-min`, `gha-audit --min-severity`, `ai-verify --min-risk`, `quality-check --min-severity`. Each uses the scale natural to its domain.
+
+#### What's not yet
+`inject-scan` and `publicityscan` lacked severity filtering in this release; resolved in v0.57.0.
+
+#### Sources
+- `internal/qualitycheck/qualitycheck.go`: `Severity` enum (prohibited/warning/info), `Result.Findings`
+
+## [v0.55.0] - 2026-06-16
+
+### Theme — "ai-verify --min-risk severity filtering"
+
+#### CLI: `ai-verify --min-risk`
+- Added `--min-risk LOW|MEDIUM|HIGH|CRITICAL` flag to `yagura ai-verify`
+- CI pipelines can now gate only on CRITICAL AI risks: `yagura ai-verify --min-risk CRITICAL`
+- `filterAIVerifyByRisk` recalculates `BySeverity` and `HasCritical` after filtering
+- 2 new tests: bad-value → exit 1, filter-reduces-findings (planted live credential + lower-severity patterns)
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 32 consecutive releases).
+
+#### Synergy
+All four security scan CLIs now support severity filtering: `secretscan --min-severity`, `alert-fix --severity-min`, `gha-audit --min-severity`, `ai-verify --min-risk`. Consistent rank ordering (CRITICAL=0 < HIGH=1 < MEDIUM=2 < LOW=3) across all four.
+
+#### What's not yet
+`ast-check` findings use `high`/`medium` string severity and could benefit from a `--min-severity` flag in a future release.
+
+#### Sources
+- `internal/aiverify/aiverify.go`: `RiskLevel` enum (CRITICAL/HIGH/MEDIUM/LOW), `Result.Findings`
+
+## [v0.54.0] - 2026-06-16
+
+### Theme — "CI severity filtering: gha-audit --min-severity"
+
+#### CLI: `gha-audit --min-severity`
+- Added `--min-severity LOW|MEDIUM|HIGH|CRITICAL` flag to `yagura gha-audit`
+- CI pipelines can now fail only on HIGH+ findings: `yagura gha-audit --min-severity HIGH --summary`
+- `filterGhaFindings` helper uses rank ordering (CRITICAL=0, HIGH=1, MEDIUM=2, LOW=3) matching secretscan convention
+- 2 new tests: `TestCLI_GhaAudit_MinSeverity_FiltersLow` (filtering works) + `TestCLI_GhaAudit_MinSeverity_BadValue` (bad value → exit 1)
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 31 consecutive releases).
+
+#### Synergy
+All three scan CLIs now support severity filtering: `secretscan --min-severity`, `alert-fix --severity-min`, and now `gha-audit --min-severity`. Consistent flag name and rank ordering across all three.
+
+#### What's not yet
+`ai-verify` and `ast-check` do not have severity filtering yet — their findings use different severity enums (`RiskLevel`, `high`/`medium`) that would need a similar rank-based filter.
+
+#### Sources
+- `internal/ghaaudit/ghaaudit.go`: `Severity` enum (CRITICAL/HIGH/MEDIUM/LOW)
+
+## [v0.53.0] - 2026-06-16
+
+### Theme — "Alert lifecycle CLI: snapshot + godoc 100%"
+
+#### New CLI verb: `alert-snapshot`
+- `yagura alert-snapshot [--status active|resolved|snoozed] [--json]` — read-only view of all tracked alert lifecycle states
+- Reads from `{state_dir}/alert_state.jsonl` via `alertfix.Store.Snapshot()`
+- Human output: sorted tabwriter table (STATUS, ALERT_ID, UPDATED, NOTE) + lifecycle stats
+- JSON output: `{states: [...], lifecycle_stats: {...}}`
+- `--status` filter: active|resolved|snoozed; unrecognized values → exit 1 with clear message
+- 5 new tests: empty-store, shows-resolved, JSON output, status-filter, bad-status
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 30 consecutive releases).
+
+#### Synergy
+Completes the alert lifecycle CLI triad: `alert-fix` (sweep → findings), `alert-resolve` (transition state), `alert-snapshot` (read current states). All three share the same `alertfix.Store` JSONL file — CLI and daemon are fully interoperable.
+
+#### What's not yet
+`alert-snapshot` does not re-evaluate whether snoozed alerts have expired (snooze expiry is evaluated lazily in `Store.Get`/`FilterAlerts`). A future `--eval-expiry` flag could force a snooze-expiry pass.
+
+#### Sources
+- `internal/alertfix/state.go`: `Store.Snapshot()`, `Store.Stats()`
+
+## [v0.52.0] - 2026-06-16
+
+### Theme — "Godoc parity: 100% internal exported symbols documented"
+
+#### Documentation
+- All 792 exported symbols in `./internal` now have godoc comments (100%, was 97%)
+- Packages fixed: `telemetry` (8 `StatusCode`/`SpanKind` constants), `ghaaudit` (4 `Severity*`), `mcp/errors.go` (3 `Err*` vars + `Error`/`Unwrap` methods), `pathpolicy` (3 `Action*`), `secretscan` (4 `Severity*`), `agentlauncher` (`OSSpawner.Start`), `scanner` (`Config` type + `New` func), `secrets` (3 `Err*` vars)
+- Pattern: group-block constants converted to per-constant preceding godoc; sentinel vars documented; interface methods documented
+- `yagura api-doc --dir ./internal` now reports `documented_ratio: 1.00`
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 29 consecutive releases).
+
+#### Synergy
+Completes the documentation sweep started in v0.45.0–v0.48.0. The full internal API surface (792 symbols) is now godoc-complete, satisfying `golint`-style contract expectations for every exported symbol.
+
+#### What's not yet
+`cmd/yagura` package main functions are unexported (dispatch, run, etc.) by design; main-package internals are documented where needed via inline comments.
+
+#### Sources
+- golint: https://github.com/golang/lint#godoc
+- Go doc conventions: https://tip.golang.org/doc/comment
+
+## [v0.51.0] - 2026-06-16
+
+### Theme — "CLI alert lifecycle: resolve/snooze/reopen from the shell"
+
+#### New CLI verb: `alert-resolve`
+- `yagura alert-resolve <alert-id> --action <resolve|snooze|reopen>` — manage alert lifecycle from the CLI
+- Flags: `--action`, `--note TEXT`, `--snooze-days N` (default 7), `--json`
+- Persists to `{state_dir}/alert_state.jsonl` via `alertfix.Store` (same JSONL file as the daemon's MCP `yagura_alert_resolve`)
+- Human output: alert_id, action, status, note, snooze_until, updated_at, lifecycle_stats table
+- JSON output shape matches MCP `yagura_alert_resolve` exactly: `{alert_id, action, current_state, lifecycle_stats}`
+- `parseArgs`-based flag parsing so flags and positional arg can appear in either order
+
+#### Tests
+- 7 new `TestCLI_AlertResolve_*` cases: missing-id, missing-action, bad-action, resolve-human, resolve-JSON, snooze (snooze_until set), resolve-then-reopen (status active)
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 28 consecutive releases).
+
+#### Synergy
+Closes the alert lifecycle loop in the CLI: `yagura alert-fix` generates findings, `yagura alert-resolve` transitions them. The same `alertfix.Store` JSONL is shared with the daemon, so CLI resolves are visible in the MCP tools and dashboard.
+
+#### What's not yet
+`yagura alert-fix` still reads the Store filter but does not expose a `--snapshot` command to list current lifecycle states. A future `yagura alert-list` could enumerate all stored states.
+
+#### Sources
+- `internal/alertfix/state.go`: `NewStore`, `Resolve`, `Snooze`, `Reopen`
+- MCP reference: `internal/mcp/tools_alerts.go:buildAlertResolveTool`
+
 ## [v0.50.0] - 2026-06-16
 
 ### Theme — "Idiomatic Go v2: zero production error-discarded violations"
