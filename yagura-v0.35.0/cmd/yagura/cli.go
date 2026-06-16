@@ -2928,7 +2928,7 @@ func scanProjectAICodeCLI(localPath string) aiverify.Result {
 
 	files := map[string]string{}
 	walked := 0
-	_ = filepath.Walk(localPath, func(path string, info os.FileInfo, err error) error {
+	filepath.Walk(localPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil || info.IsDir() {
 			return nil
 		}
@@ -3911,7 +3911,7 @@ func auditMutation(stderr io.Writer, kind, target string, fields map[string]any)
 		fmt.Fprintf(stderr, "yagura: warning: audit unavailable: %v\n", err)
 		return
 	}
-	defer func() { _ = log.Close() }()
+	defer func() { log.Close() }()
 	if err := log.Append(audit.Record{Kind: kind, Actor: "cli", Target: target, Fields: fields}); err != nil {
 		fmt.Fprintf(stderr, "yagura: warning: audit append failed: %v\n", err)
 	}

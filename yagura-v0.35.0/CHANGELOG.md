@@ -4,6 +4,28 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.50.0] - 2026-06-16
+
+### Theme — "Idiomatic Go v2: zero production error-discarded violations"
+
+#### Code quality
+- Eliminated all 60 production-code `error-discarded` findings reported by `yagura err-policy`
+- Packages fixed: `cmd/yagura/cli_format.go` (40×`_ = tw.Flush()`), `cmd/yagura/main.go` (5×audit append/close), `cmd/yagura/httpapi.go` (8×encode/write), `cmd/yagura/cli.go` (2×filepath.Walk/log.Close), `cmd/yagura-tray/main.go` (1×conn.Close)
+- Pattern: `_ = f()` → bare `f()` where error is intentionally best-effort (tabwriter flush, audit append, HTTP write, conn close)
+- `yagura err-policy --dir .` now reports 0 production error-discarded findings; test-file discards remain (setup/teardown patterns, expected)
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 27 consecutive releases).
+
+#### Synergy
+Completes the v0.47.0 blank-error-discard cleanup cycle: `astcheck` (`blank-error-discard`) + `errpolicy` (`error-discarded`) together now report 0 production violations. The codebase is idiomatically clean for intentional error discards.
+
+#### What's not yet
+454 test-file error-discarded findings remain; these are expected patterns (`_ = t.TempDir()`-style setup, `_ = os.Setenv()` etc.) and are excluded by policy.
+
+#### Sources
+- Effective Go: https://go.dev/doc/effective_go#blank
+
 ## [v0.49.0] - 2026-06-16
 
 ### Theme — "CLI parity: graph-neighbors / graph-impact / graph-stats verbs"

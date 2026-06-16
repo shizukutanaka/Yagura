@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	version = "0.49.0" // updated together with main yagura version
+	version = "0.50.0" // updated together with main yagura version
 )
 
 func main() {
@@ -231,7 +231,7 @@ func waitForReady(addr string, timeout time.Duration) bool {
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
 		if err == nil {
-			_ = conn.Close()
+			conn.Close()
 			return true
 		}
 		time.Sleep(150 * time.Millisecond)

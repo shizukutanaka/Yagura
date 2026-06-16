@@ -118,7 +118,7 @@ func humanList(w io.Writer, projects []*project.Project, now time.Time) {
 			p.Slug, p.Stage, p.Priority, dash(p.Language), dash(string(p.CIStatus)),
 			p.OpenPRs, p.OpenIssues, idleStr, p.Repository)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	fmt.Fprintf(w, "count: %d\n", len(projects))
 }
 
@@ -160,7 +160,7 @@ func humanProject(w io.Writer, p *project.Project) {
 	}
 	kv("created_at", p.CreatedAt.Format(time.RFC3339))
 	kv("updated_at", p.UpdatedAt.Format(time.RFC3339))
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 // ─── stats ───────────────────────────────────────────────────
@@ -241,7 +241,7 @@ func printCountMap(w io.Writer, title string, m map[string]int) {
 	for _, k := range keys {
 		fmt.Fprintf(tw, "  %s\t%d\n", k, m[k])
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 // ─── secretscan ──────────────────────────────────────────────
@@ -272,7 +272,7 @@ func humanSbom(w io.Writer, b *sbom.Bom) {
 	for _, c := range b.Components {
 		fmt.Fprintf(tw, "  %s\t%s\n", c.Name, c.Version)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 func humanSbomSummary(w io.Writer, s sbom.Summary) {
@@ -314,7 +314,7 @@ func humanPinDrift(w io.Writer, results []pindrift.Result) {
 		fmt.Fprintf(tw, "  %s\t%s/%s@%s\t%s\n",
 			r.Status, r.Pin.Owner, r.Pin.Repo, shortSHA(r.Pin.PinnedSHA), r.Detail)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 // ─── skill-audit ─────────────────────────────────────────────
@@ -333,7 +333,7 @@ func humanSkillAudit(w io.Writer, entries []skillAuditEntry, scanned, retireCoun
 		}
 		fmt.Fprintf(tw, "%d\t%s\t%s\n", e.Score, retire, e.Path)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	// retire 候補は理由も出す(人間が判断できるように)
 	for _, e := range entries {
 		if e.RetireRecommended {
@@ -354,7 +354,7 @@ func humanWorkflowAudit(w io.Writer, entries []workflowAuditEntry, scanned, flag
 	for _, e := range entries {
 		fmt.Fprintf(tw, "%d\t%d\t%s\t%s\n", e.Score, e.AgentCalls, workflowShape(e.WorkflowAuditResult), e.Path)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	// issue は path ごとに列挙(人間が判断・修正できるように)。
 	for _, e := range entries {
 		for _, iss := range e.Issues {
@@ -393,7 +393,7 @@ func humanSettingsAudit(w io.Writer, entries []settingsAuditEntry, scanned, flag
 	for _, e := range entries {
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\n", e.Score, yesNo(e.HasDenyList), yesNo(e.HasHooks), e.Path)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	// issue は path ごとに列挙(人間が判断・修正できるように)。
 	for _, e := range entries {
 		for _, iss := range e.Issues {
@@ -417,7 +417,7 @@ func humanAgentConfigAudit(w io.Writer, e agentConfigAuditEntry, flagged int) {
 	fmt.Fprintln(tw, "SCORE\tPROVIDERS\tMODELS\tPRIMARY_OK\tPATH")
 	fmt.Fprintf(tw, "%d\t%d\t%d\t%s\t%s\n",
 		e.Score, e.ProviderCount, e.ModelCount, yesNo(e.PrimaryResolves), e.Path)
-	_ = tw.Flush()
+	tw.Flush()
 	for _, iss := range e.Issues {
 		fmt.Fprintf(w, "  %s: %s\n", e.Path, iss)
 	}
@@ -431,7 +431,7 @@ func humanPluginAudit(w io.Writer, e pluginAuditEntry, flagged int) {
 	fmt.Fprintln(tw, "SCORE\tKIND\tNAME\tCOMPONENTS\tPATH")
 	fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\n",
 		e.Score, e.Kind, dash(e.Name), dash(strings.Join(e.Components, ",")), e.Path)
-	_ = tw.Flush()
+	tw.Flush()
 	for _, iss := range e.Issues {
 		fmt.Fprintf(w, "  %s: %s\n", e.Path, iss)
 	}
@@ -443,7 +443,7 @@ func humanMCPAudit(w io.Writer, e mcpAuditEntry, flagged int) {
 	fmt.Fprintln(tw, "SCORE\tKIND\tSERVERS\tTOOLS\tPATH")
 	fmt.Fprintf(tw, "%d\t%s\t%d\t%d\t%s\n",
 		e.Score, e.Kind, e.ServerCount, e.ToolCount, e.Path)
-	_ = tw.Flush()
+	tw.Flush()
 	for _, iss := range e.Issues {
 		fmt.Fprintf(w, "  %s: %s\n", e.Path, iss)
 	}
@@ -477,7 +477,7 @@ func humanVexAudit(w io.Writer, entries []vexAuditEntry, scanned, flagged int) {
 	for _, e := range entries {
 		fmt.Fprintf(tw, "%s\t%d\t%s\n", yesNoMark(e.OK), e.Statements, e.Path)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	for _, e := range entries {
 		if e.Error != "" {
 			fmt.Fprintf(w, "  %s: parse error: %s\n", e.Path, e.Error)
@@ -515,7 +515,7 @@ func humanSelfImproveHistory(w io.Writer, recs []audit.Record) {
 		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%v\n",
 			r.Time.UTC().Format(time.RFC3339), high, med, low, props, fieldBool(r, "self_collected"))
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	if len(recs) >= 2 {
 		switch {
 		case lastHigh < firstHigh:
@@ -567,7 +567,7 @@ func humanPathPolicy(w io.Writer, r pathpolicy.Result) {
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", d.Action, d.Path, dash(d.Rule))
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	for _, d := range r.Decisions {
 		if d.Action != pathpolicy.ActionAllow && d.Reason != "" {
 			fmt.Fprintf(w, "  %s: %s\n", d.Path, d.Reason)
@@ -599,7 +599,7 @@ func humanCCSecurity(w io.Writer, r ccsecurity.Report) {
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", strings.ToUpper(string(p.Status)), sev, p.ID, p.Title)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	// fail / warn は detail と remediation を併記(人間が直せるように)。
 	for _, p := range r.Practices {
 		if p.Status == ccsecurity.StatusFail || p.Status == ccsecurity.StatusWarn {
@@ -680,7 +680,7 @@ func humanAIVerify(w io.Writer, res aiverify.Result, summaryOnly bool) {
 		fmt.Fprintf(tw, "%s%s\t%s\t%d\t%s\t%s\n",
 			f.Risk, ai, f.File, f.Line, f.RuleID, f.Message)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 // ─── quality-check (v0.36.0) ─────────────────────────────────
@@ -702,7 +702,7 @@ func humanQualityCheck(w io.Writer, res qualitycheck.Result, summaryOnly bool) {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n",
 			f.Severity, f.File, f.Line, f.RuleID, f.Description)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 // ─── test-audit (v0.36.0) ────────────────────────────────────
@@ -737,7 +737,7 @@ func humanTestAudit(w io.Writer, res testcoverage.AuditResult, untestedOnly bool
 			s := res.ByLanguage[l]
 			fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%.2f\n", l, s.Sources, s.Tests, s.WithTest, s.CoverageRatio)
 		}
-		_ = tw.Flush()
+		tw.Flush()
 	}
 	if len(res.UntestedFiles) > 0 {
 		fmt.Fprintf(w, "untested: %s\n", strings.Join(res.UntestedFiles, ", "))
@@ -757,7 +757,7 @@ func humanASTCheck(w io.Writer, res astcheck.Result) {
 	for _, f := range res.Findings {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.Severity, f.File, f.Line, f.Rule, f.Message)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 func humanCoverage(w io.Writer, r coverage.Report) {
@@ -785,7 +785,7 @@ func humanAssertCheck(w io.Writer, r assertcheck.Report) {
 		}
 		fmt.Fprintf(tw, "%s\t%d\t%d\t%.2f\t%s\n", f.Path, f.TestFuncs, f.Assertions, f.Density, status)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 func humanCoupling(w io.Writer, r coupling.Report) {
@@ -813,7 +813,7 @@ func humanCoupling(w io.Writer, r coupling.Report) {
 	for _, p := range shown {
 		fmt.Fprintf(tw, "%d\t%d\t%.2f\t%s\n", p.FanIn, p.FanOut, p.Instability, p.Name)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	if len(pkgs) > 15 {
 		fmt.Fprintf(w, "... %d more packages (use --json for the full graph)\n", len(pkgs)-15)
 	}
@@ -849,7 +849,7 @@ func humanAPIDoc(w io.Writer, r apidoc.Report) {
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", f.Kind, f.File, f.Line, f.Name)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	if len(r.Findings) > cap {
 		fmt.Fprintf(w, "... %d more undocumented (use --json for the full list)\n", len(r.Findings)-cap)
 	}
@@ -876,7 +876,7 @@ func humanDeadCode(w io.Writer, r deadcode.Report) {
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", f.Kind, f.Package, f.File, f.Line, f.Name)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	if len(r.Findings) > cap {
 		fmt.Fprintf(w, "... %d more (use --json for the full list)\n", len(r.Findings)-cap)
 	}
@@ -893,7 +893,7 @@ func humanRecvCheck(w io.Writer, r recvcheck.Report) {
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\n", f.Severity, f.Rule, f.Type, f.File, f.Line)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 func humanGraphImpact(w io.Writer, r projectgraph.ImpactResult) {
@@ -961,7 +961,7 @@ func humanToday(w io.Writer, now time.Time, items []today.Item) {
 		}
 		fmt.Fprintf(tw, "%.0f\t%s\t%s\n", it.Score, it.Slug, why)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 func humanCodeHealth(w io.Writer, r codehealth.Report) {
@@ -983,7 +983,7 @@ func humanCodeHealth(w io.Writer, r codehealth.Report) {
 		}
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", p.Grade, p.Score, p.Package, top)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 	if len(r.Packages) > cap {
 		fmt.Fprintf(w, "... %d more packages (use --json for the full report)\n", len(r.Packages)-cap)
 	}
@@ -1005,7 +1005,7 @@ func humanComplexity(w io.Writer, r complexity.Report) {
 		}
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Complexity, f.File, f.Line, f.Func)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 func humanErrPolicy(w io.Writer, r errpolicy.Report) {
@@ -1022,7 +1022,7 @@ func humanErrPolicy(w io.Writer, r errpolicy.Report) {
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.Severity, f.File, f.Line, f.Rule, f.Message)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 func humanFlowRisk(w io.Writer, steps int, risks []flowrisk.FlowRisk) {
@@ -1036,7 +1036,7 @@ func humanFlowRisk(w io.Writer, steps int, risks []flowrisk.FlowRisk) {
 	for _, r := range risks {
 		fmt.Fprintf(tw, "%s\t%s\t#%d %s\t#%d %s\t%s\n", r.Severity, r.Kind, r.From, r.FromName, r.To, r.ToName, r.Message)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 func humanDiffScan(w io.Writer, addedLines int, hits []diffSecretHit, guards []diffscan.GuardRemoval) {
@@ -1047,7 +1047,7 @@ func humanDiffScan(w io.Writer, addedLines int, hits []diffSecretHit, guards []d
 		for _, h := range hits {
 			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", h.Severity, h.Path, h.Line, h.RuleID)
 		}
-		_ = tw.Flush()
+		tw.Flush()
 	} else {
 		fmt.Fprintln(w, "no secrets introduced by this change")
 	}
@@ -1058,7 +1058,7 @@ func humanDiffScan(w io.Writer, addedLines int, hits []diffSecretHit, guards []d
 		for _, g := range guards {
 			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", g.Kind, g.Path, g.Line, g.Text)
 		}
-		_ = tw.Flush()
+		tw.Flush()
 	}
 }
 
@@ -1121,7 +1121,7 @@ func humanPlanStatus(w io.Writer, slug, path string, s plantracker.PlanState) {
 			}
 			fmt.Fprintf(tw, "%s\t%d\t%d\t%d%%\t%s\n", p.Name, p.Level, p.TotalTasks, p.ProgressPct, done)
 		}
-		_ = tw.Flush()
+		tw.Flush()
 	}
 }
 
@@ -1141,7 +1141,7 @@ func humanReleaseRadar(w io.Writer, ranked []plantracker.RankedProject, total, s
 			dash(r.CIStatus), r.OpenIssuesCritical,
 			dash(r.CurrentPhase), dash(r.Reason))
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 func humanAlertFix(w io.Writer, r alertfix.Report) {
@@ -1155,7 +1155,7 @@ func humanAlertFix(w io.Writer, r alertfix.Report) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			a.Severity, a.Project, a.Source, a.Title, dash(a.SuggestedTool))
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 // ─── ops-risk (v0.39.0) ───────────────────────────────────────────────────
@@ -1172,7 +1172,7 @@ func humanOpsRisk(w io.Writer, r opsrisk.Result) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			d.Tier, d.Capability, strings.Join(d.Controls, "+"), d.Name, d.Rationale)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 // ─── risk-triage (v0.39.0) ────────────────────────────────────────────────
@@ -1195,7 +1195,7 @@ func humanRiskTriage(w io.Writer, results []riskreason.Result) {
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n",
 			r.Priority, r.Score, dash(r.CVE), string(r.SSVC.Priority), r.Recommendation)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 
 	// surface unknowns (context gaps) for any findings that have them
 	for _, r := range results {
@@ -1238,7 +1238,7 @@ func humanFeatureList(w io.Writer, fl featurelist.FeatureList) {
 	for _, f := range fl.Features {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Status, dash(f.Phase), f.ID, f.Title)
 	}
-	_ = tw.Flush()
+	tw.Flush()
 }
 
 // ─── harness-coverage (v0.40.0) ───────────────────────────────────────────
@@ -1312,7 +1312,7 @@ func humanHarnessRecommend(w io.Writer, rec harness.Recommendation) {
 		for _, s := range rec.Skills {
 			fmt.Fprintf(tw, "  %s\t%s\n", s.Path, s.Description)
 		}
-		_ = tw.Flush()
+		tw.Flush()
 	}
 	if rec.ClaudeMd != "" {
 		fmt.Fprintf(w, "\n--- CLAUDE.md template ---\n%s\n", rec.ClaudeMd)
@@ -1336,7 +1336,7 @@ func humanParallelPlan(w io.Writer, plan agentparallel.Plan) {
 		for _, a := range plan.Assignments {
 			fmt.Fprintf(tw, "  %s\t%d\t%d\t%.1f\n", a.Agent, len(a.Tasks), a.Waves, a.LoadWeight)
 		}
-		_ = tw.Flush()
+		tw.Flush()
 	}
 	if len(plan.Unassigned) > 0 {
 		fmt.Fprintf(w, "\nunassigned (%d): %s\n", len(plan.Unassigned), strings.Join(plan.Unassigned, ", "))
@@ -1373,7 +1373,7 @@ func humanSessionSummary(w io.Writer, sum sessionsummary.Summary) {
 		for _, k := range keys {
 			fmt.Fprintf(tw, "  %s\t%d\n", k, sum.ByTool[k])
 		}
-		_ = tw.Flush()
+		tw.Flush()
 	}
 	if len(sum.Anomalies) > 0 {
 		fmt.Fprintf(w, "\nanomalies:\n")

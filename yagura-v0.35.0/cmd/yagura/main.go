@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.49.0"
+	version     = "0.50.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -281,8 +281,8 @@ func runSecret(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("get: %w", err)
 		}
-		_, _ = stdout.Write(plaintext)
-		_, _ = stdout.Write([]byte("\n"))
+		stdout.Write(plaintext)
+		stdout.Write([]byte("\n"))
 		return nil
 	}
 	return fmt.Errorf("unknown subcommand %q (use set/get/list/delete)", sub)
@@ -508,7 +508,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("audit: %w", err)
 	}
-	defer func() { _ = auditLog.Close() }()
+	defer func() { auditLog.Close() }()
 	if err := auditLog.Append(audit.Record{
 		Kind:  "yagura_started",
 		Actor: "yagura",
@@ -533,7 +533,7 @@ func run() error {
 			}
 			if n > 0 {
 				logger.Info("audit prune done", "deleted", n, "keep_days", cfg.AuditKeepDays)
-				_ = auditLog.Append(audit.Record{
+				auditLog.Append(audit.Record{
 					Kind:  "audit_pruned",
 					Actor: "yagura",
 					Fields: map[string]any{
@@ -702,16 +702,16 @@ func run() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		if !ready.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("draining"))
+			w.Write([]byte("draining"))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
+		w.Write([]byte("ready"))
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		// 既存 metrics (scan counters 等) を最初に出力
@@ -719,7 +719,7 @@ func run() error {
 		// v0.31.0: ToolStats + AlertFix + HookReceiver の label 付き metric を追加
 		// 同一 endpoint で全 yagura metrics が揃う(Prometheus 慣行)
 		extras := collectYaguraMetrics(mcpServer, hookReceiver, health)
-		_ = promexport.Render(w, extras)
+		promexport.Render(w, extras)
 	})
 	mux.Handle("/mcp", mcpServer)
 	mux.Handle("/dashboard", dash)
@@ -763,7 +763,7 @@ func run() error {
 			"description": "Portfolio orchestrator for the sovereign computing stack. Zero-dep Go MCP server with cortex flywheel ②③④ + Claude Code hooks receiver.",
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(meta)
+		json.NewEncoder(w).Encode(meta)
 	})
 
 	// v0.11.0: CI 統合用 HTTP endpoints(/sbom, /gha-audit, /pin-drift)
@@ -877,7 +877,7 @@ func run() error {
 	}
 
 	logger.Info("yagura stopped cleanly")
-	_ = auditLog.Append(audit.Record{
+	auditLog.Append(audit.Record{
 		Kind:  "yagura_stopped",
 		Actor: "yagura",
 	})
