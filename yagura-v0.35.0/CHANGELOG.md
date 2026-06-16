@@ -4,6 +4,23 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.44.0] - 2026-06-16
+
+### Theme — "CLI parity: parallel-plan verb (LPT agent fan-out)"
+
+- **CLI `parallel-plan [--file f] [--json]`** — MCP `yagura_parallel_plan` と同一の
+  `agentparallel.PlanDataParallel(tasks, agents, globalConcurrency)` を呼ぶ。
+  JSON 入力(ファイルまたは stdin)で tasks と agents を渡し、LPT(Longest Processing
+  Time first)による capacity + tier-aware な fan-out 計画を返す。
+  `task_count: N` で N 個の uniform task を省略記法生成可能。
+  daemon の live quotamonitor が不要 — `capacity_percent` を明示するか省略時は 100% と
+  みなす(CLI は daemon 状態にアクセスしない)。token 不要。
+  `mcp.parseTier` を `cliParseTier` として複製(循環 import 回避)。
+  4 件テスト追加(Human/JSON/NoAgents/InvalidTier)。
+
+- `usageText` に `parallel-plan` 行追記。
+- 新規 Go dep なし(ADR-0001 ゼロ依存維持)。
+
 ## [v0.43.0] - 2026-06-16
 
 ### Theme — "astcheck + sessionsummary quality improvements"

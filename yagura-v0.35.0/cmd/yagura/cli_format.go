@@ -49,6 +49,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
 	"github.com/shizukutanaka/yagura/internal/sbom"
+	"github.com/shizukutanaka/yagura/internal/agentparallel"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
 	"github.com/shizukutanaka/yagura/internal/sessionsummary"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
@@ -1318,6 +1319,33 @@ func humanHarnessRecommend(w io.Writer, rec harness.Recommendation) {
 	}
 	if rec.SettingsJSON != "" {
 		fmt.Fprintf(w, "\n--- .claude/settings.json ---\n%s\n", rec.SettingsJSON)
+	}
+}
+
+// ─── parallel-plan (v0.44.0) ──────────────────────────────────────────────
+
+func humanParallelPlan(w io.Writer, plan agentparallel.Plan) {
+	fmt.Fprintf(w, "strategy:     %s\n", plan.Strategy)
+	fmt.Fprintf(w, "fan_out:      %d agent(s)\n", plan.FanOutWidth)
+	fmt.Fprintf(w, "est_waves:    %d\n", plan.EstWaves)
+	fmt.Fprintf(w, "barrier:      %v\n", plan.Barrier)
+	if len(plan.Assignments) > 0 {
+		fmt.Fprintf(w, "\nassignments:\n")
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "  AGENT\tTASKS\tWAVES\tLOAD")
+		for _, a := range plan.Assignments {
+			fmt.Fprintf(tw, "  %s\t%d\t%d\t%.1f\n", a.Agent, len(a.Tasks), a.Waves, a.LoadWeight)
+		}
+		_ = tw.Flush()
+	}
+	if len(plan.Unassigned) > 0 {
+		fmt.Fprintf(w, "\nunassigned (%d): %s\n", len(plan.Unassigned), strings.Join(plan.Unassigned, ", "))
+	}
+	if len(plan.Notes) > 0 {
+		fmt.Fprintf(w, "\nnotes:\n")
+		for _, n := range plan.Notes {
+			fmt.Fprintf(w, "  * %s\n", n)
+		}
 	}
 }
 

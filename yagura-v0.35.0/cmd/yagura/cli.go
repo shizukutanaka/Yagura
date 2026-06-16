@@ -76,6 +76,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/recovery"
 	"github.com/shizukutanaka/yagura/internal/riskreason"
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
+	"github.com/shizukutanaka/yagura/internal/agentparallel"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
 	"github.com/shizukutanaka/yagura/internal/sessionsummary"
@@ -109,6 +110,7 @@ var cliHandlers = map[string]cliHandler{
 	"feature-list": cliFeatureList, "harness-coverage": cliHarnessCoverage,
 	"agent-event": cliAgentEvent, "init-sh": cliInitSh, "progress-file": cliProgressFile,
 	"harness-recommend": cliHarnessRecommend, "session-summary": cliSessionSummary,
+	"parallel-plan": cliParallelPlan,
 	// local scans
 	"sbom": cliSbom, "secretscan": cliSecretScan, "gha-audit": cliGhaAudit, "pin-drift": cliPinDrift,
 	// .claude/ + MCP artifact audits
@@ -3698,6 +3700,113 @@ func cliSessionSummary(args []string, stdout, stderr io.Writer) error {
 	}
 	humanSessionSummary(stdout, sum)
 	return nil
+}
+
+// ─── parallel-plan (v0.44.0) ──────────────────────────────────
+
+// cliParallelPlan は `yagura parallel-plan [--file f] [--json]` を処理する。
+// MCP yagura_parallel_plan と同一の agentparallel.PlanDataParallel を呼ぶ。
+// Input JSON: {"tasks":[{id,weight?,min_tier?}...], "agents":[{name,tier?,capacity_percent?,max_concurrency?}...], "task_count"?:N, "global_concurrency"?:N}
+func cliParallelPlan(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("parallel-plan", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	filePath := fs.String("file", "", "path to JSON input file (default: stdin)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	data, err := readInputData(*filePath, os.Stdin)
+	if err != nil {
+		return fmt.Errorf("parallel-plan: %w", err)
+	}
+
+	var in struct {
+		Tasks []struct {
+			ID      string  `json:"id"`
+			Weight  float64 `json:"weight"`
+			MinTier string  `json:"min_tier"`
+		} `json:"tasks"`
+		TaskCount         int `json:"task_count"`
+		GlobalConcurrency int `json:"global_concurrency"`
+		Agents            []struct {
+			Name            string `json:"name"`
+			Tier            string `json:"tier"`
+			CapacityPercent *int   `json:"capacity_percent"`
+			MaxConcurrency  int    `json:"max_concurrency"`
+		} `json:"agents"`
+	}
+	if err := json.Unmarshal(data, &in); err != nil {
+		return fmt.Errorf("parallel-plan: invalid JSON: %w", err)
+	}
+	if len(in.Agents) == 0 {
+		return fmt.Errorf("parallel-plan: at least one agent is required")
+	}
+
+	var tasks []agentparallel.Task
+	if len(in.Tasks) > 0 {
+		for i, t := range in.Tasks {
+			id := strings.TrimSpace(t.ID)
+			if id == "" {
+				id = fmt.Sprintf("task-%d", i+1)
+			}
+			tier, ok := cliParseTier(t.MinTier)
+			if !ok {
+				return fmt.Errorf("task %q: unknown min_tier %q (use any/cheap/mid/strong)", id, t.MinTier)
+			}
+			tasks = append(tasks, agentparallel.Task{ID: id, Weight: t.Weight, MinTier: tier})
+		}
+	} else if in.TaskCount > 0 {
+		for i := 0; i < in.TaskCount; i++ {
+			tasks = append(tasks, agentparallel.Task{ID: fmt.Sprintf("task-%d", i+1), Weight: 1})
+		}
+	} else {
+		return fmt.Errorf("parallel-plan: provide 'tasks' or a positive 'task_count'")
+	}
+
+	agents := make([]agentparallel.Agent, 0, len(in.Agents))
+	for _, a := range in.Agents {
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			return fmt.Errorf("parallel-plan: agent name must not be empty")
+		}
+		tier, ok := cliParseTier(a.Tier)
+		if !ok {
+			return fmt.Errorf("agent %q: unknown tier %q (use any/cheap/mid/strong)", name, a.Tier)
+		}
+		capPct := 100
+		if a.CapacityPercent != nil {
+			capPct = *a.CapacityPercent
+		}
+		agents = append(agents, agentparallel.Agent{
+			Name:           name,
+			Tier:           tier,
+			CapacityPct:    capPct,
+			MaxConcurrency: a.MaxConcurrency,
+		})
+	}
+
+	plan := agentparallel.PlanDataParallel(tasks, agents, in.GlobalConcurrency)
+	if *jsonOut {
+		return emitJSON(stdout, plan)
+	}
+	humanParallelPlan(stdout, plan)
+	return nil
+}
+
+// cliParseTier は tier 文字列を agentparallel.Tier に変換する
+// (mcp.parseTier の複製 — 循環 import 回避)。
+func cliParseTier(s string) (agentparallel.Tier, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "any":
+		return agentparallel.TierAny, true
+	case "cheap", "haiku":
+		return agentparallel.TierCheap, true
+	case "mid", "sonnet", "medium":
+		return agentparallel.TierMid, true
+	case "strong", "opus", "high":
+		return agentparallel.TierStrong, true
+	}
+	return agentparallel.TierAny, false
 }
 
 // auditMutation は registry 変更を audit log に best-effort で追記する。

@@ -3082,3 +3082,72 @@ func TestCLI_SessionSummary_InvalidJSON(t *testing.T) {
 		t.Fatal("expected non-zero exit on invalid JSON")
 	}
 }
+
+// ─── parallel-plan (v0.44.0) ─────────────────────────────────────────────
+
+func TestCLI_ParallelPlan_Human(t *testing.T) {
+	input := `{"task_count":4,"agents":[{"name":"claude-code","tier":"strong"},{"name":"windsurf","tier":"mid"}]}`
+	f := filepath.Join(t.TempDir(), "plan.json")
+	if err := os.WriteFile(f, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCLICapture(t, "parallel-plan", "--file", f)
+	if code != 0 {
+		t.Fatalf("parallel-plan: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "strategy") {
+		t.Errorf("expected 'strategy' in output, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "claude-code") {
+		t.Errorf("expected agent name in output, got %q", stdout)
+	}
+}
+
+func TestCLI_ParallelPlan_JSON(t *testing.T) {
+	input := `{"tasks":[{"id":"lint","weight":1},{"id":"test","weight":3},{"id":"build","weight":2}],"agents":[{"name":"claude-code"},{"name":"windsurf","capacity_percent":50}]}`
+	f := filepath.Join(t.TempDir(), "plan2.json")
+	if err := os.WriteFile(f, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCLICapture(t, "parallel-plan", "--json", "--file", f)
+	if code != 0 {
+		t.Fatalf("parallel-plan --json: code=%d stderr=%q", code, stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("expected valid JSON, got %q: %v", stdout, err)
+	}
+	if _, ok := result["assignments"]; !ok {
+		t.Errorf("expected 'assignments' key in JSON, got keys: %v", result)
+	}
+	if _, ok := result["est_waves"]; !ok {
+		t.Errorf("expected 'est_waves' key in JSON, got keys: %v", result)
+	}
+}
+
+func TestCLI_ParallelPlan_NoAgents(t *testing.T) {
+	input := `{"task_count":3,"agents":[]}`
+	f := filepath.Join(t.TempDir(), "noagents.json")
+	if err := os.WriteFile(f, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "parallel-plan", "--file", f)
+	if code == 0 {
+		t.Fatal("expected non-zero exit when no agents provided")
+	}
+}
+
+func TestCLI_ParallelPlan_InvalidTier(t *testing.T) {
+	input := `{"task_count":1,"agents":[{"name":"bot","tier":"super-duper"}]}`
+	f := filepath.Join(t.TempDir(), "badtier.json")
+	if err := os.WriteFile(f, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, stderr := runCLICapture(t, "parallel-plan", "--file", f)
+	if code == 0 {
+		t.Fatal("expected non-zero exit for unknown tier")
+	}
+	if !strings.Contains(stderr, "tier") {
+		t.Errorf("expected tier error in stderr, got %q", stderr)
+	}
+}
