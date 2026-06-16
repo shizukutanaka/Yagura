@@ -36,6 +36,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/shizukutanaka/yagura/internal/agentevent"
+	"github.com/shizukutanaka/yagura/internal/agentmd"
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/alertfix"
 	"github.com/shizukutanaka/yagura/internal/apidoc"
@@ -51,7 +53,10 @@ import (
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
+	"github.com/shizukutanaka/yagura/internal/featurelist"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
+	"github.com/shizukutanaka/yagura/internal/initps1"
+	"github.com/shizukutanaka/yagura/internal/initsh"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/github"
 	"github.com/shizukutanaka/yagura/internal/harness"
@@ -61,12 +66,14 @@ import (
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
+	"github.com/shizukutanaka/yagura/internal/progressfile"
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/projectgraph"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/registry"
+	"github.com/shizukutanaka/yagura/internal/recovery"
 	"github.com/shizukutanaka/yagura/internal/riskreason"
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
 	"github.com/shizukutanaka/yagura/internal/sbom"
@@ -97,6 +104,9 @@ var cliHandlers = map[string]cliHandler{
 	"graph": cliGraph,
 	"plan-status": cliPlanStatus, "release-radar": cliReleaseRadar,
 	"ops-risk": cliOpsRisk, "risk-triage": cliRiskTriage,
+	"recovery-decide": cliRecoveryDecide, "agents-md": cliAgentsMd,
+	"feature-list": cliFeatureList, "harness-coverage": cliHarnessCoverage,
+	"agent-event": cliAgentEvent, "init-sh": cliInitSh, "progress-file": cliProgressFile,
 	// local scans
 	"sbom": cliSbom, "secretscan": cliSecretScan, "gha-audit": cliGhaAudit, "pin-drift": cliPinDrift,
 	// .claude/ + MCP artifact audits
@@ -3083,6 +3093,536 @@ func toRiskGraphDependents(reg *registry.Registry, slug string) int {
 	g := projectgraph.Build(toGraphProjects(reg.List()))
 	impact := g.Impact(slug)
 	return impact.ImpactCount
+}
+
+// ─── recovery-decide (v0.40.0) ───────────────────────────────
+
+// cliRecoveryDecide は `yagura recovery-decide --class <cls> [options]` を処理する。
+// 失敗 class + 試行回数 + budget から次の recovery action を決定論的に返す。
+func cliRecoveryDecide(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("recovery-decide", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	class := fs.String("class", "", "failure class (timeout/rate_limit/bad_args/tool_error/auth/quota/context_overflow/wrong_result/unknown)")
+	attempt := fs.Int("attempt", 1, "1-based attempt count")
+	maxAttempts := fs.Int("max-attempts", 3, "recovery budget")
+	agent := fs.String("agent", "", "current agent identifier")
+	severity := fs.String("severity", "", "severity (low = degrade instead of escalate when budget exhausted)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *class == "" {
+		return fmt.Errorf("--class is required (e.g. timeout, rate_limit, bad_args, tool_error, auth, quota, context_overflow, wrong_result, unknown)")
+	}
+	d := recovery.Decide(recovery.Event{
+		Class:       recovery.FailureClass(*class),
+		Attempt:     *attempt,
+		MaxAttempts: *maxAttempts,
+		Agent:       *agent,
+		Severity:    *severity,
+	})
+	if *jsonOut {
+		return emitJSON(stdout, d)
+	}
+	humanRecoveryDecide(stdout, d)
+	return nil
+}
+
+// ─── agents-md (v0.40.0) ─────────────────────────────────────
+
+// cliAgentsMd は `yagura agents-md <slug> [--write] [--json]` を処理する。
+// Plan.md + registry facts から AGENTS.md を生成する。
+func cliAgentsMd(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("agents-md", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	write := fs.Bool("write", false, "write AGENTS.md to project local_path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: yagura agents-md <slug> [--write] [--json]")
+	}
+	slug := fs.Arg(0)
+
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return err
+	}
+	p, err := reg.Get(slug)
+	if err != nil {
+		return fmt.Errorf("project %q not found", slug)
+	}
+
+	facts := agentmd.ProjectFacts{
+		Slug:         p.Slug,
+		DisplayName:  p.DisplayName,
+		Repository:   p.Repository,
+		Language:     p.Language,
+		Stage:        string(p.Stage),
+		LocalPath:    p.LocalPath,
+		Tags:         p.Tags,
+		DependsOn:    p.DependsOn,
+		CIStatus:     string(p.CIStatus),
+		OpenIssues:   p.OpenIssues,
+		OpenPRs:      p.OpenPRs,
+		VulnCritical: p.VulnCritical,
+		VulnHigh:     p.VulnHigh,
+		GeneratedBy:  "yagura",
+	}
+	if p.LocalPath != "" {
+		if content, _, err2 := loadPlanMdLocal(p.LocalPath); err2 == nil {
+			state := plantracker.Parse(content)
+			for _, ph := range state.Phases {
+				lower := strings.ToLower(ph.Name)
+				if !strings.Contains(lower, "phase") && !strings.Contains(ph.Name, "フェーズ") {
+					continue
+				}
+				facts.Phases = append(facts.Phases,
+					fmt.Sprintf("%s (%d/%d)", ph.Name, ph.CompletedTasks, ph.TotalTasks))
+			}
+			facts.Description = cliExtractSection(content, []string{"目的", "Purpose"})
+			facts.Scope = cliExtractSection(content, []string{"スコープ", "Scope"})
+			facts.DoD = cliExtractDoDItems(content)
+		}
+	}
+
+	body := agentmd.Generate(facts)
+	result := map[string]any{
+		"slug":     slug,
+		"body":     body,
+		"length":   len(body),
+		"filename": "AGENTS.md",
+	}
+	if *write {
+		if p.LocalPath == "" {
+			return fmt.Errorf("project %q has no local_path; cannot write AGENTS.md", slug)
+		}
+		path := filepath.Join(p.LocalPath, "AGENTS.md")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			return fmt.Errorf("write AGENTS.md: %w", err)
+		}
+		result["written_to"] = path
+		fmt.Fprintf(stderr, "yagura: wrote %s\n", path)
+	}
+	if *jsonOut {
+		return emitJSON(stdout, result)
+	}
+	humanAgentsMd(stdout, body)
+	return nil
+}
+
+// ─── feature-list (v0.40.0) ──────────────────────────────────
+
+// cliFeatureList は `yagura feature-list <slug> [--write] [--json]` を処理する。
+// Plan.md を Anthropic-style feature-list.json に変換する。
+func cliFeatureList(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("feature-list", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	write := fs.Bool("write", false, "write feature-list.json to project local_path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: yagura feature-list <slug> [--write] [--json]")
+	}
+	slug := fs.Arg(0)
+
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return err
+	}
+	p, err := reg.Get(slug)
+	if err != nil {
+		return fmt.Errorf("project %q not found", slug)
+	}
+	if p.LocalPath == "" {
+		return fmt.Errorf("project %q has no local_path; cannot read Plan.md", slug)
+	}
+	content, _, err := loadPlanMdLocal(p.LocalPath)
+	if err != nil {
+		return fmt.Errorf("Plan.md not found for %q: %w", slug, err)
+	}
+
+	state := plantracker.Parse(content)
+	pin := cliPlanStateToFeatureInput(slug, content, state)
+	fl := featurelist.Build(pin, nil)
+
+	if *write {
+		raw, merr := json.MarshalIndent(fl, "", "  ")
+		if merr != nil {
+			return fmt.Errorf("marshal feature-list: %w", merr)
+		}
+		path := filepath.Join(p.LocalPath, "feature-list.json")
+		if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil {
+			return fmt.Errorf("write feature-list.json: %w", err)
+		}
+		fmt.Fprintf(stderr, "yagura: wrote %s\n", path)
+	}
+	if *jsonOut {
+		return emitJSON(stdout, fl)
+	}
+	humanFeatureList(stdout, fl)
+	return nil
+}
+
+// ─── harness-coverage (v0.40.0) ──────────────────────────────
+
+// cliHarnessCoverage は `yagura harness-coverage [--json]` を処理する。
+// Fowler taxonomy(Computational × Inferential × Guide × Sensor)に対して
+// yagura が提供する coverage を返す。
+func cliHarnessCoverage(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("harness-coverage", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	matrix := map[string]map[string][]string{
+		"guide": {
+			"computational": {
+				"yagura feature-list (Plan.md → feature-list.json scaffold)",
+			},
+			"inferential": {
+				"yagura agents-md (AGENTS.md scaffold for Claude Code/Codex/Cursor)",
+				"yagura harness-coverage (self-audit: which quadrants are covered?)",
+				"yagura skill-audit / subagent-audit (skill scaffolding)",
+			},
+		},
+		"sensor": {
+			"computational": {
+				"yagura quality-check (static code analysis)",
+				"yagura secretscan (secret detection)",
+				"yagura gha-audit (workflow audit)",
+				"yagura pin-drift (dep pin drift)",
+				"yagura ai-verify (AI-generated code patterns)",
+				"yagura test-audit (source-test coverage)",
+				"yagura sbom (CycloneDX)",
+				"yagura ast-check (Go AST structural audit)",
+				"yagura code-health (composite maintainability grade)",
+			},
+			"inferential": {
+				"(intentionally none — ADR-0001 zero-dep precludes LLM-as-judge in-process)",
+			},
+		},
+	}
+	counts := map[string]int{}
+	for axis, ci := range matrix {
+		for class, items := range ci {
+			key := axis + "." + class
+			counts[key] = len(items)
+		}
+	}
+	result := map[string]any{
+		"matrix": matrix,
+		"counts": counts,
+	}
+	if *jsonOut {
+		return emitJSON(stdout, result)
+	}
+	humanHarnessCoverage(stdout, matrix, counts)
+	return nil
+}
+
+// ─── agent-event (v0.41.0) ───────────────────────────────────
+
+// cliAgentEvent は `yagura agent-event [--file <path>] [--json]` を処理する。
+// 任意形式の agent lifecycle イベントを OTel GenAI semconv に正規化する。
+func cliAgentEvent(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("agent-event", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	filePath := fs.String("file", "", "path to JSON file (default: stdin)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	data, err := readInputData(*filePath, os.Stdin)
+	if err != nil {
+		return fmt.Errorf("agent-event: %w", err)
+	}
+	e, err := agentevent.NormalizeJSON(data)
+	if err != nil {
+		return fmt.Errorf("agent-event: invalid JSON: %w", err)
+	}
+	result := map[string]any{
+		"normalized":    e,
+		"otel":          e.OTel(),
+		"source_format": e.SourceFormat,
+	}
+	if *jsonOut {
+		return emitJSON(stdout, result)
+	}
+	humanAgentEvent(stdout, e)
+	return nil
+}
+
+// ─── init-sh (v0.41.0) ───────────────────────────────────────
+
+// cliInitSh は `yagura init-sh <slug> [--target posix|powershell] [--write] [--json]`
+// を処理する。long-running agent session 用の init script を生成する。
+func cliInitSh(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("init-sh", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	write := fs.Bool("write", false, "write init.{sh,ps1} to project local_path")
+	target := fs.String("target", "posix", "target: posix (default) or powershell/windows")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: yagura init-sh <slug> [--target posix|powershell] [--write] [--json]")
+	}
+	slug := fs.Arg(0)
+
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return err
+	}
+	p, err := reg.Get(slug)
+	if err != nil {
+		return fmt.Errorf("project %q not found", slug)
+	}
+
+	tools := []string{"git"}
+	var files []string
+	switch strings.ToLower(p.Language) {
+	case "go", "golang":
+		tools = append(tools, "go", "make")
+		files = []string{"go.mod"}
+	case "node", "nodejs", "javascript", "typescript":
+		tools = append(tools, "node", "npm")
+		files = []string{"package.json"}
+	case "python":
+		tools = append(tools, "python3")
+	case "rust":
+		tools = append(tools, "cargo")
+		files = []string{"Cargo.toml"}
+	}
+
+	tgt := strings.ToLower(strings.TrimSpace(*target))
+	var body, filename string
+	var fileMode os.FileMode
+	switch tgt {
+	case "powershell", "ps1", "windows", "win":
+		spec := initps1.BootSpec{
+			Project:       slug,
+			GeneratedBy:   "yagura",
+			WorkDir:       p.LocalPath,
+			Language:      p.Language,
+			RequiredTools: tools,
+			RequiredFiles: files,
+			HandoffFiles:  []string{"claude-progress.txt", "AGENTS.md"},
+		}
+		body = initps1.Generate(spec)
+		filename = "init.ps1"
+		fileMode = 0o644
+	case "", "posix", "sh", "bash", "unix", "linux", "macos", "darwin":
+		spec := initsh.BootSpec{
+			Project:       slug,
+			GeneratedBy:   "yagura",
+			WorkDir:       p.LocalPath,
+			Language:      p.Language,
+			RequiredTools: tools,
+			RequiredFiles: files,
+			HandoffFiles:  []string{"claude-progress.txt", "AGENTS.md"},
+		}
+		body = initsh.Generate(spec)
+		filename = "init.sh"
+		fileMode = 0o755
+	default:
+		return fmt.Errorf("unknown --target %q (use 'posix' or 'powershell')", *target)
+	}
+
+	result := map[string]any{
+		"slug":     slug,
+		"target":   tgt,
+		"body":     body,
+		"length":   len(body),
+		"filename": filename,
+	}
+	if *write {
+		if p.LocalPath == "" {
+			return fmt.Errorf("project %q has no local_path; cannot write %s", slug, filename)
+		}
+		path := filepath.Join(p.LocalPath, filename)
+		if err := os.WriteFile(path, []byte(body), fileMode); err != nil {
+			return fmt.Errorf("write %s: %w", filename, err)
+		}
+		result["written_to"] = path
+		fmt.Fprintf(stderr, "yagura: wrote %s\n", path)
+	}
+	if *jsonOut {
+		return emitJSON(stdout, result)
+	}
+	humanInitSh(stdout, body, filename)
+	return nil
+}
+
+// ─── progress-file (v0.41.0) ─────────────────────────────────
+
+// cliProgressFile は `yagura progress-file <slug> [--note txt] [--write] [--json]`
+// を処理する。Plan.md + registry から claude-progress.txt を生成する。
+// hook/alert 状態は CLI からアクセスできないため degraded mode(Plan.md のみ)で動作。
+func cliProgressFile(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("progress-file", stderr)
+	jsonOut := fs.Bool("json", false, "output JSON")
+	write := fs.Bool("write", false, "write claude-progress.txt to project local_path")
+	note := fs.String("note", "", "optional free-form intent / state note")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: yagura progress-file <slug> [--note txt] [--write] [--json]")
+	}
+	slug := fs.Arg(0)
+
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return err
+	}
+	p, err := reg.Get(slug)
+	if err != nil {
+		return fmt.Errorf("project %q not found", slug)
+	}
+
+	snap := progressfile.Snapshot{
+		Project:     slug,
+		GeneratedBy: "yagura",
+		Note:        *note,
+	}
+	if p.LocalPath != "" {
+		if content, _, err2 := loadPlanMdLocal(p.LocalPath); err2 == nil {
+			state := plantracker.Parse(content)
+			snap.PlanProgressPct = state.ProgressPct
+			snap.CurrentPhase = state.CurrentPhase
+			pin := cliPlanStateToFeatureInput(slug, content, state)
+			fl := featurelist.Build(pin, nil)
+			snap.TotalFeatures = fl.Stats.Total
+			snap.DoneFeatures = fl.Stats.Done
+			for _, f := range fl.Features {
+				if f.Status == "pending" {
+					snap.PendingFeatures = append(snap.PendingFeatures, f.Title)
+				}
+			}
+		}
+	}
+
+	body := progressfile.Generate(snap)
+	result := map[string]any{
+		"slug":     slug,
+		"body":     body,
+		"length":   len(body),
+		"filename": "claude-progress.txt",
+	}
+	if *write {
+		if p.LocalPath == "" {
+			return fmt.Errorf("project %q has no local_path; cannot write claude-progress.txt", slug)
+		}
+		path := filepath.Join(p.LocalPath, "claude-progress.txt")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			return fmt.Errorf("write claude-progress.txt: %w", err)
+		}
+		result["written_to"] = path
+		fmt.Fprintf(stderr, "yagura: wrote %s\n", path)
+	}
+	if *jsonOut {
+		return emitJSON(stdout, result)
+	}
+	humanProgressFile(stdout, body)
+	return nil
+}
+
+// ─── Plan.md helpers for CLI (mirrors internal/mcp/tools_guides.go) ──────────
+// These replicate private helpers from the mcp package to avoid circular imports.
+
+func cliExtractSection(content string, headers []string) string {
+	lines := strings.Split(content, "\n")
+	for _, h := range headers {
+		for i, line := range lines {
+			ts := strings.TrimSpace(line)
+			if !strings.HasPrefix(ts, "##") {
+				continue
+			}
+			rest := strings.TrimSpace(strings.TrimLeft(ts, "#"))
+			if !strings.EqualFold(rest, h) {
+				continue
+			}
+			var body []string
+			for j := i + 1; j < len(lines); j++ {
+				if strings.HasPrefix(strings.TrimSpace(lines[j]), "##") {
+					break
+				}
+				body = append(body, lines[j])
+			}
+			out := strings.TrimSpace(strings.Join(body, "\n"))
+			if out != "" {
+				return out
+			}
+		}
+	}
+	return ""
+}
+
+func cliExtractDoDItems(content string) []string {
+	body := cliExtractSection(content, []string{"完了定義", "Definition of Done", "DoD"})
+	if body == "" {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(body, "\n") {
+		ts := strings.TrimSpace(line)
+		if !strings.HasPrefix(ts, "- ") && !strings.HasPrefix(ts, "* ") {
+			continue
+		}
+		item := strings.TrimSpace(ts[2:])
+		if strings.HasPrefix(item, "[ ]") || strings.HasPrefix(item, "[x]") || strings.HasPrefix(item, "[X]") {
+			item = strings.TrimSpace(item[3:])
+		}
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func cliPlanStateToFeatureInput(project, content string, state plantracker.PlanState) featurelist.PlanInput {
+	pin := featurelist.PlanInput{
+		Project: project,
+		DoD:     cliExtractDoDItems(content),
+	}
+	lines := strings.Split(content, "\n")
+	for i, ph := range state.Phases {
+		lower := strings.ToLower(ph.Name)
+		if !strings.Contains(lower, "phase") && !strings.Contains(ph.Name, "フェーズ") {
+			continue
+		}
+		startLine := ph.LineStart
+		endLine := len(lines)
+		if i+1 < len(state.Phases) {
+			endLine = state.Phases[i+1].LineStart - 1
+		}
+		phIn := featurelist.PhaseInput{Name: ph.Name}
+		for j := startLine; j < endLine && j < len(lines); j++ {
+			ts := strings.TrimSpace(lines[j])
+			if !strings.HasPrefix(ts, "- [") && !strings.HasPrefix(ts, "* [") {
+				continue
+			}
+			var done bool
+			var item string
+			if strings.HasPrefix(ts, "- [x]") || strings.HasPrefix(ts, "* [x]") ||
+				strings.HasPrefix(ts, "- [X]") || strings.HasPrefix(ts, "* [X]") {
+				done = true
+				item = strings.TrimSpace(ts[5:])
+			} else if strings.HasPrefix(ts, "- [ ]") || strings.HasPrefix(ts, "* [ ]") {
+				item = strings.TrimSpace(ts[5:])
+			} else {
+				continue
+			}
+			if item == "" {
+				continue
+			}
+			phIn.Tasks = append(phIn.Tasks, featurelist.TaskInput{Title: item, Done: done})
+		}
+		if len(phIn.Tasks) > 0 {
+			pin.Phases = append(pin.Phases, phIn)
+		}
+	}
+	return pin
 }
 
 // auditMutation は registry 変更を audit log に best-effort で追記する。

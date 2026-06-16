@@ -17,8 +17,10 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/shizukutanaka/yagura/internal/agentevent"
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/alertfix"
+	"github.com/shizukutanaka/yagura/internal/featurelist"
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
@@ -36,6 +38,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
+	"github.com/shizukutanaka/yagura/internal/recovery"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
 	"github.com/shizukutanaka/yagura/internal/riskreason"
@@ -1198,4 +1201,100 @@ func humanRiskTriage(w io.Writer, results []riskreason.Result) {
 			fmt.Fprintf(w, "unknowns[%s]: %s\n", dash(r.CVE), strings.Join(r.Unknowns, ", "))
 		}
 	}
+}
+
+// ─── recovery-decide (v0.40.0) ────────────────────────────────────────────
+
+func humanRecoveryDecide(w io.Writer, d recovery.Decision) {
+	fmt.Fprintf(w, "action: %s\n", d.Action)
+	fmt.Fprintf(w, "terminal: %v\n", d.Terminal)
+	fmt.Fprintf(w, "reason: %s\n", d.Reason)
+	fmt.Fprintf(w, "budget: %d/%d used (%d remaining)\n",
+		d.Budget.AttemptsUsed, d.Budget.MaxAttempts, d.Budget.Remaining)
+	if d.RetryAfterSeconds > 0 {
+		fmt.Fprintf(w, "retry_after: %ds\n", d.RetryAfterSeconds)
+	}
+}
+
+// ─── agents-md (v0.40.0) ──────────────────────────────────────────────────
+
+func humanAgentsMd(w io.Writer, body string) {
+	fmt.Fprintln(w, body)
+}
+
+// ─── feature-list (v0.40.0) ───────────────────────────────────────────────
+
+func humanFeatureList(w io.Writer, fl featurelist.FeatureList) {
+	fmt.Fprintf(w, "project: %s  total: %d  pending: %d  done: %d\n",
+		fl.Project, fl.Stats.Total, fl.Stats.Pending, fl.Stats.Done)
+	if len(fl.Features) == 0 {
+		fmt.Fprintln(w, "(no features — check Plan.md has Phase sections with checkboxes)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "STATUS\tPHASE\tID\tTITLE")
+	for _, f := range fl.Features {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", f.Status, dash(f.Phase), f.ID, f.Title)
+	}
+	_ = tw.Flush()
+}
+
+// ─── harness-coverage (v0.40.0) ───────────────────────────────────────────
+
+func humanHarnessCoverage(w io.Writer, matrix map[string]map[string][]string, counts map[string]int) {
+	// print in deterministic order: guide then sensor, computational then inferential
+	for _, axis := range []string{"guide", "sensor"} {
+		ci, ok := matrix[axis]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(w, "\n[%s]\n", strings.ToUpper(axis))
+		for _, class := range []string{"computational", "inferential"} {
+			items, ok := ci[class]
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(w, "  %s (%d):\n", class, len(items))
+			for _, item := range items {
+				fmt.Fprintf(w, "    - %s\n", item)
+			}
+		}
+	}
+	fmt.Fprintf(w, "\ncounts:\n")
+	for _, k := range []string{"guide.computational", "guide.inferential", "sensor.computational", "sensor.inferential"} {
+		fmt.Fprintf(w, "  %s: %d\n", k, counts[k])
+	}
+}
+
+// ─── agent-event (v0.41.0) ────────────────────────────────────────────────
+
+func humanAgentEvent(w io.Writer, e agentevent.Event) {
+	fmt.Fprintf(w, "source_format: %s\n", e.SourceFormat)
+	fmt.Fprintf(w, "operation:     %s\n", e.Operation)
+	fmt.Fprintf(w, "phase:         %s\n", e.Phase)
+	if e.Agent != "" {
+		fmt.Fprintf(w, "agent:         %s\n", e.Agent)
+	}
+	if e.Tool != "" {
+		fmt.Fprintf(w, "tool:          %s\n", e.Tool)
+	}
+	if e.ErrorType != "" {
+		fmt.Fprintf(w, "error_type:    %s\n", e.ErrorType)
+	}
+	if e.DurationMs > 0 {
+		fmt.Fprintf(w, "duration_ms:   %d\n", e.DurationMs)
+	}
+}
+
+// ─── init-sh (v0.41.0) ────────────────────────────────────────────────────
+
+func humanInitSh(w io.Writer, body, filename string) {
+	fmt.Fprintf(w, "# %s\n", filename)
+	fmt.Fprintln(w, body)
+}
+
+// ─── progress-file (v0.41.0) ──────────────────────────────────────────────
+
+func humanProgressFile(w io.Writer, body string) {
+	fmt.Fprintln(w, body)
 }

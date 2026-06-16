@@ -4,6 +4,62 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.41.0] - 2026-06-16
+
+### Theme — "CLI parity: observability + session handoff verbs"
+
+- **CLI `agent-event [--file f] [--json]`** — MCP `yagura_agent_event` と同一の
+  `agentevent.NormalizeJSON(data)` を呼ぶ。Claude Code / Gemini CLI / Codex / OTel /
+  汎用形式の agent lifecycle イベントを OpenTelemetry GenAI semconv 整合の canonical
+  event へ正規化。`--file` なし時は stdin から読み込み。token 不要。
+
+- **CLI `init-sh <slug> [--target posix|powershell] [--write] [--json]`** — MCP
+  `yagura_init_sh` / `yagura_init_ps1` と同一の `initsh.Generate` / `initps1.Generate`
+  を呼ぶ。registry facts(language/local_path/tags)から long-running agent session 用
+  の init.sh (posix) または init.ps1 (powershell) を生成。`--write` で local_path に
+  書き出し。token 不要。
+
+- **CLI `progress-file <slug> [--note txt] [--write] [--json]`** — MCP
+  `yagura_progress_file` と同一の `progressfile.Generate(snap)` を呼ぶ。
+  Plan.md + registry から claude-progress.txt を生成しクロスセッション引継を支援。
+  daemon が持つ hook/alert 状態は CLI 非アクセスのため degraded mode(Plan.md のみ)
+  で動作、その旨を出力に明示。`--write` で local_path に書き出し。token 不要。
+
+- `usageText` に 3 行追記(`agent-event`, `init-sh`, `progress-file`)。
+- 新規テスト: `TestCLI_AgentEvent_*` + `TestCLI_InitSh_*` + `TestCLI_ProgressFile_*`。
+- 新規 Go dep なし(ADR-0001 ゼロ依存維持)。
+
+## [v0.40.0] - 2026-06-16
+
+### Theme — "CLI parity: agent harness guide verbs"
+
+- **CLI `recovery-decide --class <cls> [options] [--json]`** — MCP `yagura_recovery_decide`
+  と同一の `recovery.Decide(event)` を呼ぶ。failure class(timeout/rate_limit/bad_args/
+  tool_error/auth/quota/context_overflow/wrong_result/unknown)+ 試行回数 + budget から
+  次の recovery action を決定論的に返す。token 不要。
+  `--attempt`, `--max-attempts`, `--agent`, `--severity` フラグで fine-tune 可能。
+
+- **CLI `agents-md <slug> [--write] [--json]`** — MCP `yagura_agents_md` と同一の
+  `agentmd.Generate(facts)` を呼ぶ。registry facts + Plan.md から AGENTS.md を生成。
+  `--write` で local_path/AGENTS.md に書き出し。token 不要。
+
+- **CLI `feature-list <slug> [--write] [--json]`** — MCP `yagura_feature_list` と同一の
+  `featurelist.Build(pin, nil)` を呼ぶ。Plan.md の Phase checkboxes を Anthropic-style
+  feature-list.json に変換(pending/done ステータス、DoD = acceptance_criteria)。
+  `--write` で local_path/feature-list.json に書き出し。token 不要。
+
+- **CLI `harness-coverage [--json]`** — MCP `yagura_harness_coverage` と同一の pure data。
+  Fowler taxonomy(Computational × Inferential × Guide × Sensor)に対して yagura が
+  カバーする quadrant を返す。token 不要。
+
+- Plan.md private helpers を CLI に複製:
+  `cliExtractSection`, `cliExtractDoDItems`, `cliPlanStateToFeatureInput`
+  (循環 import 回避のため mcp package の同名関数を複製)。
+- `cliHandlers` に 4 verb 追加; `usageText` に 4 行追記。
+- 新規テスト: `TestCLI_RecoveryDecide_*` + `TestCLI_AgentsMd_*` + `TestCLI_FeatureList_*` +
+  `TestCLI_HarnessCoverage_*`。
+- 新規 Go dep なし(ADR-0001 ゼロ依存維持)。
+
 ## [v0.39.0] - 2026-06-16
 
 ### Theme — "CLI parity: ops-risk + risk-triage; astcheck structural rules expansion"

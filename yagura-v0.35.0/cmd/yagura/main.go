@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.39.0"
+	version     = "0.41.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -144,6 +144,13 @@ CLI direct mode (no MCP client required):
   yagura release-radar [--limit N]         Cross-project release readiness ranking (Plan/CI/issues/AI-risk; --scan-code for AI)
   yagura ops-risk [--file f]               Classify operation autonomy tier (auto/log/review/human) from JSON ops array
   yagura risk-triage [--file f] [--slug s] Compound CVE/vulnerability prioritization (CVSS+asset+reachability+exploitability)
+  yagura recovery-decide --class <cls>     Pick recovery action (retry/replan/escalate) for a failed agent task
+  yagura agents-md <slug> [--write]        Generate AGENTS.md from Plan.md + registry facts (cross-tool: Claude Code/Codex/Cursor)
+  yagura feature-list <slug> [--write]     Convert Plan.md to Anthropic-style feature-list.json (--write saves to local_path)
+  yagura harness-coverage                  Fowler taxonomy self-audit (Computational × Inferential × Guide × Sensor quadrants)
+  yagura agent-event [--file f]            Normalize agent lifecycle event (Claude Code/Gemini/Codex/OTel) to OTel GenAI semconv
+  yagura init-sh <slug> [--target posix|powershell] [--write]  Generate init.sh or init.ps1 for long-running agent sessions
+  yagura progress-file <slug> [--note txt] [--write]  Generate claude-progress.txt for cross-session handoff (Plan.md + registry)
   yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
   yagura skill-audit                       Audit .claude/skills (score + retire)
   yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)

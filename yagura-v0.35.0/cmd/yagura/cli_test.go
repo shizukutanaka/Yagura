@@ -2539,3 +2539,410 @@ func TestCLI_RiskTriage_NoInput(t *testing.T) {
 		t.Errorf("expected 'no findings provided' error, got: %q", errs)
 	}
 }
+
+// ─── recovery-decide (v0.40.0) ────────────────────────────────────────────
+
+func TestCLI_RecoveryDecide_Timeout(t *testing.T) {
+	code, stdout, stderr := runCLICapture(t, "recovery-decide", "--class", "timeout")
+	if code != 0 {
+		t.Fatalf("recovery-decide timeout: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "action:") {
+		t.Errorf("expected 'action:' in output, got %q", stdout)
+	}
+}
+
+func TestCLI_RecoveryDecide_MissingClass(t *testing.T) {
+	code, _, stderr := runCLICapture(t, "recovery-decide")
+	if code == 0 {
+		t.Errorf("expected non-zero exit when --class is missing, got 0")
+	}
+	if !strings.Contains(stderr, "--class is required") {
+		t.Errorf("expected '--class is required' in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_RecoveryDecide_JSON(t *testing.T) {
+	code, stdout, stderr := runCLICapture(t, "recovery-decide", "--class", "bad_args", "--json")
+	if code != 0 {
+		t.Fatalf("recovery-decide --json: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, `"action"`) {
+		t.Errorf("expected 'action' key in JSON, got %q", stdout)
+	}
+}
+
+func TestCLI_RecoveryDecide_Exhausted_Escalate(t *testing.T) {
+	code, stdout, stderr := runCLICapture(t, "recovery-decide",
+		"--class", "tool_error", "--attempt", "3", "--max-attempts", "3")
+	if code != 0 {
+		t.Fatalf("recovery-decide exhausted: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "escalate") && !strings.Contains(stdout, "degrade") {
+		t.Errorf("expected escalate or degrade for exhausted budget, got %q", stdout)
+	}
+}
+
+// ─── agents-md (v0.40.0) ──────────────────────────────────────────────────
+
+func TestCLI_AgentsMd_MissingSlug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, stderr := runCLICapture(t, "agents-md")
+	if code == 0 {
+		t.Errorf("expected non-zero exit when slug is missing")
+	}
+	if !strings.Contains(stderr, "usage") {
+		t.Errorf("expected usage hint in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_AgentsMd_UnknownSlug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, stderr := runCLICapture(t, "agents-md", "no-such-project")
+	if code == 0 {
+		t.Errorf("expected non-zero exit for unknown slug")
+	}
+	_ = stderr
+}
+
+func TestCLI_AgentsMd_HappyPath(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, _ := runCLICapture(t, "register", "myapp", "org/myapp", "--language", "Go")
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "agents-md", "myapp")
+	if code != 0 {
+		t.Fatalf("agents-md: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "myapp") {
+		t.Errorf("expected project slug in AGENTS.md, got %q", stdout)
+	}
+}
+
+func TestCLI_AgentsMd_JSON(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, _ := runCLICapture(t, "register", "myapp2", "org/myapp2")
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "agents-md", "--json", "myapp2")
+	if code != 0 {
+		t.Fatalf("agents-md --json: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, `"body"`) {
+		t.Errorf("expected 'body' key in JSON, got %q", stdout)
+	}
+}
+
+// ─── feature-list (v0.40.0) ───────────────────────────────────────────────
+
+func TestCLI_FeatureList_NoLocalPath(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, _ := runCLICapture(t, "register", "fl-proj", "org/fl-proj")
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, _, stderr := runCLICapture(t, "feature-list", "fl-proj")
+	if code == 0 {
+		t.Errorf("expected non-zero exit when no local_path")
+	}
+	if !strings.Contains(stderr, "no local_path") {
+		t.Errorf("expected 'no local_path' in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_FeatureList_HappyPath(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	localDir := t.TempDir()
+	plan := "# Purpose\np\n## Phase 1\n- [ ] task A\n- [x] task B\n"
+	if err := os.WriteFile(filepath.Join(localDir, "Plan.md"), []byte(plan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "register", "fl-proj2", "org/fl-proj2", "--local-path", localDir)
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "feature-list", "fl-proj2")
+	if code != 0 {
+		t.Fatalf("feature-list: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "fl-proj2") {
+		t.Errorf("expected project name in output, got %q", stdout)
+	}
+}
+
+func TestCLI_FeatureList_JSON(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	localDir := t.TempDir()
+	plan := "# Purpose\np\n## Phase 1\n- [ ] task A\n"
+	if err := os.WriteFile(filepath.Join(localDir, "Plan.md"), []byte(plan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "register", "fl-proj3", "org/fl-proj3", "--local-path", localDir)
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "feature-list", "--json", "fl-proj3")
+	if code != 0 {
+		t.Fatalf("feature-list --json: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, `"features"`) {
+		t.Errorf("expected 'features' key in JSON, got %q", stdout)
+	}
+}
+
+// ─── harness-coverage (v0.40.0) ───────────────────────────────────────────
+
+func TestCLI_HarnessCoverage_Human(t *testing.T) {
+	code, stdout, stderr := runCLICapture(t, "harness-coverage")
+	if code != 0 {
+		t.Fatalf("harness-coverage: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "GUIDE") && !strings.Contains(stdout, "guide") {
+		t.Errorf("expected 'guide' section in output, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "SENSOR") && !strings.Contains(stdout, "sensor") {
+		t.Errorf("expected 'sensor' section in output, got %q", stdout)
+	}
+}
+
+func TestCLI_HarnessCoverage_JSON(t *testing.T) {
+	code, stdout, stderr := runCLICapture(t, "harness-coverage", "--json")
+	if code != 0 {
+		t.Fatalf("harness-coverage --json: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, `"matrix"`) {
+		t.Errorf("expected 'matrix' key in JSON, got %q", stdout)
+	}
+	if !strings.Contains(stdout, `"counts"`) {
+		t.Errorf("expected 'counts' key in JSON, got %q", stdout)
+	}
+}
+
+// ─── agent-event (v0.41.0) ────────────────────────────────────────────────
+
+func TestCLI_AgentEvent_Human(t *testing.T) {
+	// Claude Code hook event JSON
+	input := `{"hook_type":"PreToolUse","tool_name":"Bash","session_id":"s1"}`
+	f := filepath.Join(t.TempDir(), "event.json")
+	if err := os.WriteFile(f, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCLICapture(t, "agent-event", "--file", f)
+	if code != 0 {
+		t.Fatalf("agent-event: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "operation") {
+		t.Errorf("expected 'operation' in human output, got %q", stdout)
+	}
+}
+
+func TestCLI_AgentEvent_JSON(t *testing.T) {
+	input := `{"hook_type":"PostToolUse","tool_name":"Read","session_id":"s2","duration_ms":120}`
+	f := filepath.Join(t.TempDir(), "event2.json")
+	if err := os.WriteFile(f, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCLICapture(t, "agent-event", "--json", "--file", f)
+	if code != 0 {
+		t.Fatalf("agent-event --json: code=%d stderr=%q", code, stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("expected valid JSON, got %q: %v", stdout, err)
+	}
+	if _, ok := result["normalized"]; !ok {
+		t.Errorf("expected 'normalized' key in JSON, got keys: %v", result)
+	}
+	if _, ok := result["otel"]; !ok {
+		t.Errorf("expected 'otel' key in JSON, got keys: %v", result)
+	}
+}
+
+func TestCLI_AgentEvent_InvalidJSON(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(f, []byte("not json at all"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "agent-event", "--file", f)
+	if code == 0 {
+		t.Fatal("expected non-zero exit on invalid JSON")
+	}
+}
+
+// ─── init-sh (v0.41.0) ───────────────────────────────────────────────────
+
+func TestCLI_InitSh_NoSlug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, stderr := runCLICapture(t, "init-sh")
+	if code == 0 {
+		t.Fatal("expected non-zero exit when no slug provided")
+	}
+	if !strings.Contains(stderr, "usage") {
+		t.Errorf("expected usage message in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_InitSh_UnknownSlug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, stderr := runCLICapture(t, "init-sh", "no-such-project")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for unknown slug")
+	}
+	if !strings.Contains(stderr, "not found") {
+		t.Errorf("expected 'not found' in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_InitSh_Posix(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, _ := runCLICapture(t, "register", "sh-proj", "org/sh-proj", "--language", "go")
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "init-sh", "sh-proj")
+	if code != 0 {
+		t.Fatalf("init-sh: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "sh-proj") {
+		t.Errorf("expected slug in output, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "#!/") && !strings.Contains(stdout, "init.sh") {
+		t.Errorf("expected shell script content, got %q", stdout)
+	}
+}
+
+func TestCLI_InitSh_PowerShell_JSON(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, _ := runCLICapture(t, "register", "ps1-proj", "org/ps1-proj", "--language", "node")
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "init-sh", "--json", "--target", "powershell", "ps1-proj")
+	if code != 0 {
+		t.Fatalf("init-sh --target powershell --json: code=%d stderr=%q", code, stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("expected valid JSON, got %q: %v", stdout, err)
+	}
+	if result["filename"] != "init.ps1" {
+		t.Errorf("expected filename=init.ps1, got %v", result["filename"])
+	}
+}
+
+func TestCLI_InitSh_Write(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	localDir := t.TempDir()
+	code, _, _ := runCLICapture(t, "register", "sh-write-proj", "org/sh-write-proj",
+		"--language", "go", "--local-path", localDir)
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, _, stderr := runCLICapture(t, "init-sh", "--write", "sh-write-proj")
+	if code != 0 {
+		t.Fatalf("init-sh --write: code=%d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(localDir, "init.sh")); err != nil {
+		t.Errorf("expected init.sh to be written, got: %v", err)
+	}
+}
+
+// ─── progress-file (v0.41.0) ─────────────────────────────────────────────
+
+func TestCLI_ProgressFile_NoSlug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, stderr := runCLICapture(t, "progress-file")
+	if code == 0 {
+		t.Fatal("expected non-zero exit when no slug provided")
+	}
+	if !strings.Contains(stderr, "usage") {
+		t.Errorf("expected usage message in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_ProgressFile_UnknownSlug(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, stderr := runCLICapture(t, "progress-file", "no-such-project")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for unknown slug")
+	}
+	if !strings.Contains(stderr, "not found") {
+		t.Errorf("expected 'not found' in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_ProgressFile_Human(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	localDir := t.TempDir()
+	plan := "# Purpose\ndemo project\n## Phase 1\n- [x] task done\n- [ ] task pending\n"
+	if err := os.WriteFile(filepath.Join(localDir, "Plan.md"), []byte(plan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, _ := runCLICapture(t, "register", "pf-proj", "org/pf-proj", "--local-path", localDir)
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "progress-file", "pf-proj")
+	if code != 0 {
+		t.Fatalf("progress-file: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "pf-proj") {
+		t.Errorf("expected slug in output, got %q", stdout)
+	}
+}
+
+func TestCLI_ProgressFile_JSON(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, _ := runCLICapture(t, "register", "pf-proj2", "org/pf-proj2")
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "progress-file", "--json", "pf-proj2")
+	if code != 0 {
+		t.Fatalf("progress-file --json: code=%d stderr=%q", code, stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("expected valid JSON, got %q: %v", stdout, err)
+	}
+	if _, ok := result["body"]; !ok {
+		t.Errorf("expected 'body' key in JSON, got keys: %v", result)
+	}
+	if result["filename"] != "claude-progress.txt" {
+		t.Errorf("expected filename=claude-progress.txt, got %v", result["filename"])
+	}
+}
+
+func TestCLI_ProgressFile_Write(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	localDir := t.TempDir()
+	code, _, _ := runCLICapture(t, "register", "pf-write-proj", "org/pf-write-proj",
+		"--local-path", localDir)
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, _, stderr := runCLICapture(t, "progress-file", "--write", "pf-write-proj")
+	if code != 0 {
+		t.Fatalf("progress-file --write: code=%d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(localDir, "claude-progress.txt")); err != nil {
+		t.Errorf("expected claude-progress.txt to be written, got: %v", err)
+	}
+}
+
+func TestCLI_ProgressFile_Note(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	code, _, _ := runCLICapture(t, "register", "pf-note-proj", "org/pf-note-proj")
+	if code != 0 {
+		t.Fatal("register failed")
+	}
+	code, stdout, stderr := runCLICapture(t, "progress-file", "--note", "working on auth feature", "pf-note-proj")
+	if code != 0 {
+		t.Fatalf("progress-file --note: code=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "auth feature") {
+		t.Errorf("expected note in output, got %q", stdout)
+	}
+}
