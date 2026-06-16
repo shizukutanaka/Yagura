@@ -111,6 +111,7 @@ var cliHandlers = map[string]cliHandler{
 	"agent-event": cliAgentEvent, "init-sh": cliInitSh, "progress-file": cliProgressFile,
 	"harness-recommend": cliHarnessRecommend, "session-summary": cliSessionSummary,
 	"parallel-plan": cliParallelPlan,
+	"graph-neighbors": cliGraphNeighbors, "graph-impact": cliGraphImpact, "graph-stats": cliGraphStats,
 	// local scans
 	"sbom": cliSbom, "secretscan": cliSecretScan, "gha-audit": cliGhaAudit, "pin-drift": cliPinDrift,
 	// .claude/ + MCP artifact audits
@@ -3791,6 +3792,94 @@ func cliParallelPlan(args []string, stdout, stderr io.Writer) error {
 	}
 	humanParallelPlan(stdout, plan)
 	return nil
+}
+
+// cliGraphNeighbors は registry の depends_on graph を BFS で探索し近傍を返す。
+func cliGraphNeighbors(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("graph-neighbors", stderr)
+	jsonOut := fs.Bool("json", false, "JSON output")
+	depth := fs.Int("depth", 2, "max hops (1-10)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	slug := fs.Arg(0)
+	if slug == "" {
+		fmt.Fprintln(stderr, "usage: yagura graph-neighbors [--json] [--depth N] <slug>")
+		return fmt.Errorf("graph-neighbors: slug required")
+	}
+	if *depth < 1 {
+		*depth = 1
+	}
+	if *depth > 10 {
+		*depth = 10
+	}
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return fmt.Errorf("graph-neighbors: %w", err)
+	}
+	g := projectgraph.Build(cliToGraphProjects(reg.List()))
+	result := g.Neighbors(slug, *depth)
+	if *jsonOut {
+		return emitJSON(stdout, result)
+	}
+	humanGraphNeighbors(stdout, result)
+	return nil
+}
+
+// cliGraphImpact は slug を変更した場合の影響範囲(transitive reverse deps)を返す。
+func cliGraphImpact(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("graph-impact", stderr)
+	jsonOut := fs.Bool("json", false, "JSON output")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	slug := fs.Arg(0)
+	if slug == "" {
+		fmt.Fprintln(stderr, "usage: yagura graph-impact [--json] <slug>")
+		return fmt.Errorf("graph-impact: slug required")
+	}
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return fmt.Errorf("graph-impact: %w", err)
+	}
+	g := projectgraph.Build(cliToGraphProjects(reg.List()))
+	result := g.Impact(slug)
+	if *jsonOut {
+		return emitJSON(stdout, result)
+	}
+	humanGraphImpact(stdout, result)
+	return nil
+}
+
+// cliGraphStats は registry の depends_on graph の統計を返す。
+func cliGraphStats(args []string, stdout, stderr io.Writer) error {
+	fs := newFlagSet("graph-stats", stderr)
+	jsonOut := fs.Bool("json", false, "JSON output")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	reg, err := openRegistry(stderr)
+	if err != nil {
+		return fmt.Errorf("graph-stats: %w", err)
+	}
+	g := projectgraph.Build(cliToGraphProjects(reg.List()))
+	stats := g.Stats()
+	dangling := g.Dangling()
+	if *jsonOut {
+		return emitJSON(stdout, map[string]any{"stats": stats, "dangling": dangling})
+	}
+	humanGraphStats(stdout, stats, dangling)
+	return nil
+}
+
+// cliToGraphProjects は registry.Project → projectgraph.Project へ変換する
+// (mcp.toGraphProjects の複製 — 循環 import 回避)。
+func cliToGraphProjects(ps []*project.Project) []projectgraph.Project {
+	out := make([]projectgraph.Project, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, projectgraph.Project{Slug: p.Slug, DependsOn: p.DependsOn})
+	}
+	return out
 }
 
 // cliParseTier は tier 文字列を agentparallel.Tier に変換する

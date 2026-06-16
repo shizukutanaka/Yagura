@@ -4,6 +4,29 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.49.0] - 2026-06-16
+
+### Theme — "CLI parity: graph-neighbors / graph-impact / graph-stats verbs"
+
+#### New CLI verbs
+- `yagura graph-neighbors <slug> [--depth N] [--json]`: BFS walk of depends_on graph — returns direct + transitive deps and dependents up to N hops (default 2, max 10)
+- `yagura graph-impact <slug> [--json]`: transitive reverse dep analysis — which projects would be affected if `<slug>` changed; cycle-aware
+- `yagura graph-stats [--json]`: graph summary metrics (nodes/edges/roots/leaves/isolated/max_fan_out/max_fan_in/most_depended_on/dangling)
+
+All three are token-free registry reads (no GitHub PAT required), use the same `projectgraph.Build → Graph.*` logic as their MCP counterparts, and produce matching JSON output.
+
+#### Tests
+6 new tests: `TestCLI_GraphStats_EmptyRegistry`, `TestCLI_GraphStats_JSON`, `TestCLI_GraphNeighbors_MissingSlug`, `TestCLI_GraphNeighbors_UnknownSlug`, `TestCLI_GraphImpact_MissingSlug`, `TestCLI_GraphImpact_WithProject`.
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 26 consecutive releases).
+
+#### Synergy
+Pairs with v0.35.0 (register/list/get/stats), v0.37.0 (today), v0.41.0 (agent-event/init-sh/progress-file), v0.42.0 (harness-recommend/session-summary), v0.44.0 (parallel-plan). The CLI now covers graph queries, completing the "portfolio visibility from shell" use-case without needing an MCP client or daemon.
+
+#### Sources
+- projectgraph package: `internal/projectgraph/graph.go`
+
 ## [v0.48.0] - 2026-06-16
 
 ### Theme — "astcheck bare-goroutine: smarter lifecycle detection + 5 new tests"

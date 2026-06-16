@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.48.0"
+	version     = "0.49.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -154,6 +154,9 @@ CLI direct mode (no MCP client required):
   yagura harness-recommend [--slug s|--language l]  Claude Code .claude/ scaffold by language (CLAUDE.md + settings.json + skills)
   yagura session-summary [--file f]           Aggregate agent event array to structured session summary (tool-calls, errors, anomalies)
   yagura parallel-plan [--file f]             LPT fan-out plan across AI agents (capacity + tier-aware; --json for synthesizer input)
+  yagura graph-neighbors <slug> [--depth N]  BFS: direct+transitive deps/dependents
+  yagura graph-impact <slug>                 Transitive reverse deps (change impact)
+  yagura graph-stats                         Graph summary: nodes/edges/roots/hubs
   yagura sbom|secretscan|gha-audit|pin-drift   Local read-only scans
   yagura skill-audit                       Audit .claude/skills (score + retire)
   yagura workflow-audit                    Audit .claude/workflows (Dynamic Workflow lint)

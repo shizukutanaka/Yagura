@@ -3151,3 +3151,70 @@ func TestCLI_ParallelPlan_InvalidTier(t *testing.T) {
 		t.Errorf("expected tier error in stderr, got %q", stderr)
 	}
 }
+
+// ─── graph-neighbors / graph-impact / graph-stats ───────────────────────────
+
+func TestCLI_GraphStats_EmptyRegistry(t *testing.T) {
+	code, out, _ := runCLICapture(t, "graph-stats")
+	if code != 0 {
+		t.Fatalf("expected exit 0 for empty registry, got %d", code)
+	}
+	if !strings.Contains(out, "nodes") {
+		t.Errorf("expected 'nodes' in output, got %q", out)
+	}
+}
+
+func TestCLI_GraphStats_JSON(t *testing.T) {
+	code, out, _ := runCLICapture(t, "graph-stats", "--json")
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	var res map[string]any
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("expected valid JSON, got %q: %v", out, err)
+	}
+	if _, ok := res["stats"]; !ok {
+		t.Errorf("expected 'stats' key in JSON output")
+	}
+}
+
+func TestCLI_GraphNeighbors_MissingSlug(t *testing.T) {
+	code, _, stderr := runCLICapture(t, "graph-neighbors")
+	if code == 0 {
+		t.Fatal("expected non-zero exit when slug is missing")
+	}
+	if !strings.Contains(stderr, "slug") {
+		t.Errorf("expected 'slug' in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_GraphNeighbors_UnknownSlug(t *testing.T) {
+	code, out, _ := runCLICapture(t, "graph-neighbors", "nonexistent-project")
+	if code != 0 {
+		t.Fatalf("expected exit 0 for unknown slug (returns empty result), got %d", code)
+	}
+	_ = out // empty graph is valid
+}
+
+func TestCLI_GraphImpact_MissingSlug(t *testing.T) {
+	code, _, stderr := runCLICapture(t, "graph-impact")
+	if code == 0 {
+		t.Fatal("expected non-zero exit when slug is missing")
+	}
+	if !strings.Contains(stderr, "slug") {
+		t.Errorf("expected 'slug' in stderr, got %q", stderr)
+	}
+}
+
+func TestCLI_GraphImpact_WithProject(t *testing.T) {
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	// register a project with no dependents
+	runCLICapture(t, "register", "alpha", "o/r")
+	code, out, _ := runCLICapture(t, "graph-impact", "alpha")
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	if !strings.Contains(out, "alpha") {
+		t.Errorf("expected slug in output, got %q", out)
+	}
+}
