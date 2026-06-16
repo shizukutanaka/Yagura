@@ -4,6 +4,71 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.37.0] - 2026-06-16
+
+### Theme — "Maintainability lens family + composite code-health (Socratic synthesis)"
+
+ソクラテス問答で軸を 1 つずつ導出し、go/ast / 純テキストの zero-dep・決定論的レンズを
+連ねた。すべて CLI + MCP の両面、test-first、自リポジトリ dogfood 済み。最後に個別
+レンズを 1 つの package 別 grade へ束ねる composite を追加し、API 境界の両側(公開契約
+の文書化 ⇄ 非公開宣言の到達可能性)と self-consistency を押さえた。
+
+- **新視点: assertion 密度(`internal/assertcheck` + CLI `assert-check`, MCP `yagura_assert_check`)**
+  testcoverage は test の *存在* を見るが、assertion 無しの hollow test は常に緑でも
+  何も証明しない。`Scan(files)` が密度(assertions ÷ test 関数)と hollow file を集計。
+  `--max-hollow F` で CI ゲート。test-first、zero-dep。
+
+- **新視点: エラー診断可能性(`internal/errpolicy` + CLI `err-policy`, MCP `yagura_err_policy`)**
+  「失敗時に *どこで・なぜ* 分かるか」。naked `return err`(context 喪失)vs
+  wrapped `fmt.Errorf(...%w...)` の wrap 率 + `_ = call()` の blank-discard 検出。
+  naked は集計指標に畳み込み(per-site finding にしない = ノイズ回避、human/JSON 一貫)。
+
+- **新視点: 循環的複雑度(`internal/complexity` + CLI `complexity`, MCP `yagura_complexity`)**
+  testability の前提条件 = 全パス網羅に要するテスト数の下限(McCabe、gocyclo 互換)。
+  関数別スコア + しきい値超過 flag、`--strict` ゲート。
+
+- **新視点: package 間結合(`internal/coupling` + CLI `coupling`, MCP `yagura_coupling`)**
+  実ソース import から fan-in/fan-out/instability + Stable Dependencies Principle 違反
+  (安定 package が より不安定な package に依存)。projectgraph(宣言的 depends_on)と別物。
+
+- **新視点: 公開契約の文書化(`internal/apidoc` + CLI `api-doc`, MCP `yagura_api_doc`)**
+  exported func/type/const/var/method の doc コメント有無 = 仕様の無い契約の検出。
+  documented 率 + 未文書化一覧(golint 互換)。`--min-doc R` ゲート。
+
+- **新視点: dead unexported 宣言(`internal/deadcode` + CLI `dead-code`, MCP `yagura_dead_code`)**
+  apidoc の非公開側の双対。Go コンパイラが弾かない package レベル未使用宣言を、
+  unexported = 閉じた世界の保守的解析で検出(method/init/main/test 除外)。
+
+- **新視点: レシーバ自己一貫性(`internal/recvcheck` + CLI `recv-check`, MCP `yagura_recv_check`)**
+  unit を自分自身の他の部分と照らす軸。レシーバ名の不揃い / 値・ポインタ混在
+  (満たす interface が変わる実害)/ this・self 等非慣習名。package-scoped。
+
+- **新視点: composite code-health grade(`internal/codehealth` + CLI `code-health`, MCP `yagura_code_health`)**
+  reviewgate(security 合成)の maintainability 版。complexity/apidoc/deadcode/
+  recvcheck/assertcheck/astcheck を package 別 grade(A-F)へ合成。`Score`(純関数)+
+  `Analyze`(各レンズ実行)。worst-first 表示、減点降順の理由。`--min-grade G` ゲート。
+  dogfood: 自リポジトリ overall A(92)。
+
+### Refactor / debt
+- **CLI verb dispatch を単一 `cliHandlers` map に統合**(cli.go)。従来 `cliVerbs` 集合 +
+  `runCLI` の 41-case switch を二重メンテしていた保守ハザードを解消(verb 追加は 1 行)。
+  `runCLI` 複雑度 40→4、-68 行。挙動完全保存。
+- **lens-driven docs**: coupling/apidoc が「最も依存される契約が最も未文書化」と指摘した
+  registry/project/agentevent/osv/github/quotamonitor、および code-health の doc-gap C
+  package(recovery/riskreason/injectscan)の exported API を 100% 文書化。
+
+### Quality / process
+- recvcheck は初版で型名を package 跨ぎに global グルーピングし偽陽性を出したが、
+  dogfood で自検出 →(package, 型名)単位に修正 + 回帰テスト追加。
+- 全レンズ test-first・決定論的出力(sort/tie-break 固定)・readGoFiles の
+  capped+warned walker 共有(部分スキャンを clean と誤読する fail-open を防止)。
+
+### Zero new deps
+ADR-0001 維持(stdlib のみ、go/ast / go/parser / text/tabwriter 等)。`go.mod` 不変。
+
+### Counts
+64 internal packages / 71 MCP tools。
+
 ## [v0.36.0] - 2026-06-10
 
 ### Theme — "Custom rule loading (3 scanners) + CLI parity for the quality/health tools"
