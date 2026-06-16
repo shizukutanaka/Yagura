@@ -372,7 +372,7 @@ func buildToolsCatalogTool(s *Server) *Tool {
 				Name  string `json:"name"`
 				Query string `json:"query"`
 			}
-			_ = json.Unmarshal(args, &in)
+			json.Unmarshal(args, &in)
 
 			s.mu.RLock()
 			defer s.mu.RUnlock()

@@ -256,8 +256,8 @@ func firstProduct(s Statement) string {
 func contentHash(author, ts string, stmts []Statement) string {
 	h := fnv.New32a()
 	b, _ := json.Marshal(stmts)
-	_, _ = h.Write([]byte(author))
-	_, _ = h.Write([]byte(ts))
-	_, _ = h.Write(b)
+	h.Write([]byte(author))
+	h.Write([]byte(ts))
+	h.Write(b)
 	return fmt.Sprintf("%08x", h.Sum32())
 }

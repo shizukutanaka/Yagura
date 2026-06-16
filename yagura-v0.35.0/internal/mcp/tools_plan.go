@@ -176,7 +176,7 @@ func scanProjectAICode(localPath string) aiverify.Result {
 
 	files := map[string]string{}
 	walked := 0
-	_ = filepath.Walk(localPath, func(path string, info os.FileInfo, err error) error {
+	filepath.Walk(localPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info == nil || info.IsDir() {
 			return nil
 		}

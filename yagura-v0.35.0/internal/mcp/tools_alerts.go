@@ -46,7 +46,7 @@ func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Stor
 				OpenIssuesHigh  int     `json:"open_issues_high"`
 				IncludeInactive bool    `json:"include_inactive"` // v0.30: resolved/snoozed も含める
 			}
-			_ = json.Unmarshal(args, &in)
+			json.Unmarshal(args, &in)
 
 			th := alertfix.DefaultThresholds()
 			if in.StaleDays > 0 {

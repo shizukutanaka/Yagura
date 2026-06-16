@@ -4,6 +4,28 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.47.0] - 2026-06-16
+
+### Theme — "Idiomatic Go: zero blank-error-discard violations codebase-wide"
+
+#### Code quality
+- Eliminated all 20+ `blank-error-discard` violations detected by `yagura ast-check` (rule added in v0.43.0)
+- Pattern: `_, _ = f.Write(...)` / `_ = json.Unmarshal(...)` / `_ = os.Remove(...)` → idiomatic bare call (Go allows discarding all return values without explicit `_` assignment)
+- Files fixed: `internal/mcp/server.go` (7), `internal/hookreceiver/receiver.go` (4), `internal/audit/audit.go` (3), `internal/harness/plugin_audit.go` (2), `internal/dedupe/dedupe.go` (3), `internal/vex/vex.go` (3), `internal/quotamonitor/persist.go` (1), `internal/dashboard/pwa.go` (3), `internal/agentlauncher/launcher.go` (1), `internal/sbom/sbom.go` (1), `internal/mcp/tools*.go` (3), `internal/httplimit/bucket.go` (1), `internal/github/client.go` (1), `cmd/yagura-tray/main.go` (2)
+- `code-health` overall: A(92) → A(93); `internal/mcp` F(52) → D(67); `internal/audit` C(76) → B(85); `internal/hookreceiver` B(81) → A(93)
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 24 consecutive releases).
+
+#### Synergy
+Pairs with v0.43.0 (blank-error-discard rule addition): the rule now passes cleanly on the entire codebase, confirming the self-dogfood loop works — the linter found real violations, they were fixed.
+
+#### What's not yet
+Remaining complexity issues in `cmd/yagura` (F, 33 funcs) and `internal/harness` (C, 11 funcs) require structural refactoring beyond a single-focus release. `bare-goroutine` findings in test files and process-reaping goroutines are intentional patterns.
+
+#### Sources
+- Effective Go: https://go.dev/doc/effective_go#blank
+
 ## [v0.46.0] - 2026-06-16
 
 ### Theme — "API documentation discipline: 6 more packages upgraded to 100% godoc"

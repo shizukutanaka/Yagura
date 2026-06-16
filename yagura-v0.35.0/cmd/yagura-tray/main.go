@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	version = "0.46.0" // updated together with main yagura version
+	version = "0.47.0" // updated together with main yagura version
 )
 
 func main() {
@@ -152,13 +152,13 @@ func (d *daemon) Stop() {
 		return
 	}
 	// graceful first (SIGTERM on Unix, Process.Kill on Windows since no SIGTERM)
-	_ = d.cmd.Process.Signal(syscall.SIGTERM)
+	d.cmd.Process.Signal(syscall.SIGTERM)
 	done := make(chan error, 1)
 	go func() { done <- d.cmd.Wait() }()
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		_ = d.cmd.Process.Kill()
+		d.cmd.Process.Kill()
 		<-done
 	}
 }

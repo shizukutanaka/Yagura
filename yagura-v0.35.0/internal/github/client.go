@@ -260,7 +260,7 @@ func parseIntHeader(h http.Header, key string) int {
 		return 0
 	}
 	var n int
-	_, _ = fmt.Sscanf(v, "%d", &n)
+	fmt.Sscanf(v, "%d", &n)
 	return n
 }
 
