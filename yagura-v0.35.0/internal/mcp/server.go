@@ -234,6 +234,24 @@ func (s *Server) ToolNames() []string {
 	return names
 }
 
+// authorized は Bearer token 認証を constant-time 比較で検証する。
+//
+// 空 token は無認証扱い(loopback bind 前提、ADR-0004)で常に true。
+// プレフィックス長確認(分岐は OK、長さは secret ではない)後、長さが違う場合も
+// constant-time にするため必ず ConstantTimeCompare まで通す(長さ不一致は 0 を返す)。
+func (s *Server) authorized(r *http.Request) bool {
+	if s.token == "" {
+		return true
+	}
+	const prefix = "Bearer "
+	got := r.Header.Get("Authorization")
+	if !strings.HasPrefix(got, prefix) {
+		return false
+	}
+	received := got[len(prefix):]
+	return subtle.ConstantTimeCompare([]byte(received), []byte(s.token)) == 1
+}
+
 // ServeHTTP は POST /mcp を受ける。Method 違いは 405、body 違いは JSON-RPC error。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -244,25 +262,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Auth check (constant-time comparison で timing attack 対策).
 	// 空 token は無認証扱い(loopback bind 前提、ADR-0004)。
-	if s.token != "" {
-		got := r.Header.Get("Authorization")
-		const prefix = "Bearer "
-		// 1. プレフィックス長確認(分岐は OK、長さは secret ではない)
-		// 2. 全長を揃えてから constant-time 比較
-		// 3. 一致しない場合は同じ "unauthorized" を返す(error message からの情報漏洩防止)
-		ok := false
-		if strings.HasPrefix(got, prefix) {
-			received := got[len(prefix):]
-			// 長さが違う場合も constant-time にするため、必ず ConstantTimeCompare まで通す。
-			// ConstantTimeCompare は長さが違うと 0 を返す。
-			if subtle.ConstantTimeCompare([]byte(received), []byte(s.token)) == 1 {
-				ok = true
-			}
-		}
-		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))

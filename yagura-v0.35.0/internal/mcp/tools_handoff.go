@@ -271,20 +271,13 @@ func buildHandoffTool(d Deps) *Tool {
 			if err != nil {
 				return nil, &ToolError{Code: "invalid_input", Message: err.Error()}
 			}
-			workspace := in.Workspace
-			if workspace == "" {
-				workspace = d.WorkspaceRoot
-			}
-			if workspace == "" {
-				return nil, &ToolError{Code: "invalid_input",
-					Message: "workspace required (and yagura WorkspaceRoot not configured)"}
+			workspace, terr := resolveHandoffWorkspace(d, in.Workspace)
+			if terr != nil {
+				return nil, terr
 			}
 
 			// (1) handoff context を保存
-			source := quotamonitor.AgentClaudeCode
-			if target == quotamonitor.AgentClaudeCode {
-				source = quotamonitor.AgentWindsurf
-			}
+			source := handoffSource(target)
 			ctxObj := &handoff.Context{
 				Version:   1,
 				SavedAt:   d.Now().UTC(),
@@ -302,18 +295,8 @@ func buildHandoffTool(d Deps) *Tool {
 			}
 
 			// (3) target agent を launch(dry_run なら skip)
-			if !in.DryRun {
-				var launchErr error
-				switch target {
-				case quotamonitor.AgentWindsurf:
-					launchErr = d.AgentLauncher.LaunchWindsurf(ctx, workspace)
-				case quotamonitor.AgentClaudeCode:
-					launchErr = d.AgentLauncher.LaunchClaudeCode(ctx, workspace)
-				}
-				if launchErr != nil {
-					return nil, &ToolError{Code: "launch_failed",
-						Message: launchErr.Error()}
-				}
+			if terr := launchTargetAgent(ctx, d, target, workspace, in.DryRun); terr != nil {
+				return nil, terr
 			}
 
 			cmd, cmdArgs := d.AgentLauncher.LastCommand()
@@ -328,6 +311,45 @@ func buildHandoffTool(d Deps) *Tool {
 			}, nil
 		},
 	}
+}
+
+// resolveHandoffWorkspace は明示 workspace、無ければ daemon の WorkspaceRoot を返す。
+// どちらも空なら error。
+func resolveHandoffWorkspace(d Deps, workspace string) (string, *ToolError) {
+	if workspace == "" {
+		workspace = d.WorkspaceRoot
+	}
+	if workspace == "" {
+		return "", &ToolError{Code: "invalid_input",
+			Message: "workspace required (and yagura WorkspaceRoot not configured)"}
+	}
+	return workspace, nil
+}
+
+// handoffSource は target の相手側 agent(= 現在動いている source)を返す。
+func handoffSource(target quotamonitor.Agent) quotamonitor.Agent {
+	if target == quotamonitor.AgentClaudeCode {
+		return quotamonitor.AgentWindsurf
+	}
+	return quotamonitor.AgentClaudeCode
+}
+
+// launchTargetAgent は target に応じた agent を起動する(dryRun なら no-op)。
+func launchTargetAgent(ctx context.Context, d Deps, target quotamonitor.Agent, workspace string, dryRun bool) *ToolError {
+	if dryRun {
+		return nil
+	}
+	var launchErr error
+	switch target {
+	case quotamonitor.AgentWindsurf:
+		launchErr = d.AgentLauncher.LaunchWindsurf(ctx, workspace)
+	case quotamonitor.AgentClaudeCode:
+		launchErr = d.AgentLauncher.LaunchClaudeCode(ctx, workspace)
+	}
+	if launchErr != nil {
+		return &ToolError{Code: "launch_failed", Message: launchErr.Error()}
+	}
+	return nil
 }
 
 func buildHeartbeatTool(d Deps) *Tool {

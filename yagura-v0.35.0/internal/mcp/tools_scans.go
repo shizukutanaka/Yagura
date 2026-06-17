@@ -58,20 +58,9 @@ func buildSecretScanTool(d Deps) *Tool {
 			}
 
 			// プロジェクト → ScanItem への変換
-			projectsToScan := []*project.Project{}
-			if in.Slug != "" {
-				p, err := d.Registry.Get(in.Slug)
-				if err != nil {
-					return nil, &ToolError{Code: "not_found",
-						Message: "project not found: " + in.Slug}
-				}
-				projectsToScan = []*project.Project{p}
-			} else {
-				for _, p := range d.Registry.List() {
-					if p.Stage != project.StageArchived {
-						projectsToScan = append(projectsToScan, p)
-					}
-				}
+			projectsToScan, terr := secretScanTargets(d, in.Slug)
+			if terr != nil {
+				return nil, terr
 			}
 
 			items := make([]secretscan.ScanItem, 0, len(projectsToScan)*5)
@@ -80,27 +69,17 @@ func buildSecretScanTool(d Deps) *Tool {
 			}
 
 			// Default scanner unless the caller supplied custom/disabled rules.
-			scanner := d.SecretScanner
-			if len(in.CustomRules) > 0 || len(in.DisableRules) > 0 {
-				cfg := &secretscan.UserConfig{Rules: in.CustomRules, Disable: in.DisableRules}
-				rules, err := cfg.Apply(secretscan.DefaultRules())
-				if err != nil {
-					return nil, &ToolError{Code: "invalid_input", Message: err.Error()}
-				}
-				scanner = secretscan.NewWithRules(rules)
+			scanner, terr := secretScanScanner(d, in.CustomRules, in.DisableRules)
+			if terr != nil {
+				return nil, terr
 			}
 
 			result := scanner.ScanBatch(items)
 
 			// min_severity フィルタ
-			if in.MinSeverity != "" {
-				min := strings.ToUpper(in.MinSeverity)
-				if min != "LOW" && min != "MEDIUM" && min != "HIGH" && min != "CRITICAL" {
-					return nil, &ToolError{Code: "invalid_input",
-						Message: "min_severity must be LOW/MEDIUM/HIGH/CRITICAL"}
-				}
-				filtered := filterFindingsBatch(result, secretscan.Severity(min))
-				result = filtered
+			result, terr = filterSecretScanSeverity(result, in.MinSeverity)
+			if terr != nil {
+				return nil, terr
 			}
 
 			return map[string]any{
@@ -114,6 +93,52 @@ func buildSecretScanTool(d Deps) *Tool {
 			}, nil
 		},
 	}
+}
+
+// secretScanTargets は scan 対象 project 群を返す(slug 指定なら 1 件、無指定なら
+// archived を除く全件)。
+func secretScanTargets(d Deps, slug string) ([]*project.Project, *ToolError) {
+	if slug != "" {
+		p, err := d.Registry.Get(slug)
+		if err != nil {
+			return nil, &ToolError{Code: "not_found", Message: "project not found: " + slug}
+		}
+		return []*project.Project{p}, nil
+	}
+	var out []*project.Project
+	for _, p := range d.Registry.List() {
+		if p.Stage != project.StageArchived {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// secretScanScanner は custom/disable rules 指定があれば専用 scanner を、無ければ
+// default scanner を返す。
+func secretScanScanner(d Deps, custom []secretscan.RuleSpec, disable []string) (SecretScanner, *ToolError) {
+	if len(custom) == 0 && len(disable) == 0 {
+		return d.SecretScanner, nil
+	}
+	cfg := &secretscan.UserConfig{Rules: custom, Disable: disable}
+	rules, err := cfg.Apply(secretscan.DefaultRules())
+	if err != nil {
+		return nil, &ToolError{Code: "invalid_input", Message: err.Error()}
+	}
+	return secretscan.NewWithRules(rules), nil
+}
+
+// filterSecretScanSeverity は min_severity 以上のみ残す(空なら無変更)。
+func filterSecretScanSeverity(r secretscan.BatchResult, minSeverity string) (secretscan.BatchResult, *ToolError) {
+	if minSeverity == "" {
+		return r, nil
+	}
+	min := strings.ToUpper(minSeverity)
+	if min != "LOW" && min != "MEDIUM" && min != "HIGH" && min != "CRITICAL" {
+		return r, &ToolError{Code: "invalid_input",
+			Message: "min_severity must be LOW/MEDIUM/HIGH/CRITICAL"}
+	}
+	return filterFindingsBatch(r, secretscan.Severity(min)), nil
 }
 
 // projectFieldsAsScanItems は Project のテキストフィールドを ScanItem 配列にする。

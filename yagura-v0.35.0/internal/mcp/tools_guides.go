@@ -74,22 +74,7 @@ func buildAgentsMdTool(d Deps) *Tool {
 			// (DoD / Purpose / Scope の細粒度抽出は plantracker 拡張待ち)
 			if p.LocalPath != "" {
 				if content, _, err := loadPlanMd(p.LocalPath); err == nil {
-					state := plantracker.Parse(content)
-					// plantracker は全 ## を Phase とみなすので、
-					// "フェーズ" / "Phase" header 配下の項目のみを真の phase
-					// として扱う。それ以外は description/scope/DoD で拾う。
-					for _, ph := range state.Phases {
-						lower := strings.ToLower(ph.Name)
-						if !strings.Contains(lower, "phase") &&
-							!strings.Contains(ph.Name, "フェーズ") {
-							continue
-						}
-						facts.Phases = append(facts.Phases,
-							fmt.Sprintf("%s (%d/%d)", ph.Name, ph.CompletedTasks, ph.TotalTasks))
-					}
-					facts.Description = extractSection(content, []string{"目的", "Purpose"})
-					facts.Scope = extractSection(content, []string{"スコープ", "Scope"})
-					facts.DoD = extractDoDItems(content)
+					enrichFactsFromPlan(&facts, content)
 				}
 			}
 			body := agentmd.Generate(facts)
@@ -109,6 +94,23 @@ func buildAgentsMdTool(d Deps) *Tool {
 			return result, nil
 		},
 	}
+}
+
+// enrichFactsFromPlan は Plan.md 本文から phases / description / scope / DoD を
+// 抽出して facts に詰める。plantracker は全 ## を Phase とみなすので、真の Phase
+//("Phase"/"フェーズ" header)配下のみを phases に採用する。
+func enrichFactsFromPlan(facts *agentmd.ProjectFacts, content string) {
+	state := plantracker.Parse(content)
+	for _, ph := range state.Phases {
+		if !isPhaseSection(ph.Name) {
+			continue
+		}
+		facts.Phases = append(facts.Phases,
+			fmt.Sprintf("%s (%d/%d)", ph.Name, ph.CompletedTasks, ph.TotalTasks))
+	}
+	facts.Description = extractSection(content, []string{"目的", "Purpose"})
+	facts.Scope = extractSection(content, []string{"スコープ", "Scope"})
+	facts.DoD = extractDoDItems(content)
 }
 
 func buildFeatureListTool(d Deps) *Tool {
@@ -308,9 +310,7 @@ func planStateToFeatureInput(project, content string, state plantracker.PlanStat
 	}
 	lines := strings.Split(content, "\n")
 	for i, ph := range state.Phases {
-		lower := strings.ToLower(ph.Name)
-		isPhaseSection := strings.Contains(lower, "phase") || strings.Contains(ph.Name, "フェーズ")
-		if !isPhaseSection {
+		if !isPhaseSection(ph.Name) {
 			continue
 		}
 		startLine := ph.LineStart // 1-indexed (plantracker convention)
@@ -318,31 +318,45 @@ func planStateToFeatureInput(project, content string, state plantracker.PlanStat
 		if i+1 < len(state.Phases) {
 			endLine = state.Phases[i+1].LineStart - 1
 		}
-		phIn := featurelist.PhaseInput{Name: ph.Name}
-		for j := startLine; j < endLine && j < len(lines); j++ {
-			ts := strings.TrimSpace(lines[j])
-			if !strings.HasPrefix(ts, "- [") && !strings.HasPrefix(ts, "* [") {
-				continue
-			}
-			done := false
-			var item string
-			if strings.HasPrefix(ts, "- [x]") || strings.HasPrefix(ts, "* [x]") ||
-				strings.HasPrefix(ts, "- [X]") || strings.HasPrefix(ts, "* [X]") {
-				done = true
-				item = strings.TrimSpace(ts[5:])
-			} else if strings.HasPrefix(ts, "- [ ]") || strings.HasPrefix(ts, "* [ ]") {
-				item = strings.TrimSpace(ts[5:])
-			} else {
-				continue
-			}
-			if item == "" {
-				continue
-			}
-			phIn.Tasks = append(phIn.Tasks, featurelist.TaskInput{Title: item, Done: done})
-		}
+		phIn := featurelist.PhaseInput{Name: ph.Name, Tasks: extractPhaseTasks(lines, startLine, endLine)}
 		if len(phIn.Tasks) > 0 {
 			pin.Phases = append(pin.Phases, phIn)
 		}
 	}
 	return pin
+}
+
+// isPhaseSection は header 名が真の Phase("Phase"/"フェーズ"を含む)かを判定する。
+func isPhaseSection(name string) bool {
+	return strings.Contains(strings.ToLower(name), "phase") || strings.Contains(name, "フェーズ")
+}
+
+// extractPhaseTasks は lines[startLine:endLine] から checkbox 行を TaskInput に変換する。
+func extractPhaseTasks(lines []string, startLine, endLine int) []featurelist.TaskInput {
+	var tasks []featurelist.TaskInput
+	for j := startLine; j < endLine && j < len(lines); j++ {
+		item, done, ok := parseCheckboxLine(strings.TrimSpace(lines[j]))
+		if !ok || item == "" {
+			continue
+		}
+		tasks = append(tasks, featurelist.TaskInput{Title: item, Done: done})
+	}
+	return tasks
+}
+
+// parseCheckboxLine は "- [x] foo" / "* [ ] bar" 形式の checkbox 行を解析する。
+// 戻り値: (item text, done?, このフォーマットに合致したか)。
+func parseCheckboxLine(ts string) (item string, done bool, ok bool) {
+	if !strings.HasPrefix(ts, "- [") && !strings.HasPrefix(ts, "* [") {
+		return "", false, false
+	}
+	switch {
+	case strings.HasPrefix(ts, "- [x]") || strings.HasPrefix(ts, "* [x]") ||
+		strings.HasPrefix(ts, "- [X]") || strings.HasPrefix(ts, "* [X]"):
+		return strings.TrimSpace(ts[5:]), true, true
+	case strings.HasPrefix(ts, "- [ ]") || strings.HasPrefix(ts, "* [ ]"):
+		return strings.TrimSpace(ts[5:]), false, true
+	default:
+		return "", false, false
+	}
 }

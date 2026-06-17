@@ -167,45 +167,11 @@ func buildProgressFileTool(d Deps, srv *Server) *Tool {
 				GeneratedBy: "yagura " + version(),
 				Note:        in.Note,
 			}
-			// Plan.md → feature list & progress
 			if p.LocalPath != "" {
-				if content, _, err := loadPlanMd(p.LocalPath); err == nil {
-					state := plantracker.Parse(content)
-					snap.PlanProgressPct = state.ProgressPct
-					snap.CurrentPhase = state.CurrentPhase
-					pin := planStateToFeatureInput(in.Slug, content, state)
-					fl := featurelist.Build(pin, nil)
-					snap.TotalFeatures = fl.Stats.Total
-					snap.DoneFeatures = fl.Stats.Done
-					for _, f := range fl.Features {
-						if f.Status == "pending" {
-							snap.PendingFeatures = append(snap.PendingFeatures, f.Title)
-						}
-					}
-				}
+				addProgressPlanData(&snap, in.Slug, p.LocalPath)
 			}
-			// Hook activity
-			if hr := srv.HookReceiver(); hr != nil {
-				st := hr.ProjectStats(in.Slug)
-				snap.HookSessions = st.ByEvent["Stop"] + st.ByEvent["SubagentStop"]
-				snap.ToolErrorCount = st.ErrorCount
-				for _, tu := range hr.TopTools(in.Slug, 5) {
-					snap.TopTools = append(snap.TopTools, progressfile.ToolUse{
-						Tool: tu.Tool, Count: tu.Count,
-					})
-				}
-			}
-			// Active alerts
-			if store := srv.AlertStore(); store != nil {
-				for _, st := range store.Snapshot() {
-					if string(st.Status) == "active" {
-						snap.ActiveAlerts = append(snap.ActiveAlerts, progressfile.Alert{
-							ID: st.AlertID, Severity: "high", Source: "yagura",
-							Summary: st.AlertID,
-						})
-					}
-				}
-			}
+			addProgressHookData(&snap, srv, in.Slug)
+			addProgressAlertData(&snap, srv)
 			body := progressfile.Generate(snap)
 			result := map[string]any{
 				"slug":     in.Slug,
@@ -222,6 +188,98 @@ func buildProgressFileTool(d Deps, srv *Server) *Tool {
 			}
 			return result, nil
 		},
+	}
+}
+
+// addProgressPlanData は Plan.md から progress / feature 情報を snapshot に加える。
+func addProgressPlanData(snap *progressfile.Snapshot, slug, localPath string) {
+	content, _, err := loadPlanMd(localPath)
+	if err != nil {
+		return
+	}
+	state := plantracker.Parse(content)
+	snap.PlanProgressPct = state.ProgressPct
+	snap.CurrentPhase = state.CurrentPhase
+	pin := planStateToFeatureInput(slug, content, state)
+	fl := featurelist.Build(pin, nil)
+	snap.TotalFeatures = fl.Stats.Total
+	snap.DoneFeatures = fl.Stats.Done
+	for _, f := range fl.Features {
+		if f.Status == "pending" {
+			snap.PendingFeatures = append(snap.PendingFeatures, f.Title)
+		}
+	}
+}
+
+// addProgressHookData は hook receiver の集計(sessions / errors / top tools)を加える。
+func addProgressHookData(snap *progressfile.Snapshot, srv *Server, slug string) {
+	hr := srv.HookReceiver()
+	if hr == nil {
+		return
+	}
+	st := hr.ProjectStats(slug)
+	snap.HookSessions = st.ByEvent["Stop"] + st.ByEvent["SubagentStop"]
+	snap.ToolErrorCount = st.ErrorCount
+	for _, tu := range hr.TopTools(slug, 5) {
+		snap.TopTools = append(snap.TopTools, progressfile.ToolUse{Tool: tu.Tool, Count: tu.Count})
+	}
+}
+
+// addProgressAlertData は active な lifecycle alert を snapshot に加える。
+func addProgressAlertData(snap *progressfile.Snapshot, srv *Server) {
+	store := srv.AlertStore()
+	if store == nil {
+		return
+	}
+	for _, st := range store.Snapshot() {
+		if string(st.Status) == "active" {
+			snap.ActiveAlerts = append(snap.ActiveAlerts, progressfile.Alert{
+				ID: st.AlertID, Severity: "high", Source: "yagura", Summary: st.AlertID,
+			})
+		}
+	}
+}
+
+// initScriptToolsFiles は language から必須 tool / file リストを導出する。
+func initScriptToolsFiles(language string) (tools, files []string) {
+	tools = []string{"git"}
+	switch strings.ToLower(language) {
+	case "go", "golang":
+		tools = append(tools, "go", "make")
+		files = []string{"go.mod"}
+	case "node", "nodejs", "javascript", "typescript":
+		tools = append(tools, "node", "npm")
+		files = []string{"package.json"}
+	case "python":
+		tools = append(tools, "python3")
+	case "rust":
+		tools = append(tools, "cargo")
+		files = []string{"Cargo.toml"}
+	}
+	return tools, files
+}
+
+// generateInitScript は target("posix" / "powershell")に応じた init script を
+// 生成し、body / filename / file-mode を返す。未知 target は *ToolError。
+func generateInitScript(target, slug, workDir, language string, tools, files []string) (string, string, os.FileMode, *ToolError) {
+	handoff := []string{"claude-progress.txt", "AGENTS.md"}
+	switch target {
+	case "powershell", "ps1", "windows", "win":
+		body := initps1.Generate(initps1.BootSpec{
+			Project: slug, GeneratedBy: "yagura " + version(), WorkDir: workDir,
+			Language: language, RequiredTools: tools, RequiredFiles: files, HandoffFiles: handoff,
+		})
+		// PS scripts don't need +x; ExecutionPolicy gates execution.
+		return body, "init.ps1", 0o644, nil
+	case "", "posix", "sh", "bash", "unix", "linux", "macos", "darwin":
+		body := initsh.Generate(initsh.BootSpec{
+			Project: slug, GeneratedBy: "yagura " + version(), WorkDir: workDir,
+			Language: language, RequiredTools: tools, RequiredFiles: files, HandoffFiles: handoff,
+		})
+		return body, "init.sh", 0o755, nil
+	default:
+		return "", "", 0, &ToolError{Code: "invalid_input",
+			Message: "unknown target: " + target + " (use 'posix' or 'powershell')"}
 	}
 }
 
@@ -261,57 +319,12 @@ func buildInitShTool(d Deps) *Tool {
 			}
 			// Build a shared spec — language-specific lists are derived once,
 			// then handed to the format-specific generator.
-			tools := []string{"git"}
-			var files []string
-			switch strings.ToLower(p.Language) {
-			case "go", "golang":
-				tools = append(tools, "go", "make")
-				files = []string{"go.mod"}
-			case "node", "nodejs", "javascript", "typescript":
-				tools = append(tools, "node", "npm")
-				files = []string{"package.json"}
-			case "python":
-				tools = append(tools, "python3")
-			case "rust":
-				tools = append(tools, "cargo")
-				files = []string{"Cargo.toml"}
-			}
+			tools, files := initScriptToolsFiles(p.Language)
 
 			target := strings.ToLower(strings.TrimSpace(in.Target))
-			var body, filename string
-			var mode os.FileMode
-			switch target {
-			case "powershell", "ps1", "windows", "win":
-				spec := initps1.BootSpec{
-					Project:       in.Slug,
-					GeneratedBy:   "yagura " + version(),
-					WorkDir:       p.LocalPath,
-					Language:      p.Language,
-					RequiredTools: tools,
-					RequiredFiles: files,
-					HandoffFiles:  []string{"claude-progress.txt", "AGENTS.md"},
-				}
-				body = initps1.Generate(spec)
-				filename = "init.ps1"
-				mode = 0o644 // PS scripts don't need +x; ExecutionPolicy gates execution
-			case "", "posix", "sh", "bash", "unix", "linux", "macos", "darwin":
-				spec := initsh.BootSpec{
-					Project:       in.Slug,
-					GeneratedBy:   "yagura " + version(),
-					WorkDir:       p.LocalPath,
-					Language:      p.Language,
-					RequiredTools: tools,
-					RequiredFiles: files,
-					HandoffFiles:  []string{"claude-progress.txt", "AGENTS.md"},
-				}
-				body = initsh.Generate(spec)
-				filename = "init.sh"
-				mode = 0o755
-			default:
-				return nil, &ToolError{
-					Code:    "invalid_input",
-					Message: "unknown target: " + in.Target + " (use 'posix' or 'powershell')",
-				}
+			body, filename, mode, terr := generateInitScript(target, in.Slug, p.LocalPath, p.Language, tools, files)
+			if terr != nil {
+				return nil, terr
 			}
 
 			result := map[string]any{

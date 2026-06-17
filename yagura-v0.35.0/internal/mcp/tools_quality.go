@@ -160,57 +160,78 @@ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
 			}
 
 			// Build effective rule set (defaults ± user config).
-			rules := aiverify.DefaultRules()
-			if len(in.CustomRules) > 0 || len(in.DisableRules) > 0 {
-				userCfg := &aiverify.UserConfig{Rules: in.CustomRules, Disable: in.DisableRules}
-				var err error
-				rules, err = userCfg.Apply(aiverify.DefaultRules())
-				if err != nil {
-					return nil, &ToolError{Code: "invalid_input", Message: err.Error()}
-				}
+			rules, terr := aiVerifyRules(in.CustomRules, in.DisableRules)
+			if terr != nil {
+				return nil, terr
 			}
 
-			var res aiverify.Result
-			if in.Text != "" {
-				path := in.Path
-				if path == "" {
-					path = "<input>"
-				}
-				res = aiverify.ScanWithRules(map[string]string{path: in.Text}, rules)
-			} else if cache != nil && len(in.CustomRules) == 0 && len(in.DisableRules) == 0 {
-				// Cache is only safe when the rule set is the default (cache key is
-				// content-based and does not encode custom rules).
-				res = aiverify.ScanCached(in.Files, cache)
-			} else {
-				res = aiverify.ScanWithRules(in.Files, rules)
-			}
+			res := runAIVerifyScan(in.Files, in.Text, in.Path, rules,
+				cache, len(in.CustomRules) == 0 && len(in.DisableRules) == 0)
 
 			// v0.26.0: testcoverage と結合し untested AI 生成を flag (+5/file)
 			// files が複数与えられた場合のみ意味があるので text mode は skip
 			if len(in.Files) > 0 {
-				tcRes := testcoverage.Audit(in.Files)
-				hasTestMap := make(map[string]bool, len(in.Files))
-				// untested ではない source を has_test 認定
-				untestedSet := make(map[string]bool, len(tcRes.UntestedFiles))
-				for _, p := range tcRes.UntestedFiles {
-					untestedSet[p] = true
-				}
-				for p := range in.Files {
-					if testcoverage.IsTestFile(p) {
-						continue
-					}
-					if !untestedSet[p] {
-						hasTestMap[p] = true
-					}
-				}
-				res = aiverify.AnnotateUntested(res, in.Files, func(p string) bool {
-					return hasTestMap[p]
-				})
+				res = annotateUntestedAI(res, in.Files)
 			}
 
 			return formatAIVerifyResult(res, in.SummaryOnly), nil
 		},
 	}
+}
+
+// runAIVerifyScan は入力モード(text 単体 / cache 経由 / 明示 rules)を選んで
+// aiverify を実行する。defaultRules は custom/disable 指定が無い(= cache 安全)か。
+func runAIVerifyScan(files map[string]string, text, path string, rules []aiverify.Rule,
+	cache aiverify.CacheLike, defaultRules bool) aiverify.Result {
+	if text != "" {
+		if path == "" {
+			path = "<input>"
+		}
+		return aiverify.ScanWithRules(map[string]string{path: text}, rules)
+	}
+	// Cache is only safe when the rule set is the default (cache key is
+	// content-based and does not encode custom rules).
+	if cache != nil && defaultRules {
+		return aiverify.ScanCached(files, cache)
+	}
+	return aiverify.ScanWithRules(files, rules)
+}
+
+// aiVerifyRules は default rules に user config(custom/disable)を適用して
+// 有効ルール集合を返す。
+func aiVerifyRules(custom []aiverify.UserRule, disable []string) ([]aiverify.Rule, *ToolError) {
+	rules := aiverify.DefaultRules()
+	if len(custom) == 0 && len(disable) == 0 {
+		return rules, nil
+	}
+	userCfg := &aiverify.UserConfig{Rules: custom, Disable: disable}
+	applied, err := userCfg.Apply(aiverify.DefaultRules())
+	if err != nil {
+		return nil, &ToolError{Code: "invalid_input", Message: err.Error()}
+	}
+	return applied, nil
+}
+
+// annotateUntestedAI は testcoverage と結合し、テスト不在の AI 生成 source を
+// flag する(+5/file)。has_test 認定 = untested ではない non-test source。
+func annotateUntestedAI(res aiverify.Result, files map[string]string) aiverify.Result {
+	tcRes := testcoverage.Audit(files)
+	untestedSet := make(map[string]bool, len(tcRes.UntestedFiles))
+	for _, p := range tcRes.UntestedFiles {
+		untestedSet[p] = true
+	}
+	hasTestMap := make(map[string]bool, len(files))
+	for p := range files {
+		if testcoverage.IsTestFile(p) {
+			continue
+		}
+		if !untestedSet[p] {
+			hasTestMap[p] = true
+		}
+	}
+	return aiverify.AnnotateUntested(res, files, func(p string) bool {
+		return hasTestMap[p]
+	})
 }
 
 func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {

@@ -350,6 +350,35 @@ func buildUnregisterTool(d Deps) *Tool {
 	}
 }
 
+// applyUpdateStage は stage が指定されていれば検証して適用する(nil は無変更)。
+func applyUpdateStage(cur *project.Project, stage *string) *ToolError {
+	if stage == nil {
+		return nil
+	}
+	s := project.Stage(strings.ToLower(strings.TrimSpace(*stage)))
+	switch s {
+	case project.StageActive, project.StageMaintenance,
+		project.StagePaused, project.StageArchived:
+		cur.Stage = s
+		return nil
+	default:
+		return &ToolError{Code: "invalid_input",
+			Message: "stage must be one of active/maintenance/paused/archived"}
+	}
+}
+
+// applyUpdatePriority は priority が指定されていれば 0-5 を検証して適用する。
+func applyUpdatePriority(cur *project.Project, priority *int) *ToolError {
+	if priority == nil {
+		return nil
+	}
+	if *priority < 0 || *priority > 5 {
+		return &ToolError{Code: "invalid_input", Message: "priority must be 0-5"}
+	}
+	cur.Priority = *priority
+	return nil
+}
+
 func buildUpdateTool(d Deps) *Tool {
 	return &Tool{
 		Name: "yagura_update",
@@ -373,17 +402,7 @@ func buildUpdateTool(d Deps) *Tool {
 			// Decode into pointer fields so we can distinguish "not provided"
 			// from "provided as empty/zero". Each field's zero value means
 			// "keep current".
-			var in struct {
-				Slug        string    `json:"slug"`
-				DisplayName *string   `json:"display_name"`
-				Language    *string   `json:"language"`
-				LocalPath   *string   `json:"local_path"`
-				Tags        *[]string `json:"tags"`
-				DependsOn   *[]string `json:"depends_on"`
-				Stage       *string   `json:"stage"`
-				Priority    *int      `json:"priority"`
-				Notes       *string   `json:"notes"`
-			}
+			var in updateFields
 			if err := json.Unmarshal(args, &in); err != nil {
 				return nil, &ToolError{Code: "invalid_input", Message: "invalid args", Cause: err}
 			}
@@ -401,42 +420,8 @@ func buildUpdateTool(d Deps) *Tool {
 					Message: "lookup failed", Cause: err}
 			}
 
-			// Apply only provided fields
-			if in.DisplayName != nil {
-				cur.DisplayName = *in.DisplayName
-			}
-			if in.Language != nil {
-				cur.Language = *in.Language
-			}
-			if in.LocalPath != nil {
-				cur.LocalPath = *in.LocalPath
-			}
-			if in.Tags != nil {
-				cur.Tags = *in.Tags
-			}
-			if in.DependsOn != nil {
-				cur.DependsOn = *in.DependsOn
-			}
-			if in.Stage != nil {
-				stage := project.Stage(strings.ToLower(strings.TrimSpace(*in.Stage)))
-				switch stage {
-				case project.StageActive, project.StageMaintenance,
-					project.StagePaused, project.StageArchived:
-					cur.Stage = stage
-				default:
-					return nil, &ToolError{Code: "invalid_input",
-						Message: "stage must be one of active/maintenance/paused/archived"}
-				}
-			}
-			if in.Priority != nil {
-				if *in.Priority < 0 || *in.Priority > 5 {
-					return nil, &ToolError{Code: "invalid_input",
-						Message: "priority must be 0-5"}
-				}
-				cur.Priority = *in.Priority
-			}
-			if in.Notes != nil {
-				cur.Notes = *in.Notes
+			if terr := applyUpdateFields(cur, in); terr != nil {
+				return nil, terr
 			}
 
 			if err := d.Registry.Update(cur); err != nil {
@@ -449,6 +434,50 @@ func buildUpdateTool(d Deps) *Tool {
 			}, nil
 		},
 	}
+}
+
+// updateFields is yagura_update の decode 後入力。ポインタ field で「未指定」と
+// 「ゼロ値指定」を区別する(nil = 現状維持)。
+type updateFields struct {
+	Slug        string    `json:"slug"`
+	DisplayName *string   `json:"display_name"`
+	Language    *string   `json:"language"`
+	LocalPath   *string   `json:"local_path"`
+	Tags        *[]string `json:"tags"`
+	DependsOn   *[]string `json:"depends_on"`
+	Stage       *string   `json:"stage"`
+	Priority    *int      `json:"priority"`
+	Notes       *string   `json:"notes"`
+}
+
+// applyUpdateFields は指定された(non-nil)field のみを cur に適用する。
+// stage / priority は値域検証を伴うので *ToolError を返しうる。
+func applyUpdateFields(cur *project.Project, in updateFields) *ToolError {
+	if in.DisplayName != nil {
+		cur.DisplayName = *in.DisplayName
+	}
+	if in.Language != nil {
+		cur.Language = *in.Language
+	}
+	if in.LocalPath != nil {
+		cur.LocalPath = *in.LocalPath
+	}
+	if in.Tags != nil {
+		cur.Tags = *in.Tags
+	}
+	if in.DependsOn != nil {
+		cur.DependsOn = *in.DependsOn
+	}
+	if terr := applyUpdateStage(cur, in.Stage); terr != nil {
+		return terr
+	}
+	if terr := applyUpdatePriority(cur, in.Priority); terr != nil {
+		return terr
+	}
+	if in.Notes != nil {
+		cur.Notes = *in.Notes
+	}
+	return nil
 }
 
 func buildStatsTool(d Deps) *Tool {

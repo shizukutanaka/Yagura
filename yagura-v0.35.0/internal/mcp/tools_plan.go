@@ -183,18 +183,7 @@ func scanProjectAICode(localPath string) aiverify.Result {
 		if walked >= maxFiles {
 			return filepath.SkipDir
 		}
-		// 隠しディレクトリと vendor / node_modules を skip
-		base := filepath.Base(path)
-		if strings.HasPrefix(base, ".") || base == "vendor" || base == "node_modules" {
-			return nil
-		}
-		ext := filepath.Ext(path)
-		switch ext {
-		case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs":
-		default:
-			return nil
-		}
-		if info.Size() > maxFileSize {
+		if !isAIScanFile(path, info.Size(), maxFileSize) {
 			return nil
 		}
 		data, rerr := os.ReadFile(path)
@@ -210,6 +199,21 @@ func scanProjectAICode(localPath string) aiverify.Result {
 		return aiverify.Result{}
 	}
 	return aiverify.Scan(files)
+}
+
+// isAIScanFile は AI-code scan 対象とする file かを判定する: 隠し / vendor /
+// node_modules を除外し、対応拡張子かつサイズ上限内のもののみ true。
+func isAIScanFile(path string, size, maxSize int64) bool {
+	base := filepath.Base(path)
+	if strings.HasPrefix(base, ".") || base == "vendor" || base == "node_modules" {
+		return false
+	}
+	switch filepath.Ext(path) {
+	case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs":
+		return size <= maxSize
+	default:
+		return false
+	}
 }
 
 // pickReason は readiness 阻害の最大要因を 1 文で返す。

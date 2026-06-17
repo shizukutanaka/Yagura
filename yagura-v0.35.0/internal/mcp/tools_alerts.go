@@ -48,16 +48,7 @@ func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Stor
 			}
 			json.Unmarshal(args, &in)
 
-			th := alertfix.DefaultThresholds()
-			if in.StaleDays > 0 {
-				th.StaleDays = in.StaleDays
-			}
-			if in.ScorecardMin > 0 {
-				th.ScorecardMin = in.ScorecardMin
-			}
-			if in.OpenIssuesHigh > 0 {
-				th.OpenIssuesHigh = in.OpenIssuesHigh
-			}
+			th := alertFixThresholds(in.StaleDays, in.ScorecardMin, in.OpenIssuesHigh)
 
 			// snapshot 抽出
 			var projects []*project.Project
@@ -71,22 +62,7 @@ func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Stor
 				projects = d.Registry.List()
 			}
 
-			snaps := make([]alertfix.ProjectSnapshot, 0, len(projects))
-			for _, p := range projects {
-				snap := projectToSnapshot(*p)
-				// Plan.md があれば parse して health 情報を加える
-				if p.LocalPath != "" {
-					if content, _, err := loadPlanMd(p.LocalPath); err == nil {
-						snap.HasPlanMd = true
-						state, _ := plantracker.ParseCached(content, cache)
-						snap.PlanIsHealthy = state.IsHealthy
-						snap.PlanProgressPct = state.ProgressPct
-						snap.PlanIssues = state.Issues
-					}
-				}
-				snaps = append(snaps, snap)
-			}
-
+			snaps := buildAlertSnapshots(projects, cache)
 			report := alertfix.EvaluateAll(snaps, th)
 
 			// severity_min filter
@@ -123,6 +99,41 @@ func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Stor
 			return out, nil
 		},
 	}
+}
+
+// alertFixThresholds は default 閾値に正の override 値のみを適用して返す。
+func alertFixThresholds(staleDays int, scorecardMin float64, openIssuesHigh int) alertfix.Thresholds {
+	th := alertfix.DefaultThresholds()
+	if staleDays > 0 {
+		th.StaleDays = staleDays
+	}
+	if scorecardMin > 0 {
+		th.ScorecardMin = scorecardMin
+	}
+	if openIssuesHigh > 0 {
+		th.OpenIssuesHigh = openIssuesHigh
+	}
+	return th
+}
+
+// buildAlertSnapshots は project 群を alertfix snapshot へ変換し、Plan.md があれば
+// その health 情報(healthy/progress/issues)を各 snapshot に加える。
+func buildAlertSnapshots(projects []*project.Project, cache plantracker.CacheLike) []alertfix.ProjectSnapshot {
+	snaps := make([]alertfix.ProjectSnapshot, 0, len(projects))
+	for _, p := range projects {
+		snap := projectToSnapshot(*p)
+		if p.LocalPath != "" {
+			if content, _, err := loadPlanMd(p.LocalPath); err == nil {
+				snap.HasPlanMd = true
+				state, _ := plantracker.ParseCached(content, cache)
+				snap.PlanIsHealthy = state.IsHealthy
+				snap.PlanProgressPct = state.ProgressPct
+				snap.PlanIssues = state.Issues
+			}
+		}
+		snaps = append(snaps, snap)
+	}
+	return snaps
 }
 
 // projectToSnapshot は registry.Project から alertfix snapshot に必要な field を抽出する。

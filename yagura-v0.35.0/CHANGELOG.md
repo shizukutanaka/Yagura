@@ -4,6 +4,41 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.64.0] - 2026-06-17
+
+### Theme — "internal/mcp complexity refactor: code-health C → B"
+
+#### Cyclomatic complexity reduction (no behavior change)
+- `internal/mcp` self-audited at code-health **C (70)** — 16 production functions over
+  the complexity-10 threshold (every `build*Tool` handler closure), max cyclomatic
+  complexity **20** (`yagura_parallel_plan`)
+- Decomposed every over-threshold tool handler by extracting its decode→resolve→map
+  body into cohesive single-concern, independently testable helpers:
+  - `yagura_parallel_plan` (20 → ≤6): `buildParallelTasks` / `buildParallelAgents` / `agentCapacity`
+  - `yagura_update` (18 → ≤9): `updateFields` type + `applyUpdateFields` / `applyUpdateStage` / `applyUpdatePriority`
+  - `yagura_ai_verify` (18 → ≤6): `aiVerifyRules` / `runAIVerifyScan` / `annotateUntestedAI`
+  - `yagura_vulns` (18 → ≤5): `resolveVulnQuery` / `filterVulnsBySeverity`
+  - `yagura_secretscan` (17 → ≤5): `secretScanTargets` / `secretScanScanner` / `filterSecretScanSeverity`
+  - `planStateToFeatureInput` (17 → ≤6): `isPhaseSection` / `extractPhaseTasks` / `parseCheckboxLine`
+  - `yagura_progress_file` (16 → ≤6): `addProgressPlanData` / `addProgressHookData` / `addProgressAlertData`
+  - `handoff` (15 → ≤9): `resolveHandoffWorkspace` / `handoffSource` / `launchTargetAgent`
+  - `yagura_init_sh` (14 → ≤6): `initScriptToolsFiles` / `generateInitScript`
+  - `yagura_alert_fix` (14 → ≤9): `alertFixThresholds` / `buildAlertSnapshots`
+  - `yagura_scorecard` (13 → ≤5): `resolveScorecardRepo` / `filterPriorityChecks`
+  - `yagura_health` (13 → ≤5): `aggregatePortfolioHealth` + `portfolioHealth` accumulator
+  - `yagura_risk_triage` (13 → ≤8): `assetContext` type + `resolveAssetContext`
+  - `yagura_agents_md` (12 → ≤6): `enrichFactsFromPlan` (reuses `isPhaseSection`)
+  - `scanProjectAICode` (12 → ≤7): `isAIScanFile`
+  - `Server.ServeHTTP` (12 → ≤9): `Server.authorized` (auth/constant-time compare extracted)
+- Result: code-health **B (88)**, max complexity **12**, over-threshold production funcs
+  **16 → 0** (the only 3 remaining over-threshold funcs are table-driven test helpers)
+- Pure refactor — all existing `internal/mcp` + `cmd/yagura` tests pass unchanged
+  (behavior-preserving), verified under `-race` and `go vet`. No tool count, schema, or
+  output shape changed; the decomposition is covered by the existing tool suites
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 59 consecutive releases).
+
 ## [v0.63.0] - 2026-06-17
 
 ### Theme — "internal/harness complexity refactor: code-health C → B"
