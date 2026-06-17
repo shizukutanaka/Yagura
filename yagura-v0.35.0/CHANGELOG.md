@@ -4,6 +4,29 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.63.0] - 2026-06-17
+
+### Theme — "internal/harness complexity refactor: code-health C → B"
+
+#### Cyclomatic complexity reduction (no behavior change)
+- `internal/harness` self-audited at code-health **C (70)** — 9 functions over the
+  complexity-10 threshold, max cyclomatic complexity **26**
+- Decomposed the worst offenders into cohesive single-concern helpers:
+  - `AuditAgentConfig` (26 → 7): split into `auditAgentModels` / `auditAgentModelContext`
+    / `auditAgentReferences` / `auditAgentCompaction` / `auditAgentGateway`
+  - `AuditSkill` (22 → ~6): split into `auditSkillName` / `auditSkillDescription` / `auditSkillBody`
+  - `AuditWorkflow` (19 → ~6): split into `auditWorkflowCost` / `auditWorkflowVerification` / `auditWorkflowSafety`
+  - `auditPlugin` (16 → ~6): split into `checkPluginName` / `checkPluginMetadata`
+  - `auditMarketplace` (16 → ~5): split into `checkMarketplaceOwner` / `checkMarketplacePlugins`
+  - `AuditSubagent` (15 → ~4): split into `auditSubagentDescription` / `auditSubagentTools` / `auditSubagentBody`
+- Result: code-health **B (80)**, max complexity **14**, over-threshold funcs **9 → 5**
+- Pure refactor — all existing harness tests pass unchanged (behavior-preserving),
+  verified under `-race`. No new tests needed; the decomposition is covered by the
+  existing `AuditSkill`/`AuditSubagent`/`AuditWorkflow`/`AuditAgentConfig`/`AuditPluginManifest` suites
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 58 consecutive releases).
+
 ## [v0.62.0] - 2026-06-16
 
 ### Theme — "inject-scan false positive fix + shell tab-completion"

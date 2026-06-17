@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.62.0** — 71 MCP tools, 65 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`), inject-scan false-positive fix (`copy .env` downgraded to SevMedium). Reproducible build verified (byte-for-byte identical via `make verify`).
+Status: **v0.63.0** — 71 MCP tools, 65 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). `internal/harness` refactored from code-health C→B (max cyclomatic complexity 26→14). Reproducible build verified (byte-for-byte identical via `make verify`).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-57 consecutive releases (v0.6 → v0.62) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+58 consecutive releases (v0.6 → v0.63) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

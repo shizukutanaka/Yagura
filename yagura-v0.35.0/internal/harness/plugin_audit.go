@@ -65,30 +65,8 @@ func AuditPluginManifest(content string) PluginAuditResult {
 func auditPlugin(top map[string]json.RawMessage) PluginAuditResult {
 	r := PluginAuditResult{Score: 100, Kind: "plugin", ValidJSON: true}
 
-	r.Name = jsonString(top["name"])
-	if r.Name == "" {
-		r.Score -= 30
-		r.Issues = append(r.Issues, "missing 'name' — required, and the namespacing key for /<plugin>:<command>")
-	} else if !reKebab.MatchString(r.Name) {
-		r.Score -= 20
-		r.Issues = append(r.Issues, fmt.Sprintf("name %q is not kebab-case (^[a-z0-9-]+$) — no spaces/uppercase/underscore", r.Name))
-	} else {
-		r.NameValid = true
-	}
-
-	if v := jsonString(top["version"]); v != "" && !reSemver.MatchString(v) {
-		r.Score -= 6
-		r.Issues = append(r.Issues, fmt.Sprintf("version %q is not semantic (MAJOR.MINOR.PATCH)", v))
-	}
-	if jsonString(top["description"]) == "" {
-		r.Score -= 3
-		r.Suggestions = append(r.Suggestions, "add a 'description' — shown in the plugin manager.")
-	}
-	// author は object(.name)であるべき。bare string は誤り。
-	if a, ok := top["author"]; ok && len(a) > 0 && a[0] == '"' {
-		r.Score -= 4
-		r.Suggestions = append(r.Suggestions, "author should be an object {name, email?, url?}, not a bare string.")
-	}
+	checkPluginName(&r, jsonString(top["name"]))
+	checkPluginMetadata(&r, top)
 
 	// component path 群(string | []string | inline object)。
 	for _, field := range []string{"skills", "commands", "agents", "hooks", "mcpServers", "lspServers", "outputStyles"} {
@@ -111,6 +89,37 @@ func auditPlugin(top map[string]json.RawMessage) PluginAuditResult {
 	return r
 }
 
+// checkPluginName は plugin name の存在と kebab-case を検証する。
+func checkPluginName(r *PluginAuditResult, name string) {
+	r.Name = name
+	if r.Name == "" {
+		r.Score -= 30
+		r.Issues = append(r.Issues, "missing 'name' — required, and the namespacing key for /<plugin>:<command>")
+	} else if !reKebab.MatchString(r.Name) {
+		r.Score -= 20
+		r.Issues = append(r.Issues, fmt.Sprintf("name %q is not kebab-case (^[a-z0-9-]+$) — no spaces/uppercase/underscore", r.Name))
+	} else {
+		r.NameValid = true
+	}
+}
+
+// checkPluginMetadata は version(semver)/ description / author(object 形式)を検証する。
+func checkPluginMetadata(r *PluginAuditResult, top map[string]json.RawMessage) {
+	if v := jsonString(top["version"]); v != "" && !reSemver.MatchString(v) {
+		r.Score -= 6
+		r.Issues = append(r.Issues, fmt.Sprintf("version %q is not semantic (MAJOR.MINOR.PATCH)", v))
+	}
+	if jsonString(top["description"]) == "" {
+		r.Score -= 3
+		r.Suggestions = append(r.Suggestions, "add a 'description' — shown in the plugin manager.")
+	}
+	// author は object(.name)であるべき。bare string は誤り。
+	if a, ok := top["author"]; ok && len(a) > 0 && a[0] == '"' {
+		r.Score -= 4
+		r.Suggestions = append(r.Suggestions, "author should be an object {name, email?, url?}, not a bare string.")
+	}
+}
+
 func auditMarketplace(top map[string]json.RawMessage) PluginAuditResult {
 	r := PluginAuditResult{Score: 100, Kind: "marketplace", ValidJSON: true}
 
@@ -125,8 +134,19 @@ func auditMarketplace(top map[string]json.RawMessage) PluginAuditResult {
 		r.NameValid = true
 	}
 
-	// owner.name 必須。owner が object でない(string 等)場合は malformed として
-	// "required" とは区別する — 誤診断(値はあるのに「欠落」と言う)を避ける。
+	checkMarketplaceOwner(&r, top)
+	checkMarketplacePlugins(&r, top)
+	sort.Strings(r.Components)
+
+	if r.Score < 0 {
+		r.Score = 0
+	}
+	return r
+}
+
+// checkMarketplaceOwner は owner.name の存在を検証する。owner が object でない場合は
+// malformed として "required" と区別する(値はあるのに「欠落」と誤診断しない)。
+func checkMarketplaceOwner(r *PluginAuditResult, top map[string]json.RawMessage) {
 	ownerName := ""
 	if raw, ok := top["owner"]; ok {
 		var o struct {
@@ -143,9 +163,11 @@ func auditMarketplace(top map[string]json.RawMessage) PluginAuditResult {
 		r.Score -= 15
 		r.Issues = append(r.Issues, "owner.name is required")
 	}
+}
 
-	// plugins は配列必須。配列でない(string/object 等)場合は malformed として
-	// "empty" とは区別する — 壊れている manifest を「空」と誤報しない。
+// checkMarketplacePlugins は plugins[](配列必須)の各 entry の name(kebab/unique)と
+// source を検証する。配列でない場合は malformed として "empty" と区別する。
+func checkMarketplacePlugins(r *PluginAuditResult, top map[string]json.RawMessage) {
 	var plugins []struct {
 		Name        string          `json:"name"`
 		Source      json.RawMessage `json:"source"`
@@ -179,14 +201,8 @@ func auditMarketplace(top map[string]json.RawMessage) PluginAuditResult {
 			}
 			seen[p.Name] = true
 		}
-		checkMarketplaceSource(label, p.Source, &r)
+		checkMarketplaceSource(label, p.Source, r)
 	}
-	sort.Strings(r.Components)
-
-	if r.Score < 0 {
-		r.Score = 0
-	}
-	return r
 }
 
 // ─── helpers ───
