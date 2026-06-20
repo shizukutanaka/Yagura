@@ -155,7 +155,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
   ほぼ確実に本物。既存レンズを再利用するだけでロジック再実装なし。非テストかつパース可能な
   .go に scope を確定してから委譲(下流レンズの _test.go/parse-error 挙動差を吸収)。
   2 レンズ収束=medium / 3+ 収束=high。CLI `hotspot --dir . [--min-lenses N] [--strict]`、
-  MCP `yagura_hotspot`★ v0.70
+  MCP `yagura_hotspot`★ v0.70; `ReleaseReadinessExt` top finding resolved v0.71
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

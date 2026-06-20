@@ -4,6 +4,59 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.71.0] - 2026-06-20
+
+### Theme — "hotspot-driven refactor: proving the lens is actionable"
+
+#### Refactor: `plantracker.ReleaseReadinessExt` — struct-based API
+
+v0.70.0 delivered `hotspot` and immediately identified its top target:
+`ReleaseReadinessExt` in `internal/plantracker/plantracker.go`, flagged by
+**three independent lenses simultaneously** (complexity + flagarg + paramcheck).
+
+v0.71.0 acts on that finding — proving that hotspot is not just a report but a
+concrete guide to higher-confidence refactoring:
+
+- **New type `plantracker.ReadinessInput`** bundles the six positional parameters
+  into a named struct. Each field's role is explicit at the call site; the two
+  booleans (`HasProhibitedFindings`, `AIHasCritical`) can no longer be
+  accidentally transposed.
+- **`ReleaseReadinessExt(in ReadinessInput) int`** (1 parameter vs. 6) — passes
+  to five extracted sub-helpers, each with a single responsibility:
+  `planScoreFrom`, `ciScoreFrom`, `criticalScoreFrom`, `qualityScoreFrom`,
+  `aiSafeScoreFrom`. McCabe complexity of the main function drops from ~12 to ~3.
+- **`ReleaseReadiness` shim unchanged** — still takes 4 positional args, builds
+  `ReadinessInput` internally, delegates to `ReleaseReadinessExt`. All existing
+  callers of the shim compile without modification.
+- Callers updated: `internal/mcp/tools_plan.go`, `cmd/yagura/cli.go`
+  (both used the 6-arg form).
+- TDD Red→Green: tests in `plantracker_test.go` updated to struct-literal form
+  before the implementation (compile error confirmed first).
+
+#### Hotspot dogfood — before vs. after
+
+```
+# v0.70.0 (before):
+hotspot: 122 files, 112 funcs flagged ≥1 lens, 3 converge on ≥2 lenses
+high    complexity+flagarg+paramcheck  internal/plantracker  ReleaseReadinessExt  ← fixed here
+medium  flagarg+returncheck            cmd/yagura/cli.go     resolveSingleAuditTarget
+medium  complexity+paramcheck          internal/returncheck  scanFile
+
+# v0.71.0 (after):
+hotspot: 122 files, 112 funcs flagged ≥1 lens, 2 converge on ≥2 lenses
+medium  flagarg+returncheck            cmd/yagura/cli.go     resolveSingleAuditTarget
+medium  complexity+paramcheck          internal/returncheck  scanFile
+```
+
+The top-priority finding disappeared from the hotspot list because it was
+actually fixed, not because the lens was tuned. This is the Socratic proof:
+**the lens found the right target; the refactor removed the smell**.
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. No new packages; `ReadinessInput` is
+a plain struct in the existing `internal/plantracker` package.
+Reproducible build: 66 consecutive releases (v0.6 → v0.71).
+
 ## [v0.70.0] - 2026-06-20
 
 ### Theme — "hotspot: convergent-signal synthesis (Socratic blind spot VI)"

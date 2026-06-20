@@ -3438,8 +3438,10 @@ func cliReleaseRadar(args []string, stdout, stderr io.Writer) error {
 		if *scanCode {
 			aiResult = scanProjectAICodeCLI(p.LocalPath)
 		}
-		readiness := plantracker.ReleaseReadinessExt(plan, ciStatus, openCrit,
-			false, aiResult.RiskScore, aiResult.HasCritical)
+		readiness := plantracker.ReleaseReadinessExt(plantracker.ReadinessInput{
+			Plan: plan, CIStatus: ciStatus, OpenCriticalIssues: openCrit,
+			AIRiskScore: aiResult.RiskScore, AIHasCritical: aiResult.HasCritical,
+		})
 		reason := pickReleaseReason(plan, ciStatus, openCrit, aiResult.HasCritical, aiResult.RiskScore)
 		items = append(items, plantracker.RankedProject{
 			Slug:               p.Slug,

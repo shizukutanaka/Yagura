@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.70.0** — 77 MCP tools, 71 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). New `hotspot` lens (convergent-signal synthesis) — closes the Socratic blind spot VI: the five preceding lenses each report independently, but nothing examined where their signals *converge*. A function flagged by complexity AND paramcheck AND returncheck simultaneously is a far higher-confidence refactor target than one flagged by a single lens. hotspot reuses the four signature lenses and reports functions flagged by 2+ of them, ranked by convergence count. Reproducible build verified (byte-for-byte identical via `make verify`).
+Status: **v0.71.0** — 77 MCP tools, 71 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). Hotspot-driven refactor: `ReleaseReadinessExt` (triple-flagged by complexity+flagarg+paramcheck) refactored to `ReadinessInput` struct + five extracted sub-helpers — proves hotspot is actionable, not just reportive. Hotspot list shrinks from 3 → 2 convergences after the fix. Reproducible build verified (byte-for-byte identical via `make verify`).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-65 consecutive releases (v0.6 → v0.70) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+66 consecutive releases (v0.6 → v0.71) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

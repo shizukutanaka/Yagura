@@ -135,8 +135,10 @@ func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
 					aiResult = scanProjectAICode(p.LocalPath)
 				}
 
-				readiness := plantracker.ReleaseReadinessExt(plan, ciStatus, openCrit,
-					false, aiResult.RiskScore, aiResult.HasCritical)
+				readiness := plantracker.ReleaseReadinessExt(plantracker.ReadinessInput{
+					Plan: plan, CIStatus: ciStatus, OpenCriticalIssues: openCrit,
+					AIRiskScore: aiResult.RiskScore, AIHasCritical: aiResult.HasCritical,
+				})
 				reason := pickReason(plan, ciStatus, openCrit, aiResult.HasCritical, aiResult.RiskScore)
 				items = append(items, plantracker.RankedProject{
 					Slug:               p.Slug,
