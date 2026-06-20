@@ -67,6 +67,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/deprank"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
+	"github.com/shizukutanaka/yagura/internal/hotspot"
 	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
@@ -135,6 +136,7 @@ var cliHandlers = map[string]cliHandler{
 	"flag-arg": cliFlagArg, "return-check": cliReturnCheck,
 	"err-discard": cliErrDiscard,
 		"dep-rank": cliDepRank,
+		"hotspot":  cliHotspot,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2648,6 +2650,38 @@ func cliDepRank(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ─── hotspot (v0.70.0) ───────────────────────────────────────
+
+// cliHotspot は `yagura hotspot` を処理する。4 つのシグネチャ系レンズ
+// (complexity / paramcheck / flagarg / returncheck)を同じ file set に適用し、
+// 複数レンズが独立に指摘した関数(= 収束シグナル)を高信頼リファクタ対象として報告。
+// ソクラテス的動機: 個々のレンズは偽陽性を持つが、独立シグナルの収束は高信頼。
+// --min-lenses で収束数の下限(default 2)、--strict で hotspot 検出時 exit 1。
+func cliHotspot(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("hotspot", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	minLenses := fset.Int("min-lenses", 2, "minimum lenses that must converge to report a hotspot (default 2)")
+	strict := fset.Bool("strict", false, "exit non-zero if any hotspot is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := hotspot.Scan(sr.Files, *minLenses)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanHotspot(stdout, rep)
+	if *strict && len(rep.Hotspots) > 0 {
+		return fmt.Errorf("%d convergent-signal hotspot(s)", len(rep.Hotspots))
+	}
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4507,7 +4541,7 @@ var yaguraVerbs = []string{
 	"code-health", "complexity", "completion", "coupling", "coverage",
 	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
-	"harness-coverage", "harness-recommend", "help", "init-sh", "inject-scan",
+	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
 	"list", "mcp-audit", "ops-risk", "parallel-plan", "param-check", "path-policy",
 	"pin-drift", "plan-status", "plugin-audit", "progress-file", "publicity-scan",
 	"quality-check", "recv-check", "recovery-decide", "register", "release-radar",
@@ -4618,6 +4652,7 @@ func buildZshVerbLines() string {
 		"harness-coverage":     "Fowler taxonomy self-audit (4 quadrants)",
 		"harness-recommend":    "Claude Code .claude/ scaffold by language",
 		"help":                 "print help message",
+		"hotspot":              "convergent-signal hotspots: functions flagged by 2+ signature lenses",
 		"init-sh":              "generate init.sh or init.ps1 for agent sessions",
 		"inject-scan":          "scan untrusted content for indirect prompt injection",
 		"list":                 "list registry projects",

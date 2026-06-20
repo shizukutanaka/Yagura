@@ -22,6 +22,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
+	"github.com/shizukutanaka/yagura/internal/hotspot"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
@@ -978,6 +979,41 @@ func buildDepRankTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "module_prefix required"}
 			}
 			rep := deprank.Scan(in.Files, in.ModulePrefix, in.Threshold)
+			return rep, nil
+		},
+	}
+}
+
+func buildHotspotTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_hotspot",
+		Description: "[Q] Convergent-signal hotspots: functions flagged by 2+ signature lenses (complexity/param/flag/return)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+				"min_lenses": map[string]any{
+					"type":        "integer",
+					"description": "Minimum number of lenses that must converge to report a hotspot (default 2)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files     map[string]string `json:"files"`
+				MinLenses int               `json:"min_lenses"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := hotspot.Scan(in.Files, in.MinLenses)
 			return rep, nil
 		},
 	}

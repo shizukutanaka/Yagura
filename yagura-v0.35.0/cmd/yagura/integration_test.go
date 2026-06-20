@@ -179,6 +179,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_err_discard",
 		// v0.69 — package dependency rank (in-degree; blast radius when changed)
 		"yagura_dep_rank",
+		// v0.70 — convergent-signal hotspots (functions flagged by 2+ signature lenses)
+		"yagura_hotspot",
 		// v0.36 — package import coupling (architecture / SDP)
 		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)

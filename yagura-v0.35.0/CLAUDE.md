@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 70 internal packages
+## Map — 71 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 76 tool definitions
+- `internal/mcp` — MCP server + 77 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -148,6 +148,14 @@ cortex flywheel 4 段階すべてを単体で機械化:
   どのレンズも測っていなかった。in-degree が高い内部パッケージ = 変更時に多くの importers を
   コンパイルエラー/型エラーリスクにさらす。threshold(default 5)超過を severity 付きで flag。
   CLI `dep-rank --dir . [--module M] [--threshold N] [--top N]`、MCP `yagura_dep_rank`★ v0.69
+- `internal/hotspot` — 4 つのシグネチャ系レンズ(complexity/paramcheck/flagarg/returncheck)を
+  同じ file set に適用し、複数レンズが独立に指摘した関数(収束シグナル)を高信頼リファクタ対象
+  として報告(ソクラテス新視点 VI、synthesis)。個々のレンズは偽陽性を持つが、独立シグナルの
+  *収束* は単一シグナルより高信頼——引数 6 個 *かつ* 戻り値 4 個 *かつ* 複雑度超過の関数は
+  ほぼ確実に本物。既存レンズを再利用するだけでロジック再実装なし。非テストかつパース可能な
+  .go に scope を確定してから委譲(下流レンズの _test.go/parse-error 挙動差を吸収)。
+  2 レンズ収束=medium / 3+ 収束=high。CLI `hotspot --dir . [--min-lenses N] [--strict]`、
+  MCP `yagura_hotspot`★ v0.70
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

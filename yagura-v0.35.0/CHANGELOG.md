@@ -4,6 +4,62 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.70.0] - 2026-06-20
+
+### Theme — "hotspot: convergent-signal synthesis (Socratic blind spot VI)"
+
+#### New lens: `internal/hotspot` (multi-lens convergence)
+
+- **Why now (Socratic)**: v0.65–v0.69 added five independent lenses (complexity,
+  paramcheck, flagarg, returncheck, errdiscard, deprank). Each reports on its own.
+  The next question: *what do five independent reports still miss?* The answer:
+  **where their signals converge**. Each lens individually has false positives —
+  a 6-parameter function may be fine; a 4-return function may be fine; a complex
+  function may be irreducibly complex. But a function flagged by complexity **and**
+  paramcheck **and** returncheck *simultaneously* is almost certainly a real
+  refactor target. The convergence of independent signals is higher-confidence
+  than any single signal. No lens captured this intersection. Now `hotspot` does.
+- `hotspot.Scan(files, minLenses)` runs the four function-level signature lenses
+  (complexity / paramcheck / flagarg / returncheck) at their default thresholds
+  over the same file set, keys findings by `(file, func)` — all four name methods
+  identically as `(Recv).Method` and report the FuncDecl line, so the key is
+  collision-safe — and reports functions flagged by `minLenses`+ lenses (default 2).
+- Severity: 2 converging lenses = medium, 3+ = high. Deterministic: sorted by
+  convergence count desc, then file/line/func. Reuses existing lenses with **zero
+  logic re-implementation** (ADR-0001). hotspot defines its own scope (non-test,
+  parseable `.go` files) before delegating, so the result is well-defined
+  regardless of each sub-lens's individual `_test.go` / parse-error handling.
+- Standalone lens (not folded into the code-health composite) — consistent project
+  pattern. 14 table-driven tests, all passing under `-race`.
+
+#### CLI + MCP
+- CLI `hotspot --dir . [--min-lenses N] [--strict]` (`--strict` exits non-zero on findings)
+- MCP `yagura_hotspot` (77th tool) — `[Q] Convergent-signal hotspots`
+
+#### Dogfood: 112 single-lens flags → 3 convergent hotspots
+
+Ran `yagura hotspot` on Yagura itself. Of **112 functions** flagged by at least
+one signature lens, only **3** converge on 2+ lenses — the synthesis distills the
+noise into a short, high-confidence priority list:
+
+```
+high    complexity+flagarg+paramcheck  internal/plantracker  ReleaseReadinessExt
+medium  flagarg+returncheck            cmd/yagura/cli.go     resolveSingleAuditTarget
+medium  complexity+paramcheck          internal/returncheck  scanFile
+```
+
+`ReleaseReadinessExt` is the standout — flagged by **three** independent lenses
+at once (high cyclomatic complexity, a bool flag argument, and too many params).
+That triple convergence makes it the single clearest refactor target in the
+codebase, surfaced from 112 candidates without manual triage. (Catalogued as a
+documented follow-up; the lens itself — the 112→3 distillation — is this
+release's deliverable, mirroring how deprank/errdiscard left their findings
+catalogued.)
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 65 consecutive
+releases verified byte-for-byte identical.
+
 ## [v0.69.0] - 2026-06-20
 
 ### Theme — "deprank: package-level structural coupling (Socratic blind spot V)"

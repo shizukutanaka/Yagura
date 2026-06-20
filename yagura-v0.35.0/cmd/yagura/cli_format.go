@@ -33,6 +33,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/deprank"
+	"github.com/shizukutanaka/yagura/internal/hotspot"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
@@ -1574,4 +1575,20 @@ func humanDepRank(w io.Writer, r deprank.Report, topN int) {
 			fmt.Fprintf(w, "    %s\n", f.Message)
 		}
 	}
+}
+
+func humanHotspot(w io.Writer, r hotspot.Report) {
+	fmt.Fprintf(w, "hotspot: %d files, %d funcs flagged by ≥1 lens, %d converge on ≥%d lenses\n",
+		r.FilesScanned, r.FuncsFlagged, len(r.Hotspots), r.MinLenses)
+	if len(r.Hotspots) == 0 {
+		fmt.Fprintln(w, "no convergent-signal hotspots — independent lenses do not overlap")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tLENSES\tFILE\tLINE\tFUNC")
+	for _, h := range r.Hotspots {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+			h.Severity, strings.Join(h.Lenses, "+"), h.File, h.Line, h.Func)
+	}
+	tw.Flush()
 }
