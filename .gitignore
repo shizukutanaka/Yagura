@@ -3,3 +3,4 @@
 # NOT as committed plaintext — committing the raw tree trips the project's
 # own fake-secret test fixtures under GitHub push protection.
 /yagura-v*/
+/.claude/
