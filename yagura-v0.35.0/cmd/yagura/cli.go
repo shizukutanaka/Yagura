@@ -65,6 +65,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
+	"github.com/shizukutanaka/yagura/internal/deprank"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
@@ -133,6 +134,7 @@ var cliHandlers = map[string]cliHandler{
 	"recv-check": cliRecvCheck, "code-health": cliCodeHealth, "param-check": cliParamCheck,
 	"flag-arg": cliFlagArg, "return-check": cliReturnCheck,
 	"err-discard": cliErrDiscard,
+		"dep-rank": cliDepRank,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2616,6 +2618,36 @@ func cliErrDiscard(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ─── dep-rank (v0.69.0) ─────────────────────────────────────
+
+// cliDepRank は `yagura dep-rank` を処理する。Go の import グラフから内部パッケージの
+// in-degree(何個の内部パッケージに参照されているか)を計算し、blast radius が大きい
+// パッケージを特定する。
+// ソクラテス的動機: 全先行レンズは関数レベル(complexity/paramcheck/flagarg/returncheck)か
+// コールサイトレベル(errdiscard)で動作しており、パッケージグラフ構造を見ていなかった。
+func cliDepRank(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("dep-rank", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	module := fset.String("module", "github.com/shizukutanaka/yagura", "Go module prefix")
+	threshold := fset.Int("threshold", 5, "minimum in-degree to flag (default 5)")
+	topN := fset.Int("top", 10, "show top N packages by in-degree in human output")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := deprank.Scan(sr.Files, *module, *threshold)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanDepRank(stdout, rep, *topN)
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4473,7 +4505,7 @@ var yaguraVerbs = []string{
 	"alert-fix", "alert-resolve", "alert-snapshot", "api-doc",
 	"assert-check", "ast-check", "cc-security", "claudemd-audit",
 	"code-health", "complexity", "completion", "coupling", "coverage",
-	"dead-code", "diff-scan", "err-discard", "err-policy", "feature-list", "flag-arg", "flow-risk",
+	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "init-sh", "inject-scan",
 	"list", "mcp-audit", "ops-risk", "parallel-plan", "param-check", "path-policy",
@@ -4569,6 +4601,7 @@ func buildZshVerbLines() string {
 		"coupling":             "package import coupling: fan-in/out + instability",
 		"coverage":             "scan blind-spot report: covered vs uncovered-source",
 		"dead-code":            "dead unexported declarations within their own package",
+		"dep-rank":             "package import in-degree rank (blast radius when changed)",
 		"diff-scan":            "delta scan of unified diff: secrets in added lines",
 		"err-discard":          "error-discard smell: call sites silently ignoring returned errors",
 		"err-policy":           "error-context discipline: wrap ratio + blank-discard",

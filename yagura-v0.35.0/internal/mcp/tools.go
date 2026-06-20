@@ -175,6 +175,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildReturnCheckTool(d))
 	// [Q] v0.68.0 — error-discard smell (call sites silently ignoring returned errors)
 	s.Register(buildErrDiscardTool(d))
+	// [Q] v0.69.0 — package dependency rank (in-degree; blast radius when changed)
+	s.Register(buildDepRankTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **75 tools**.
+Generated from a live yagura — **76 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (28)
+- [Misc](#misc) (29)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -458,6 +458,20 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 ### `yagura_dedupe_stats`
 
 [S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.
+
+---
+
+### `yagura_dep_rank`
+
+[Q] Package dependency rank: internal packages by import in-degree (blast radius when changed)
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
+| `module_prefix` (string) | ★ | Go module path prefix (e.g. github.com/shizukutanaka/yagura) |
+| `threshold` (integer) |  | Minimum in-degree to flag (default 5) |
 
 ---
 

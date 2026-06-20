@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.68.0** — 75 MCP tools, 69 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). New `errdiscard` lens (call-site discipline) — closes the Socratic blind spot IV: the signature trilogy (paramcheck+flagarg+returncheck) profiled function definitions but call-site behavior was invisible. errdiscard detects same-package calls where a function returning `error` is invoked as an expression statement, silently discarding the error. Reproducible build verified (byte-for-byte identical via `make verify`).
+Status: **v0.69.0** — 76 MCP tools, 70 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). New `deprank` lens (package-level structural coupling) — closes the Socratic blind spot V: all prior lenses operated at function or call-site level but none captured the package import graph. deprank computes internal package in-degree (how many other internal packages import it) to surface high-coupling packages whose change has the highest blast radius. Reproducible build verified (byte-for-byte identical via `make verify`).
 
 ---
 
@@ -36,7 +36,7 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
 │        ▼                              │              │
 │  ┌────────────────────────────────────────────────┐  │
 │  │  yagura daemon (single binary, ~9 MB)          │  │
-│  │  - 75 MCP tools                                │  │
+│  │  - 76 MCP tools                                │  │
 │  │  - HTTP hook receiver                          │  │
 │  │  - Prometheus /metrics                         │  │
 │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -69,7 +69,7 @@ icon that opens in its own window, like a native app. On Windows, double-click
 as an app window; on macOS/Linux, run `yagura-tray` for the same one-click
 launch. From the app you can **register your first project with a form** (no
 terminal needed) — it goes through the MCP server and is audited like any other
-call. This adds nothing to the core — the daemon and the 75 MCP tools are
+call. This adds nothing to the core — the daemon and the 76 MCP tools are
 unchanged; the desktop app is just the dashboard made installable via web
 standards. See [docs/desktop.md](docs/desktop.md).
 
@@ -181,7 +181,7 @@ Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has bee
 
 ### Other agents (Gemini CLI, Codex, custom)
 
-Yagura is agent-agnostic. Its 75 MCP tools work with **any** MCP client, and the
+Yagura is agent-agnostic. Its 76 MCP tools work with **any** MCP client, and the
 daemon's hook ingestion is agent-neutral too: **point any agent's lifecycle
 hooks at `/hooks/agent`** (Gemini CLI, Codex, raw OpenTelemetry, or a generic
 shape) and the receiver normalizes them via `internal/agentevent` — aligned to
@@ -193,7 +193,7 @@ normalization for programmatic use, and `/metrics` exports per-project, per-tool
 agent activity (`yagura_hook_tool_calls_total{project,tool}`, aligned to the
 OTel `gen_ai.tool.name` convention) for Prometheus/Grafana.
 
-## MCP tools (75 total)
+## MCP tools (76 total)
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-63 consecutive releases (v0.6 → v0.68) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+64 consecutive releases (v0.6 → v0.69) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
@@ -267,7 +267,7 @@ sha256sum -c SHA256SUMS
 ```
 .
 ├── cmd/yagura/              # Entry point (single binary)
-├── internal/                # 69 packages, none exported
+├── internal/                # 70 packages, none exported
 │   ├── mcp/                 # MCP server, tool registration
 │   ├── registry/            # Project registry (JSON file per project)
 │   ├── scanner/             # Background sensor loop (24 h)

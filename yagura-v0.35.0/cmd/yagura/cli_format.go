@@ -32,6 +32,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
+	"github.com/shizukutanaka/yagura/internal/deprank"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
@@ -1540,4 +1541,37 @@ func humanErrDiscard(w io.Writer, r errdiscard.Report) {
 			f.Severity, f.File, f.Line, f.Caller, f.Callee)
 	}
 	tw.Flush()
+}
+
+// humanDepRank は deprank.Report を人が読みやすい形式で出力する。
+// topN: 上位 N パッケージを tabwriter テーブルで表示。
+func humanDepRank(w io.Writer, r deprank.Report, topN int) {
+	fmt.Fprintf(w, "dep-rank: %d packages, %d above threshold (in-degree ≥ %d)\n",
+		r.PackagesScanned, r.HighCoupling, r.Threshold)
+	if r.PackagesScanned == 0 {
+		fmt.Fprintln(w, "no packages found")
+		return
+	}
+	fmt.Fprintf(w, "max in-degree: %d, avg: %.2f\n", r.MaxInDegree, r.AvgInDegree)
+
+	// top N テーブル
+	top := r.Packages
+	if topN > 0 && topN < len(top) {
+		top = top[:topN]
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "IN\tOUT\tPACKAGE")
+	for _, p := range top {
+		fmt.Fprintf(tw, "%d\t%d\t%s\n", p.InDegree, p.OutDegree, p.ImportPath)
+	}
+	tw.Flush()
+
+	// findings
+	if len(r.Findings) > 0 {
+		fmt.Fprintln(w, "\nHigh-coupling packages (blast radius risk):")
+		for _, f := range r.Findings {
+			fmt.Fprintf(w, "  [%s] %s (in-degree %d)\n", f.Severity, f.ImportPath, f.InDegree)
+			fmt.Fprintf(w, "    %s\n", f.Message)
+		}
+	}
 }

@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 69 internal packages
+## Map — 70 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 75 tool definitions
+- `internal/mcp` — MCP server + 76 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -142,6 +142,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
   exported func/type/const/var/method = 仕様の無い契約。documented 率 + 未文書化
   シンボル一覧。godoc 規律(golint 互換)。CLI `api-doc --dir . [--min-doc R]`、
   MCP `yagura_api_doc`★ v0.36
+- `internal/deprank` — パッケージ import グラフの in-degree(被参照数)を go/parser で算出
+  (ソクラテス新視点 V)。全先行レンズは関数レベル/コールサイトレベルで動作していたが、
+  *パッケージグラフ構造結合*——どの内部パッケージが変更時に最大 blast radius を持つか——は
+  どのレンズも測っていなかった。in-degree が高い内部パッケージ = 変更時に多くの importers を
+  コンパイルエラー/型エラーリスクにさらす。threshold(default 5)超過を severity 付きで flag。
+  CLI `dep-rank --dir . [--module M] [--threshold N] [--top N]`、MCP `yagura_dep_rank`★ v0.69
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

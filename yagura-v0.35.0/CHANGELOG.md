@@ -4,6 +4,80 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.69.0] - 2026-06-20
+
+### Theme — "deprank: package-level structural coupling (Socratic blind spot V)"
+
+#### Socratic narrative
+
+All prior lenses in the quality suite operated at the **function level**
+(complexity, paramcheck, flagarg, returncheck) or the **call-site level** (errdiscard).
+Together they profiled function signatures exhaustively and caught a key call-site
+discipline failure — but none of them could answer the question: *which internal
+packages, if changed, would break the most other packages?*
+
+This is the **package-graph structural coupling** blind spot. It is invisible to
+function-level lenses because it lives above the function boundary: in the module
+import graph. A package with high **in-degree** (many other internal packages
+import it) has a large **blast radius** — changing its API, types, or exported
+symbols forces recompilation and potentially type-error cascades across all its
+importers.
+
+ closes that gap as the **fifth Socratic lens** — the first to operate
+at the package-graph level.
+
+#### New lens:  (package dependency rank)
+
+- **What it detects**: internal packages with in-degree ≥ threshold (default 5),
+  ranked by how many other internal packages import them.
+- **Algorithm** (zero-dep, stdlib  only, ADR-0001 compliant):
+  1. Parse every  file (non-test —  excluded since test imports
+     do not propagate to consumers).
+  2. Derive each file's Go import path: .
+  3. Collect internal imports (those prefixed by ).
+  4. Build adjacency . Compute in-degree for each
+     internal package.
+  5. Rank by in-degree descending, import path ascending.
+- **Severity**:  (5–9),  (10–14),  (15+).
+- **Report fields**: , , ,
+  , ,  (all, sorted),  (above threshold).
+- **Deterministic**: sorted by in-degree desc then import path asc. Importers
+  list alphabetically sorted. Same input always produces identical Report.
+- 16 table-driven + independent tests, all passing under .
+
+#### CLI + MCP
+
+- CLI :
+  -  defaults to 
+  -  defaults to 5
+  -  shows top N packages in human output (default 10)
+  - Human output: summary line + tabwriter table (IN / OUT / PACKAGE)
+  - Below table: findings with severity and blast-radius message
+- MCP  (76th tool) — 
+
+#### Dogfood: 
+
+Running  on yagura itself (72 internal packages scanned):
+
+
+
+**Findings**:  (struct , validation, registry CRUD target)
+has in-degree 6 — the highest in the codebase.  (safe file
+write primitive) has in-degree 5. Both are appropriately stable leaf packages
+with zero out-degree, confirming they are depended upon without themselves
+depending on volatile packages (good architectural posture). The graph also
+confirms  (in-degree 4, out-degree 2) as the hub connecting
+project + atomicfile — consistent with its role as the portfolio inventory core.
+
+#### What's not yet covered
+
+- Cross-package in-degree using type information ( requires module
+  loading, incompatible with ADR-0001 zero-dep constraint). The current scope
+  covers the highest-value class: production import graph without test noise.
+- Cycle detection (import cycles are already rejected by the Go compiler;
+  deprank focuses on coupling *above* cycle prevention).
+- Weighted in-degree (weighting by importer stability, combining coupling + deprank).
+
 ## [v0.68.0] - 2026-06-20
 
 ### Theme — "errdiscard: call-site discipline (Socratic blind spot IV)"

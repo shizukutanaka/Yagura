@@ -18,6 +18,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
+	"github.com/shizukutanaka/yagura/internal/deprank"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
@@ -927,6 +928,57 @@ func buildErrDiscardTool(d Deps) *Tool {
 				"errors_discarded": rep.ErrorsDiscarded,
 				"findings":         rep.Findings,
 			}, nil
+		},
+	}
+}
+
+// ─── yagura_dep_rank (v0.69.0) ────────────────────────────────
+//
+// ソクラテス的動機: errdiscard まで全レンズが関数レベル(complexity/paramcheck/
+// flagarg/returncheck)かコールサイトレベル(errdiscard)で動作しており、
+// *パッケージレベルの構造結合*——どのパッケージが最も多くの内部パッケージから
+// 依存されているか(in-degree = blast radius)——を捉えるレンズが存在しなかった。
+// deprank は「パッケージグラフ構造」(ブラインドスポット V)を可視化する。
+
+func buildDepRankTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_dep_rank",
+		Description: "[Q] Package dependency rank: internal packages by import in-degree (blast radius when changed)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+				"module_prefix": map[string]any{
+					"type":        "string",
+					"description": "Go module path prefix (e.g. github.com/shizukutanaka/yagura)",
+				},
+				"threshold": map[string]any{
+					"type":        "integer",
+					"description": "Minimum in-degree to flag (default 5)",
+				},
+			},
+			"required": []string{"files", "module_prefix"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files        map[string]string `json:"files"`
+				ModulePrefix string            `json:"module_prefix"`
+				Threshold    int               `json:"threshold"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			if in.ModulePrefix == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "module_prefix required"}
+			}
+			rep := deprank.Scan(in.Files, in.ModulePrefix, in.Threshold)
+			return rep, nil
 		},
 	}
 }
