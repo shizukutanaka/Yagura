@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.71.0** — 77 MCP tools, 71 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). Hotspot-driven refactor: `ReleaseReadinessExt` (triple-flagged by complexity+flagarg+paramcheck) refactored to `ReadinessInput` struct + five extracted sub-helpers — proves hotspot is actionable, not just reportive. Hotspot list shrinks from 3 → 2 convergences after the fix. Reproducible build verified (byte-for-byte identical via `make verify`).
+Status: **v0.72.0** — 77 MCP tools, 71 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). Hotspot loop closed: all 3 convergent targets addressed (v0.71+v0.72). `hotspot` now reports 0 convergences on the codebase itself — independent lenses no longer overlap, meaning each previously-flagged smell has been resolved. Reproducible build verified (byte-for-byte identical via `make verify`).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-66 consecutive releases (v0.6 → v0.71) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+67 consecutive releases (v0.6 → v0.72) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

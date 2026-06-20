@@ -68,7 +68,15 @@ func Scan(files map[string]string, threshold int) Report {
 			continue
 		}
 		r.FilesScanned++
-		scanFile(path, src, threshold, &r, &totalReturns, &funcCount)
+		fr := scanFile(path, src, threshold)
+		r.Findings = append(r.Findings, fr.Findings...)
+		r.FuncsScanned += fr.FuncsScanned
+		r.TooManyReturns += fr.TooManyReturns
+		if fr.MaxReturns > r.MaxReturns {
+			r.MaxReturns = fr.MaxReturns
+		}
+		totalReturns += fr.TotalReturns
+		funcCount += fr.FuncCount
 	}
 	sort.Slice(r.Findings, func(i, j int) bool {
 		a, b := r.Findings[i], r.Findings[j]
@@ -86,9 +94,19 @@ func Scan(files map[string]string, threshold int) Report {
 	return r
 }
 
-func scanFile(path, src string, threshold int, r *Report, totalReturns, funcCount *int) {
+type fileScanResult struct {
+	Findings       []Finding
+	FuncsScanned   int
+	TooManyReturns int
+	MaxReturns     int
+	TotalReturns   int
+	FuncCount      int
+}
+
+func scanFile(path, src string, threshold int) fileScanResult {
+	var res fileScanResult
 	if strings.HasSuffix(path, "_test.go") {
-		return
+		return res
 	}
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, src, parser.AllErrors)
@@ -97,14 +115,14 @@ func scanFile(path, src string, threshold int, r *Report, totalReturns, funcCoun
 		if el, ok := err.(scanner.ErrorList); ok && len(el) > 0 {
 			line = el[0].Pos.Line
 		}
-		r.Findings = append(r.Findings, Finding{
+		res.Findings = append(res.Findings, Finding{
 			File: path, Line: line,
 			Rule: "parse-error", Severity: "low",
 			Message: "Go source did not parse: " + firstLine(err.Error()),
 		})
 	}
 	if f == nil {
-		return
+		return res
 	}
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -115,20 +133,20 @@ func scanFile(path, src string, threshold int, r *Report, totalReturns, funcCoun
 		if strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Benchmark") || strings.HasPrefix(name, "Example") {
 			continue
 		}
-		r.FuncsScanned++
+		res.FuncsScanned++
 		n := countReturns(fn.Type)
-		*funcCount++
-		*totalReturns += n
-		if n > r.MaxReturns {
-			r.MaxReturns = n
+		res.FuncCount++
+		res.TotalReturns += n
+		if n > res.MaxReturns {
+			res.MaxReturns = n
 		}
 		if n <= threshold {
 			continue
 		}
-		r.TooManyReturns++
+		res.TooManyReturns++
 		pos := fset.Position(fn.Pos())
 		qualName := funcDeclName(fn)
-		r.Findings = append(r.Findings, Finding{
+		res.Findings = append(res.Findings, Finding{
 			File:        path,
 			Line:        pos.Line,
 			Func:        qualName,
@@ -138,6 +156,7 @@ func scanFile(path, src string, threshold int, r *Report, totalReturns, funcCoun
 			Message:     buildMessage(qualName, n, threshold),
 		})
 	}
+	return res
 }
 
 // countReturns は FuncType の Results フィールドの戻り値を名前または型単位で数える。

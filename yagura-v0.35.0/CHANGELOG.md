@@ -4,6 +4,51 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.72.0] - 2026-06-20
+
+### Theme — "hotspot loop closed: 0 convergences"
+
+#### Refactors — hotspot targets #2 and #3
+
+v0.71.0 resolved the #1 hotspot finding (`ReleaseReadinessExt`).
+v0.72.0 resolves the remaining two, clearing the hotspot list to zero.
+
+**`resolveSingleAuditTarget` (cmd/yagura/cli.go, was flagged: flagarg+returncheck)**
+
+- `(path, content string, handled bool, err error)` → `(auditTargetResult, error)` fixes returncheck (4→2)
+- New `auditResolveOpts` struct bundles the four positional params including the `jsonOut bool` flag-arg;
+  named fields make each option's role explicit at all three call sites
+- Three callers updated (agent-config-audit, plugin-audit, mcp-config-audit):
+  `resolveSingleAuditTarget(stdout, auditResolveOpts{...})`; `tgt.Handled || err`
+- No logic change; existing integration tests (`TestCLI_AgentConfigAudit_*`, etc.) confirm green
+
+**`scanFile` (internal/returncheck/returncheck.go, was flagged: complexity+paramcheck)**
+
+- New `fileScanResult` struct captures `Findings`, `FuncsScanned`, `TooManyReturns`,
+  `MaxReturns`, `TotalReturns`, `FuncCount` (the six values previously written through
+  pointer params `r *Report, totalReturns, funcCount *int` — 5 params → 3)
+- `scanFile` returns `fileScanResult`; `Scan()` merges with `append + +=` — the mutation
+  pattern is gone, each file scan is now a pure local computation
+- 15 existing returncheck tests all pass; behaviour unchanged
+
+#### Hotspot dogfood — Socratic loop closed
+
+```
+# v0.70.0: 112 funcs flagged ≥1 lens, 3 converge on ≥2 lenses
+# v0.71.0: 112 funcs flagged ≥1 lens, 2 converge on ≥2 lenses
+# v0.72.0: 111 funcs flagged ≥1 lens, 0 converge on ≥2 lenses
+hotspot: no convergent-signal hotspots — independent lenses do not overlap
+```
+
+All three high-confidence targets surfaced by the hotspot lens have been fixed.
+The loop is closed: hotspot identified targets → each target was refactored away →
+hotspot confirms the smell is gone. This completes the Socratic cycle for
+convergent-signal analysis.
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 67 consecutive
+releases (v0.6 → v0.72).
+
 ## [v0.71.0] - 2026-06-20
 
 ### Theme — "hotspot-driven refactor: proving the lens is actionable"

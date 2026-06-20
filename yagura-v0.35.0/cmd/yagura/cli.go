@@ -846,31 +846,46 @@ func minScoreGate(min int, scored map[string]int) error {
 	return fmt.Errorf("%d item(s) below --min-score %d: %s", len(below), min, strings.Join(below, ", "))
 }
 
+// auditResolveOpts は resolveSingleAuditTarget の入力を束ねる構造体。
+type auditResolveOpts struct {
+	FileFlag string
+	Rest     []string
+	JSONOut  bool
+	ItemsKey string
+}
+
+// auditTargetResult は resolveSingleAuditTarget の出力を束ねる構造体。
+type auditTargetResult struct {
+	Path    string
+	Content string
+	Handled bool // true = 呼出側は return err で即抜け
+}
+
 // resolveSingleAuditTarget は単一ファイル audit(agent-config / plugin / mcp)で
-// 共通の前段を担う: 対象パスを解決(--file を位置引数で上書き)し、
-//   - ファイル不在なら "graceful zero"(scanned:0 / flagged:0 / itemsKey:[])を
-//     出力して handled=true を返す(未配置リポジトリでも素直に 0 件)。
-//   - 在れば content を読み出して返す(read 失敗は "read <p>:" で wrap)。
+// 共通の前段を担う: 対象パスを解決(FileFlag を Rest[0] で上書き)し、
+//   - ファイル不在なら "graceful zero"(scanned:0 / flagged:0 / ItemsKey:[])を
+//     出力して Handled=true を返す(未配置リポジトリでも素直に 0 件)。
+//   - 在れば Content を読み出して返す(read 失敗は "read <p>:" で wrap)。
 //
-// 呼出側は `if handled || err != nil { return err }` で分岐する。itemsKey は
-// JSON 空配列のキー("configs" / "manifests")で、各 audit の出力 shape に合わせる。
-func resolveSingleAuditTarget(stdout io.Writer, fileFlag string, rest []string, jsonOut bool, itemsKey string) (path, content string, handled bool, err error) {
-	path = fileFlag
-	if len(rest) > 0 {
-		path = rest[0] // 位置引数があれば優先
+// 呼出側は `if tgt.Handled || err != nil { return err }` で分岐する。
+func resolveSingleAuditTarget(stdout io.Writer, opts auditResolveOpts) (auditTargetResult, error) {
+	path := opts.FileFlag
+	if len(opts.Rest) > 0 {
+		path = opts.Rest[0]
 	}
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-		if jsonOut {
-			return path, "", true, emitJSON(stdout, map[string]any{"scanned": 0, "flagged": 0, itemsKey: []any{}})
+		if opts.JSONOut {
+			return auditTargetResult{Path: path, Handled: true},
+				emitJSON(stdout, map[string]any{"scanned": 0, "flagged": 0, opts.ItemsKey: []any{}})
 		}
 		fmt.Fprintln(stdout, "scanned: 0   flagged: 0")
-		return path, "", true, nil
+		return auditTargetResult{Path: path, Handled: true}, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return path, "", false, fmt.Errorf("read %s: %w", path, err)
+		return auditTargetResult{Path: path}, fmt.Errorf("read %s: %w", path, err)
 	}
-	return path, string(data), false, nil
+	return auditTargetResult{Path: path, Content: string(data)}, nil
 }
 
 func cliSkillAudit(args []string, stdout, stderr io.Writer) error {
@@ -1093,10 +1108,11 @@ func cliAgentConfigAudit(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return errUsage
 	}
-	path, content, handled, err := resolveSingleAuditTarget(stdout, *file, rest, *jsonOut, "configs")
-	if handled || err != nil {
+	tgt, err := resolveSingleAuditTarget(stdout, auditResolveOpts{FileFlag: *file, Rest: rest, JSONOut: *jsonOut, ItemsKey: "configs"})
+	if tgt.Handled || err != nil {
 		return err
 	}
+	path, content := tgt.Path, tgt.Content
 	res := harness.AuditAgentConfig(content)
 	flagged := 0
 	if len(res.Issues) > 0 {
@@ -1134,10 +1150,11 @@ func cliPluginAudit(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return errUsage
 	}
-	path, content, handled, err := resolveSingleAuditTarget(stdout, *file, rest, *jsonOut, "manifests")
-	if handled || err != nil {
+	tgt, err := resolveSingleAuditTarget(stdout, auditResolveOpts{FileFlag: *file, Rest: rest, JSONOut: *jsonOut, ItemsKey: "manifests"})
+	if tgt.Handled || err != nil {
 		return err
 	}
+	path, content := tgt.Path, tgt.Content
 	res := harness.AuditPluginManifest(content)
 	flagged := 0
 	if len(res.Issues) > 0 {
@@ -1181,10 +1198,11 @@ func cliMCPAudit(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return errUsage
 	}
-	path, content, handled, err := resolveSingleAuditTarget(stdout, *file, rest, *jsonOut, "configs")
-	if handled || err != nil {
+	tgt, err := resolveSingleAuditTarget(stdout, auditResolveOpts{FileFlag: *file, Rest: rest, JSONOut: *jsonOut, ItemsKey: "configs"})
+	if tgt.Handled || err != nil {
 		return err
 	}
+	path, content := tgt.Path, tgt.Content
 	res := harness.AuditMCPConfig(content)
 	flagged := 0
 	if len(res.Issues) > 0 {
