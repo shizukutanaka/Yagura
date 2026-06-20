@@ -65,6 +65,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
+	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
@@ -129,7 +130,7 @@ var cliHandlers = map[string]cliHandler{
 	"assert-check": cliAssertCheck, "err-policy": cliErrPolicy, "complexity": cliComplexity,
 	"coupling": cliCoupling, "api-doc": cliAPIDoc, "dead-code": cliDeadCode,
 	"recv-check": cliRecvCheck, "code-health": cliCodeHealth, "param-check": cliParamCheck,
-	"flag-arg": cliFlagArg,
+	"flag-arg": cliFlagArg, "return-check": cliReturnCheck,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2543,6 +2544,42 @@ func cliFlagArg(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ─── return-check (v0.67.0) ──────────────────────────────────
+
+// cliReturnCheck は `yagura return-check` を処理する。Go 関数の戻り値の数を計測し、
+// しきい値(--max、既定 3)超過の関数を flag する。
+// ソクラテス的動機: paramcheck が引数の入口を測り、flagarg が引数の意味的制御結合を測る。
+// return-check はその「出口の対」として関数シグネチャの全体像(入力幅+出力幅+意味)を補完する。
+func cliReturnCheck(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("return-check", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	max := fset.Int("max", 3, "return-value count threshold; functions above this are flagged (default 3)")
+	strict := fset.Bool("strict", false, "exit non-zero if any function exceeds --max")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return err
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+
+	rep := returncheck.Scan(sr.Files, *max)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanReturnCheck(stdout, rep)
+	}
+	if *strict && rep.TooManyReturns > 0 {
+		return fmt.Errorf("%d function(s) exceed return-value threshold %d (max observed %d)", rep.TooManyReturns, rep.Threshold, rep.MaxReturns)
+	}
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4406,7 +4443,7 @@ var yaguraVerbs = []string{
 	"list", "mcp-audit", "ops-risk", "parallel-plan", "param-check", "path-policy",
 	"pin-drift", "plan-status", "plugin-audit", "progress-file", "publicity-scan",
 	"quality-check", "recv-check", "recovery-decide", "register", "release-radar",
-	"review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
+	"return-check", "review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
 	"self-improve-history", "session-summary", "settings-audit", "skill-audit",
 	"stats", "test-audit", "today", "unregister", "update", "vex-audit",
 	"verify", "version", "workflow-audit",
@@ -4501,6 +4538,7 @@ func buildZshVerbLines() string {
 		"feature-list":         "convert Plan.md to Anthropic-style feature-list.json",
 		"flag-arg":             "boolean flag-argument smell (Fowler); bool params encoding hidden branches",
 		"flow-risk":            "temporal scan of op sequence: exfiltration / injection",
+		"return-check":         "many-return-values smell; output width — pair to param-check (input width)",
 		"gha-audit":            "GitHub Actions workflow audit (pinning/permissions)",
 		"get":                  "get project by slug",
 		"graph":                "dependency graph queries over registry depends_on",

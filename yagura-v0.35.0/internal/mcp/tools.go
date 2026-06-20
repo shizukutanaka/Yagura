@@ -171,6 +171,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildParamCheckTool(d))
 	// [Q] v0.66.0 — boolean flag-argument smell (Fowler; semantic coupling)
 	s.Register(buildFlagArgTool(d))
+	// [Q] v0.67.0 — many-return-values smell (output width; pair to param_check)
+	s.Register(buildReturnCheckTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

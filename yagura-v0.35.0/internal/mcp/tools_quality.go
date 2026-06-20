@@ -21,6 +21,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
+	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
@@ -576,6 +577,57 @@ func buildFlagArgTool(d Deps) *Tool {
 				"threshold":     rep.Threshold,
 				"flags_found":   rep.FlagsFound,
 				"findings":      rep.Findings,
+			}, nil
+		},
+	}
+}
+
+// ─── yagura_return_check (v0.67.0) ───────────────────────────
+//
+// ソクラテス的動機: paramcheck は関数の入口の広さ(引数の数)を測り、flagarg は
+// 引数の意味的制御結合(bool 旗引数)を測る。しかし「出口の幅」——戻り値の数——は
+// 別の軸であり、どのレンズも測っていなかった。Go の `(T, error)` は慣用的だが、
+// `(T1, T2, T3, error)` は「関数がやりすぎ」の臭いになりうる。
+// 本 tool は paramcheck/flagarg の「出口の対」として関数のシグネチャ全体像を補完する。
+
+func buildReturnCheckTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_return_check",
+		Description: "[G] Many-return-values smell (Go). Counts return values per function; flags functions over threshold (default 3). Complements param_check (input width) with output width — together they form a complete function-signature profile.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for .go files to analyse",
+				},
+				"threshold": map[string]any{
+					"type":        "integer",
+					"description": "return-value count threshold for findings (default 3; flags 4+ returns)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files     map[string]string `json:"files"`
+				Threshold int               `json:"threshold"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := returncheck.Scan(in.Files, in.Threshold)
+			return map[string]any{
+				"files_scanned":    rep.FilesScanned,
+				"funcs_scanned":    rep.FuncsScanned,
+				"threshold":        rep.Threshold,
+				"too_many_returns": rep.TooManyReturns,
+				"max_returns":      rep.MaxReturns,
+				"avg_returns":      rep.AvgReturns,
+				"findings":         rep.Findings,
 			}, nil
 		},
 	}

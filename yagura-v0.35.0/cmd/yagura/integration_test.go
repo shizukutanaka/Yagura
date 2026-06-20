@@ -173,6 +173,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_param_check",
 		// v0.66 — boolean flag-argument smell (Fowler; semantic coupling)
 		"yagura_flag_arg",
+		// v0.67 — many-return-values smell (output width; pair to param_check)
+		"yagura_return_check",
 		// v0.36 — package import coupling (architecture / SDP)
 		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)

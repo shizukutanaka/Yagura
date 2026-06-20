@@ -268,7 +268,15 @@ type initScriptParams struct {
 	tools, files            []string
 }
 
-func generateInitScript(target string, p initScriptParams) (string, string, os.FileMode, *ToolError) {
+// initScriptResult bundles the three output fields of generateInitScript.
+// (returncheck dogfood: was 4 returns; struct collapses to 2)
+type initScriptResult struct {
+	Body     string
+	Filename string
+	Mode     os.FileMode
+}
+
+func generateInitScript(target string, p initScriptParams) (initScriptResult, *ToolError) {
 	handoff := []string{"claude-progress.txt", "AGENTS.md"}
 	switch target {
 	case "powershell", "ps1", "windows", "win":
@@ -277,15 +285,15 @@ func generateInitScript(target string, p initScriptParams) (string, string, os.F
 			Language: p.language, RequiredTools: p.tools, RequiredFiles: p.files, HandoffFiles: handoff,
 		})
 		// PS scripts don't need +x; ExecutionPolicy gates execution.
-		return body, "init.ps1", 0o644, nil
+		return initScriptResult{Body: body, Filename: "init.ps1", Mode: 0o644}, nil
 	case "", "posix", "sh", "bash", "unix", "linux", "macos", "darwin":
 		body := initsh.Generate(initsh.BootSpec{
 			Project: p.slug, GeneratedBy: "yagura " + version(), WorkDir: p.workDir,
 			Language: p.language, RequiredTools: p.tools, RequiredFiles: p.files, HandoffFiles: handoff,
 		})
-		return body, "init.sh", 0o755, nil
+		return initScriptResult{Body: body, Filename: "init.sh", Mode: 0o755}, nil
 	default:
-		return "", "", 0, &ToolError{Code: "invalid_input",
+		return initScriptResult{}, &ToolError{Code: "invalid_input",
 			Message: "unknown target: " + target + " (use 'posix' or 'powershell')"}
 	}
 }
@@ -329,7 +337,7 @@ func buildInitShTool(d Deps) *Tool {
 			tools, files := initScriptToolsFiles(p.Language)
 
 			target := strings.ToLower(strings.TrimSpace(in.Target))
-			body, filename, mode, terr := generateInitScript(target, initScriptParams{
+			scr, terr := generateInitScript(target, initScriptParams{
 				slug: in.Slug, workDir: p.LocalPath, language: p.Language, tools: tools, files: files,
 			})
 			if terr != nil {
@@ -339,13 +347,13 @@ func buildInitShTool(d Deps) *Tool {
 			result := map[string]any{
 				"slug":     in.Slug,
 				"target":   target,
-				"body":     body,
-				"length":   len(body),
-				"filename": filename,
+				"body":     scr.Body,
+				"length":   len(scr.Body),
+				"filename": scr.Filename,
 			}
 			if in.Write && p.LocalPath != "" {
-				path := filepath.Join(p.LocalPath, filename)
-				if err := atomicWriteFile(path, []byte(body), mode); err != nil {
+				path := filepath.Join(p.LocalPath, scr.Filename)
+				if err := atomicWriteFile(path, []byte(scr.Body), scr.Mode); err != nil {
 					return nil, &ToolError{Code: "write_failed", Message: err.Error()}
 				}
 				result["written_to"] = path

@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **73 tools**.
+Generated from a live yagura — **74 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (26)
+- [Misc](#misc) (27)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -613,6 +613,19 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | `class` (string) | ★ | failure class: timeout/rate_limit/tool_init/bad_args/tool_error/auth/quota/context_overflow/wrong_result/unknown (aliases like 429/403 accepted). |
 | `max_attempts` (integer) |  | recovery budget (default 3). |
 | `severity` (string) |  | 'low' lets an exhausted budget degrade gracefully instead of escalating. |
+
+---
+
+### `yagura_return_check`
+
+[G] Many-return-values smell (Go). Counts return values per function; flags functions over threshold (default 3). Complements param_check (input width) with output width — together they form a complete function-signature profile.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ | map of filename → content for .go files to analyse |
+| `threshold` (integer) |  | return-value count threshold for findings (default 3; flags 4+ returns) |
 
 ---
 

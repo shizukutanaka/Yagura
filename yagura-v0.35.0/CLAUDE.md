@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 67 internal packages
+## Map — 68 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 72 tool definitions
+- `internal/mcp` — MCP server + 74 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -119,6 +119,13 @@ cortex flywheel 4 段階すべてを単体で機械化:
   即座にわからない問題を可視化。threshold>=1 bool param でフラグ(default=1)。
   _test.go / TestXxx 関数 / *bool ポインタは除外。low(1 bool)/medium(2+ bool)。
   CLI `flag-arg --dir . [--min-bools N] [--strict]`、MCP `yagura_flag_arg`★ v0.66
+- `internal/returncheck` — 戻り値の数(出口の幅)を go/ast で計測(ソクラテス新視点)。
+  paramcheck が入口(引数)の広さを測るなら、returncheck は出口(戻り値)の広さを測る。
+  Go 慣用句 `(T, error)` = 2、`(T1, T2, error)` = 3 は許容範囲(flag しない)。
+  4 以上は「関数がやりすぎ」臭いとして flag。_test.go / TestXxx / FuncLit 除外。
+  low(4-5 returns)/medium(6+ returns)。paramcheck + flagarg + returncheck で
+  「入力幅 + 出力幅 + 意味的制御結合」三軸のシグネチャ全体像が揃う。
+  CLI `return-check --dir . [--max N] [--strict]`、MCP `yagura_return_check`★ v0.67
 - `internal/coupling` — package 間 import 結合度(アーキテクチャの絡まり)を計測
   (ソクラテス新視点)。fan-in(Ca)/fan-out(Ce)/instability I=Ce/(Ca+Ce)+ Stable
   Dependencies Principle 違反(安定 package が より不安定な package に依存)。

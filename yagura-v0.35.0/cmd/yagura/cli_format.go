@@ -39,6 +39,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
+	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/recovery"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
@@ -1067,6 +1068,25 @@ func humanFlagArg(w io.Writer, r flagarg.Report) {
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
 			f.Severity, strings.Join(f.BoolParams, ","), f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanReturnCheck(w io.Writer, r returncheck.Report) {
+	fmt.Fprintf(w, "files_scanned: %d   funcs_scanned: %d   max: %d   avg: %.1f   over_threshold(>%d): %d\n",
+		r.FilesScanned, r.FuncsScanned, r.MaxReturns, r.AvgReturns, r.Threshold, r.TooManyReturns)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no functions over the return-value threshold")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tRETURNS\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		if f.Rule == "parse-error" {
+			fmt.Fprintf(tw, "%s\t-\t%s\t%d\t%s\n", f.Severity, f.File, f.Line, f.Message)
+			continue
+		}
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.ReturnCount, f.File, f.Line, f.Func)
 	}
 	tw.Flush()
 }

@@ -4,6 +4,55 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.67.0] - 2026-06-20
+
+### Theme — "return-check: closing the output-width blind spot (Socratic signature trilogy complete)"
+
+#### New lens: `internal/returncheck` (many-return-values smell)
+
+- **Why now (Socratic)**: v0.66.0 added `flag-arg` to detect semantic coupling of
+  inputs. After that the question arose: *what does complexity + paramcheck + flag-arg
+  still miss?* The answer: **the OUTPUT dimension** — return value count.
+  `paramcheck` measures input width (horizontal count of parameters).
+  `flag-arg` measures semantic coupling (bool params encoding hidden branches).
+  But *how many values a function returns* is a separate axis entirely.
+  Callers bear the burden: more return values = more destructuring, more shadowing,
+  more error-handling paths. Together, these three lenses form the complete
+  **function-signature trilogy**: input count × semantic coupling × output count.
+- `returncheck.Scan(files, threshold)` detects functions with `>threshold` return values
+  via go/ast (zero deps). Default threshold 3: idiomatic `(T, error)` and
+  `(T1, T2, error)` are fine — 4+ is the signal. Named returns counted same as
+  positional (`a, b string` = 2). Skip: `_test.go`, `TestXxx`/`BenchmarkXxx`/
+  `ExampleXxx`, `FuncLit`. Severity: low (4–5 returns), medium (6+). Deterministic.
+  Summary statistics: FilesScanned, FuncsScanned, TooManyReturns, MaxReturns, AvgReturns.
+- Standalone lens (not wired into code-health composite) — consistent project pattern.
+- 17 table-driven tests, all passing.
+
+#### CLI + MCP
+- CLI `return-check --dir . [--max N] [--strict]` (`--strict` exits non-zero on findings)
+- MCP `yagura_return_check` (74th tool) — `[Q] Many-return-values smell (output width)`
+
+#### Dogfooding — 4 findings, 1 fixed
+
+Ran `yagura return-check --max 3` on Yagura immediately after wiring.
+Found 4 functions with 4 return values. Fixed the cleanest case:
+
+- `generateInitScript(target, p) (string, string, os.FileMode, *ToolError)` →
+  introduced `type initScriptResult struct { Body, Filename string; Mode os.FileMode }`
+  → new signature `(initScriptResult, *ToolError)`. This function is the perfect
+  Socratic narrative: v0.64.0 fixed its *inputs* (6→2 params via `initScriptParams`)
+  and v0.67.0 fixes its *outputs* (4→2 returns via `initScriptResult`). The same
+  function demonstrates both halves of the signature trilogy.
+
+The 3 remaining findings (`resolveSingleAuditTarget`, `assessmentCounts`,
+`(*persistEntry).resolve`) are intentionally left: they each return semantically
+distinct values with no natural grouping, and forcing a struct would add naming
+overhead without clarity benefit.
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 62 consecutive
+releases verified byte-for-byte identical.
+
 ## [v0.66.0] - 2026-06-20
 
 ### Theme — "flag-arg: closing the semantic-coupling blind spot (Socratic self-correction II)"
