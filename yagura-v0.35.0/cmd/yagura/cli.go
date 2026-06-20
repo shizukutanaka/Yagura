@@ -38,6 +38,7 @@ import (
 
 	"github.com/shizukutanaka/yagura/internal/agentevent"
 	"github.com/shizukutanaka/yagura/internal/agentmd"
+	"github.com/shizukutanaka/yagura/internal/agentparallel"
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/alertfix"
 	"github.com/shizukutanaka/yagura/internal/apidoc"
@@ -51,24 +52,24 @@ import (
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
+	"github.com/shizukutanaka/yagura/internal/deprank"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
+	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/featurelist"
+	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
-	"github.com/shizukutanaka/yagura/internal/initps1"
-	"github.com/shizukutanaka/yagura/internal/initsh"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/github"
 	"github.com/shizukutanaka/yagura/internal/harness"
+	"github.com/shizukutanaka/yagura/internal/hotspot"
+	"github.com/shizukutanaka/yagura/internal/initps1"
+	"github.com/shizukutanaka/yagura/internal/initsh"
 	"github.com/shizukutanaka/yagura/internal/injectscan"
 	"github.com/shizukutanaka/yagura/internal/mcp"
+	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
-	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
-	"github.com/shizukutanaka/yagura/internal/deprank"
-	"github.com/shizukutanaka/yagura/internal/errdiscard"
-	"github.com/shizukutanaka/yagura/internal/hotspot"
-	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
@@ -77,12 +78,12 @@ import (
 	"github.com/shizukutanaka/yagura/internal/projectgraph"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
+	"github.com/shizukutanaka/yagura/internal/recovery"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/registry"
-	"github.com/shizukutanaka/yagura/internal/recovery"
-	"github.com/shizukutanaka/yagura/internal/riskreason"
+	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
-	"github.com/shizukutanaka/yagura/internal/agentparallel"
+	"github.com/shizukutanaka/yagura/internal/riskreason"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
 	"github.com/shizukutanaka/yagura/internal/sessionsummary"
@@ -109,14 +110,14 @@ var cliHandlers = map[string]cliHandler{
 	// registry CRUD
 	"list": cliList, "get": cliGet, "search": cliSearch, "stats": cliStats, "today": cliToday,
 	"register": cliRegister, "update": cliUpdate, "unregister": cliUnregister,
-	"graph": cliGraph,
+	"graph":       cliGraph,
 	"plan-status": cliPlanStatus, "release-radar": cliReleaseRadar,
 	"ops-risk": cliOpsRisk, "risk-triage": cliRiskTriage,
 	"recovery-decide": cliRecoveryDecide, "agents-md": cliAgentsMd,
 	"feature-list": cliFeatureList, "harness-coverage": cliHarnessCoverage,
 	"agent-event": cliAgentEvent, "init-sh": cliInitSh, "progress-file": cliProgressFile,
 	"harness-recommend": cliHarnessRecommend, "session-summary": cliSessionSummary,
-	"parallel-plan": cliParallelPlan,
+	"parallel-plan":   cliParallelPlan,
 	"graph-neighbors": cliGraphNeighbors, "graph-impact": cliGraphImpact, "graph-stats": cliGraphStats,
 	// local scans
 	"sbom": cliSbom, "secretscan": cliSecretScan, "gha-audit": cliGhaAudit, "pin-drift": cliPinDrift,
@@ -135,8 +136,9 @@ var cliHandlers = map[string]cliHandler{
 	"recv-check": cliRecvCheck, "code-health": cliCodeHealth, "param-check": cliParamCheck,
 	"flag-arg": cliFlagArg, "return-check": cliReturnCheck,
 	"err-discard": cliErrDiscard,
-		"dep-rank": cliDepRank,
-		"hotspot":  cliHotspot,
+	"dep-rank":    cliDepRank,
+	"hotspot":     cliHotspot,
+	"name-check":  cliNameCheck,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -433,7 +435,6 @@ func toGraphProjects(ps []*project.Project) []projectgraph.Project {
 	}
 	return out
 }
-
 
 // ─── registry mutation commands (audited) ────────────────────
 
@@ -2322,7 +2323,6 @@ func cliFlowRisk(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
-
 // ─── coverage (v0.36.0, blind-spot meta 視点) ─────────────────
 
 // cliCoverage は --dir の全ファイルを拡張子分類し、yagura の scanner が解析できる
@@ -2696,6 +2696,35 @@ func cliHotspot(args []string, stdout, stderr io.Writer) error {
 	humanHotspot(stdout, rep)
 	if *strict && len(rep.Hotspots) > 0 {
 		return fmt.Errorf("%d convergent-signal hotspot(s)", len(rep.Hotspots))
+	}
+	return nil
+}
+
+// ─── name-check (v0.73.0) ────────────────────────────────────
+
+// cliNameCheck は `yagura name-check` を処理する。関数名がシグネチャの約束を
+// 守っているかを検査する意味軸のレンズ: is/has 述語は bool を、Get/New 接頭辞は
+// 戻り値を返すべき。型情報不要・決定論的。--strict で指摘時 exit 1。
+func cliNameCheck(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("name-check", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any inconsistency is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := namecheck.Scan(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanNameCheck(stdout, rep)
+	if *strict && rep.Flagged > 0 {
+		return fmt.Errorf("%d name↔signature inconsistency(ies)", rep.Flagged)
 	}
 	return nil
 }
@@ -4562,7 +4591,7 @@ var yaguraVerbs = []string{
 	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
-	"list", "mcp-audit", "ops-risk", "parallel-plan", "param-check", "path-policy",
+	"list", "mcp-audit", "name-check", "ops-risk", "parallel-plan", "param-check", "path-policy",
 	"pin-drift", "plan-status", "plugin-audit", "progress-file", "publicity-scan",
 	"quality-check", "recv-check", "recovery-decide", "register", "release-radar",
 	"return-check", "review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
@@ -4673,6 +4702,7 @@ func buildZshVerbLines() string {
 		"harness-recommend":    "Claude Code .claude/ scaffold by language",
 		"help":                 "print help message",
 		"hotspot":              "convergent-signal hotspots: functions flagged by 2+ signature lenses",
+		"name-check":           "name↔signature consistency: predicates return bool, getters/constructors return a value",
 		"init-sh":              "generate init.sh or init.ps1 for agent sessions",
 		"inject-scan":          "scan untrusted content for indirect prompt injection",
 		"list":                 "list registry projects",
@@ -4721,4 +4751,3 @@ func buildZshVerbLines() string {
 	}
 	return sb.String()
 }
-

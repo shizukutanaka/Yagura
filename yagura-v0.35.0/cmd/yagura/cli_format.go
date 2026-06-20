@@ -34,6 +34,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/deprank"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
+	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
@@ -1589,6 +1590,22 @@ func humanHotspot(w io.Writer, r hotspot.Report) {
 	for _, h := range r.Hotspots {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
 			h.Severity, strings.Join(h.Lenses, "+"), h.File, h.Line, h.Func)
+	}
+	tw.Flush()
+}
+
+func humanNameCheck(w io.Writer, r namecheck.Report) {
+	fmt.Fprintf(w, "name-check: %d files, %d funcs, %d inconsistency(ies)\n",
+		r.FilesScanned, r.FuncsScanned, r.Flagged)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no name↔signature inconsistencies — names keep their promises")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tRULE\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+			f.Severity, f.Rule, f.File, f.Line, f.Func)
 	}
 	tw.Flush()
 }

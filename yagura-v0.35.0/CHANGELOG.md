@@ -4,6 +4,60 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.73.0] - 2026-06-20
+
+### Theme — "namecheck: the semantic axis (Socratic blind spot VII)"
+
+#### New spec: `docs/quality-lens-spec.md`
+
+A normative specification of the quality-lens subsystem: the 10-point lens
+contract (L1–L10), the axis taxonomy, and a formal strength/weakness analysis
+(長所 S1–S5 / 短所 W1–W4) that drives the Socratic loop. The weakness analysis
+is what surfaced this release's work: **W2 — every lens measures structure;
+none checks whether a name matches its behaviour.**
+
+#### New lens: `internal/namecheck` (semantic axis)
+
+- **Why now (Socratic)**: v0.65–v0.72 built eleven lenses across structure,
+  coupling, contract, and test-trust axes — and `hotspot` to synthesize them.
+  All of them measure *structure*. The next question: *what does a perfectly
+  structured codebase still get wrong?* Answer: **names that lie**. A function
+  called `isReady` returning an `int`, or `GetName` returning nothing, passes
+  every existing lens while actively misleading every reader. Naming is an
+  unmeasured contract. `namecheck` is the first lens on the **semantic** axis.
+- `namecheck.Scan(files)` applies three deterministic, type-free rules:
+  - `predicate-not-bool` (medium): `is`/`has`/`can`/`should`/`must` prefix but
+    first result is not `bool`
+  - `getter-no-return` (medium): `Get` prefix but returns nothing
+  - `constructor-no-return` (low): `New` prefix but returns nothing
+- **Word-boundary discipline**: a prefix only matches when followed by an
+  uppercase letter (or end-of-name), so `Hash` is **not** a `has` predicate and
+  bare `Get` (no suffix) is excluded. No type resolution: only the literal
+  predeclared `bool` counts, so a named bool-alias is conservatively not flagged
+  (no false positives without `go/types`). Completes the signature picture:
+  paramcheck (input) + returncheck (output) + flagarg (coupling) + namecheck
+  (the name's promise about all three).
+- 20 TDD tests (Red→Green), all passing.
+
+#### CLI + MCP
+- CLI `name-check --dir . [--strict]`
+- MCP `yagura_name_check` (78th tool) — `[Q] Name↔signature consistency`
+
+#### Dogfood: found and fixed a real misnomer in Yagura itself
+
+Running `yagura name-check` on Yagura flagged exactly one function:
+`alertfix.hasSensitivityTag`, which returned `(string, bool)` — the Go `v, ok`
+**lookup** idiom, where the value comes first and the bool is secondary. The
+`has` name promises a pure boolean predicate; the signature delivers a lookup.
+Renamed to `findSensitivityTag` (honest: it finds and returns the tag). After
+the fix, `name-check` reports **0 inconsistencies** across 277 files / 1192
+functions. The lens found a genuine naming defect on its first run — not a
+manufactured one.
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 68 consecutive
+releases (v0.6 → v0.73). 78 MCP tools, 72 internal packages.
+
 ## [v0.72.0] - 2026-06-20
 
 ### Theme — "hotspot loop closed: 0 convergences"

@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 71 internal packages
+## Map — 72 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 77 tool definitions
+- `internal/mcp` — MCP server + 78 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -156,6 +156,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
   .go に scope を確定してから委譲(下流レンズの _test.go/parse-error 挙動差を吸収)。
   2 レンズ収束=medium / 3+ 収束=high。CLI `hotspot --dir . [--min-lenses N] [--strict]`、
   MCP `yagura_hotspot`★ v0.70; `ReleaseReadinessExt` top finding resolved v0.71
+- `internal/namecheck` — 関数名がシグネチャの約束を守るか検査する *意味軸* の最初のレンズ
+  (ソクラテス新視点 VII)。これまで全レンズは *構造* を測ったが、名前と振る舞いの整合は
+  未計測の契約だった(W2)。is/has/can/should/must 述語は第一戻り値 bool を、Get/New 接頭辞は
+  戻り値を返すべき。語境界(接頭辞の次が大文字)で "Hash" を "has" 述語と誤認しない。型情報
+  不要・決定論的。dogfood で `hasSensitivityTag`(`(string,bool)` の v,ok lookup)を発見し
+  `findSensitivityTag` に改名。CLI `name-check --dir . [--strict]`、MCP `yagura_name_check`★ v0.73
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

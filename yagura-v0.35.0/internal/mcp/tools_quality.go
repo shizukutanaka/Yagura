@@ -23,13 +23,13 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
+	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
-	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
+	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 )
-
 
 // ─── yagura_quality_check (v0.19.0) ───────────────────────────
 //
@@ -134,7 +134,6 @@ func qualityResultBase(res qualitycheck.Result) map[string]any {
 	}
 }
 
-
 // ─── yagura_ai_verify (v0.25.0) ──────────────────────────────
 //
 // AI-generated コードの risk pattern を検出する。m's harness G0.7 INVARIANT
@@ -151,22 +150,22 @@ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"files":        map[string]any{"type": "object"},
-				"text":         map[string]any{"type": "string"},
-				"path":         map[string]any{"type": "string"},
-				"summary_only": map[string]any{"type": "boolean"},
-				"custom_rules": map[string]any{"type": "array", "description": "project-specific AI risk rules: [{id, pattern(regex), category, risk(CRITICAL|HIGH|MEDIUM|LOW), message, languages?}]"},
+				"files":         map[string]any{"type": "object"},
+				"text":          map[string]any{"type": "string"},
+				"path":          map[string]any{"type": "string"},
+				"summary_only":  map[string]any{"type": "boolean"},
+				"custom_rules":  map[string]any{"type": "array", "description": "project-specific AI risk rules: [{id, pattern(regex), category, risk(CRITICAL|HIGH|MEDIUM|LOW), message, languages?}]"},
 				"disable_rules": map[string]any{"type": "array", "description": "built-in rule IDs to suppress (e.g. [\"billing-stripe-uncaught\"])"},
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
 			var in struct {
-				Files        map[string]string  `json:"files"`
-				Text         string             `json:"text"`
-				Path         string             `json:"path"`
-				SummaryOnly  bool               `json:"summary_only"`
+				Files        map[string]string   `json:"files"`
+				Text         string              `json:"text"`
+				Path         string              `json:"path"`
+				SummaryOnly  bool                `json:"summary_only"`
 				CustomRules  []aiverify.UserRule `json:"custom_rules"`
-				DisableRules []string           `json:"disable_rules"`
+				DisableRules []string            `json:"disable_rules"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return nil, &ToolError{Code: "invalid_input", Cause: err}
@@ -210,7 +209,7 @@ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
 
 // runAIVerifyScan は入力モード(text 単体 / cache 経由 / 明示 rules)を選んで
 // aiverify を実行する。cache 非 nil なら content-addressed cache 経由
-//(呼び出し側が「default rule かつ file mode」のときだけ cache を渡す)。
+// (呼び出し側が「default rule かつ file mode」のときだけ cache を渡す)。
 func runAIVerifyScan(files map[string]string, rules []aiverify.Rule, cache aiverify.CacheLike) aiverify.Result {
 	if cache != nil {
 		return aiverify.ScanCached(files, cache)
@@ -886,7 +885,6 @@ func buildASTCheckTool(d Deps) *Tool {
 	}
 }
 
-
 // ─── yagura_err_discard (v0.68.0) ────────────────────────────
 //
 // ソクラテス的動機: paramcheck(入口幅)+ flagarg(意味的制御結合)+ returncheck(出口幅)は
@@ -1014,6 +1012,36 @@ func buildHotspotTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := hotspot.Scan(in.Files, in.MinLenses)
+			return rep, nil
+		},
+	}
+}
+
+func buildNameCheckTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_name_check",
+		Description: "[Q] Name↔signature consistency: predicates (is/has) must return bool, getters/constructors must return a value",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := namecheck.Scan(in.Files)
 			return rep, nil
 		},
 	}

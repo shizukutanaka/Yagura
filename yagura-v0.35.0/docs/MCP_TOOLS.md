@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **77 tools**.
+Generated from a live yagura — **78 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (30)
+- [Misc](#misc) (31)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -547,6 +547,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `content` (string) | ★ | full .mcp.json server config or a tools/list JSON |
+
+---
+
+### `yagura_name_check`
+
+[Q] Name↔signature consistency: predicates (is/has) must return bool, getters/constructors must return a value
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
 
 ---
 

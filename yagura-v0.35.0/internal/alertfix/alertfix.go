@@ -131,8 +131,10 @@ var sensitivityTags = map[string]bool{
 	"secret":       true,
 }
 
-// hasSensitivityTag は tags に sensitivity tag が含まれるか(case-insensitive)。
-func hasSensitivityTag(tags []string) (string, bool) {
+// findSensitivityTag は tags から最初の sensitivity tag を探し、(値, 見つかったか)を
+// 返す(case-insensitive)。`v, ok` lookup イディオムに従い値を先に返すため、純粋な
+// bool 述語ではない——名前も `has`(bool を約束)ではなく `find`(値を返す)とする。
+func findSensitivityTag(tags []string) (string, bool) {
 	for _, t := range tags {
 		if sensitivityTags[strings.ToLower(strings.TrimSpace(t))] {
 			return t, true
@@ -221,7 +223,7 @@ func Evaluate(snap ProjectSnapshot, th Thresholds) []Alert {
 	// 人間が internal/confidential 等を宣言した project の repo が実際には Public。
 	// 「Public のまま公開されてた!」を portfolio 単位で検出する。
 	if snap.RepoPublic {
-		if tag, ok := hasSensitivityTag(snap.Tags); ok {
+		if tag, ok := findSensitivityTag(snap.Tags); ok {
 			alerts = append(alerts, Alert{
 				ID:       buildID(snap.Slug, SourceVisibility, ""),
 				Project:  snap.Slug,

@@ -179,6 +179,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildDepRankTool(d))
 	// [Q] v0.70.0 — convergent-signal hotspots (functions flagged by 2+ signature lenses)
 	s.Register(buildHotspotTool(d))
+	// [Q] v0.73.0 — name↔signature consistency (semantic axis: name keeps its promise)
+	s.Register(buildNameCheckTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)
