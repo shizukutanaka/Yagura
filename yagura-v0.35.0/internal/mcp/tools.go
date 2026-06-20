@@ -173,6 +173,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildFlagArgTool(d))
 	// [Q] v0.67.0 — many-return-values smell (output width; pair to param_check)
 	s.Register(buildReturnCheckTool(d))
+	// [Q] v0.68.0 — error-discard smell (call sites silently ignoring returned errors)
+	s.Register(buildErrDiscardTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

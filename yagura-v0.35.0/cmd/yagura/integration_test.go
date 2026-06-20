@@ -175,6 +175,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_flag_arg",
 		// v0.67 — many-return-values smell (output width; pair to param_check)
 		"yagura_return_check",
+		// v0.68 — error-discard smell (call sites silently ignoring returned errors)
+		"yagura_err_discard",
 		// v0.36 — package import coupling (architecture / SDP)
 		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)

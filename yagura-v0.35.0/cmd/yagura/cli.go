@@ -65,6 +65,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
+	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
@@ -131,6 +132,7 @@ var cliHandlers = map[string]cliHandler{
 	"coupling": cliCoupling, "api-doc": cliAPIDoc, "dead-code": cliDeadCode,
 	"recv-check": cliRecvCheck, "code-health": cliCodeHealth, "param-check": cliParamCheck,
 	"flag-arg": cliFlagArg, "return-check": cliReturnCheck,
+	"err-discard": cliErrDiscard,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2580,6 +2582,40 @@ func cliReturnCheck(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ─── err-discard (v0.68.0) ──────────────────────────────────
+
+// cliErrDiscard は `yagura err-discard` を処理する。Go のコールサイトで
+// error を返す関数が ExprStmt として呼ばれている箇所(= error が暗黙的に捨てられている)
+// を二パス AST 走査で検出する。
+// ソクラテス的動機: paramcheck + flagarg + returncheck は関数の定義側をプロファイルする
+// 三軸を提供したが、呼び出し側の規律は見ていなかった。errdiscard はその盲点を塞ぐ。
+func cliErrDiscard(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("err-discard", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any discarded errors found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := errdiscard.Scan(sr.Files)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanErrDiscard(stdout, rep)
+	}
+	if *strict && rep.ErrorsDiscarded > 0 {
+		return fmt.Errorf("%d call site(s) discard a returned error", rep.ErrorsDiscarded)
+	}
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4437,7 +4473,7 @@ var yaguraVerbs = []string{
 	"alert-fix", "alert-resolve", "alert-snapshot", "api-doc",
 	"assert-check", "ast-check", "cc-security", "claudemd-audit",
 	"code-health", "complexity", "completion", "coupling", "coverage",
-	"dead-code", "diff-scan", "err-policy", "feature-list", "flag-arg", "flow-risk",
+	"dead-code", "diff-scan", "err-discard", "err-policy", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "init-sh", "inject-scan",
 	"list", "mcp-audit", "ops-risk", "parallel-plan", "param-check", "path-policy",
@@ -4534,6 +4570,7 @@ func buildZshVerbLines() string {
 		"coverage":             "scan blind-spot report: covered vs uncovered-source",
 		"dead-code":            "dead unexported declarations within their own package",
 		"diff-scan":            "delta scan of unified diff: secrets in added lines",
+		"err-discard":          "error-discard smell: call sites silently ignoring returned errors",
 		"err-policy":           "error-context discipline: wrap ratio + blank-discard",
 		"feature-list":         "convert Plan.md to Anthropic-style feature-list.json",
 		"flag-arg":             "boolean flag-argument smell (Fowler); bool params encoding hidden branches",

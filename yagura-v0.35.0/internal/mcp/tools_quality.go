@@ -18,6 +18,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
+	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
@@ -883,3 +884,49 @@ func buildASTCheckTool(d Deps) *Tool {
 	}
 }
 
+
+// ─── yagura_err_discard (v0.68.0) ────────────────────────────
+//
+// ソクラテス的動機: paramcheck(入口幅)+ flagarg(意味的制御結合)+ returncheck(出口幅)は
+// 関数の *定義側* をプロファイルする三軸の完全なシグネチャ像を与えた。しかし、これらは
+// *呼び出し側* の規律を見ていない。error を返す関数が ExprStmt として呼ばれると、
+// その error は暗黙的に捨てられる——コンパイラも go vet も(多くの場合)素通りする。
+// errdiscard は「コールサイト規律」(ブラインドスポット IV)を可視化し、シグネチャ三軸に
+// 続く第四のコードクオリティ軸を提供する。
+
+func buildErrDiscardTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_err_discard",
+		Description: "[Q] Error-discard smell: call sites where a returned error is silently ignored",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+				"strict": map[string]any{"type": "boolean"},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files  map[string]string `json:"files"`
+				Strict bool              `json:"strict"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := errdiscard.Scan(in.Files)
+			return map[string]any{
+				"files_scanned":    rep.FilesScanned,
+				"calls_scanned":    rep.CallsScanned,
+				"errors_discarded": rep.ErrorsDiscarded,
+				"findings":         rep.Findings,
+			}, nil
+		},
+	}
+}

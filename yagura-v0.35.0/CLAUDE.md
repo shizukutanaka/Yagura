@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 68 internal packages
+## Map — 69 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 74 tool definitions
+- `internal/mcp` — MCP server + 75 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -126,6 +126,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
   low(4-5 returns)/medium(6+ returns)。paramcheck + flagarg + returncheck で
   「入力幅 + 出力幅 + 意味的制御結合」三軸のシグネチャ全体像が揃う。
   CLI `return-check --dir . [--max N] [--strict]`、MCP `yagura_return_check`★ v0.67
+- `internal/errdiscard` — コールサイトで error を返す関数が ExprStmt として呼ばれている箇所
+  (= error が暗黙的に捨てられている)を二パス AST 走査で検出(ソクラテス新視点 IV)。
+  シグネチャ三軸(paramcheck+flagarg+returncheck)は定義側をプロファイルしたが、
+  呼び出し側の規律は見えていなかった——その盲点を塞ぐ。同一パッケージ内のコールのみ
+  (型情報不要・zero-dep)。severity: medium。CLI `err-discard --dir . [--strict]`、
+  MCP `yagura_err_discard`★ v0.68
 - `internal/coupling` — package 間 import 結合度(アーキテクチャの絡まり)を計測
   (ソクラテス新視点)。fan-in(Ca)/fan-out(Ce)/instability I=Ce/(Ca+Ce)+ Stable
   Dependencies Principle 違反(安定 package が より不安定な package に依存)。

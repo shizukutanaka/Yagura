@@ -4,6 +4,86 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.68.0] - 2026-06-20
+
+### Theme — "errdiscard: call-site discipline (Socratic blind spot IV)"
+
+#### Socratic narrative
+
+The function-signature trilogy (v0.65–v0.67) profiled function *definitions* along
+three axes: input width (`paramcheck`), semantic coupling (`flagarg`), output width
+(`returncheck`). After completing that trilogy the question becomes: *what does the
+signature trilogy still miss?*
+
+Answer: **call-site behavior** — how functions are *used*, not how they are *defined*.
+Specifically: unconsumed error returns — places where a function that returns `error`
+is called but the caller discards the error entirely by invoking the call as an
+expression statement. `json.Unmarshal(b, &v)` used bare with no assignment, or
+`os.Remove(path)` called without checking the result. The compiler is silent.
+`go vet` is mostly silent. Only a human or a targeted static analysis pass will catch it.
+
+`errdiscard` closes that gap as the **fourth Socratic lens** — the first to look at
+call sites rather than definitions.
+
+#### New lens: `internal/errdiscard` (error-discard smell)
+
+- **What it detects**: `ExprStmt` wrapping a `CallExpr` where the callee is known
+  (from the same file-set) to return `error` as its last result. This is the most
+  common and most actionable form of silent error discard.
+- **Two-pass AST scan** (zero-dep, stdlib only, ADR-0001 compliant):
+  - Pass 1: collect all `FuncDecl` names where the last result field is `*ast.Ident{Name:"error"}`.
+  - Pass 2: walk all `ExprStmt` nodes; if the `CallExpr` callee's simple name is in
+    the collected set, flag it.
+- **Scope**: same-package calls only (cross-package resolution requires type info, which
+  needs `go/types` + module loading — incompatible with zero-dep constraint). This is
+  the highest-value class: one's own code silently discarding one's own error contracts.
+- **Caller tracking**: FuncDecl span ranges (start/end line) are used to determine
+  which enclosing function contains the discard site. Top-level discards get `Caller=""`.
+- **Coverage**:
+  - `_test.go` files are skipped (test helpers are allowed to discard).
+  - Non-`.go` files are skipped.
+  - Parse errors skip the file without crash.
+- **Severity**: always `"medium"` — silently discarding an error is always a real
+  concern, not a style choice.
+- **Rule**: `"errdiscard"`.
+- **Deterministic output**: sorted by File → Line.
+- **Report fields**: `files_scanned`, `calls_scanned` (all ExprStmt CallExpr seen),
+  `errors_discarded` (findings count), `findings`.
+- 18 table-driven + independent tests, all passing under `-race`.
+
+#### CLI + MCP
+
+- CLI `err-discard --dir . [--json] [--strict]`:
+  - `--strict` exits non-zero if any discarded errors are found.
+  - Human output header: `err-discard: N/M calls discard an error`
+  - Tabwriter columns: SEVERITY / FILE / LINE / CALLER / CALLEE
+- MCP `yagura_err_discard` (75th tool) — `[Q] Error-discard smell: call sites where a returned error is silently ignored`
+
+#### Dogfood: 103 findings on yagura itself
+
+Ran `go run ./cmd/yagura err-discard --dir .` on the yagura codebase immediately
+after wiring. Found **103 call sites** (out of 1620 ExprStmt calls) discarding
+a returned error. Representative patterns:
+
+- HTTP response header `.Set()` / `.Write()` calls — extremely common in HTTP handlers
+  where header write failures are not actionable mid-response.
+- `Close()` calls in cleanup paths — intentional best-effort semantics.
+- WaitGroup `.Add()` / `.Wait()` — these actually return `error` in some stdlib wrappers
+  but are typically called for side effects.
+
+These are generally **intentional discards** with valid rationale (best-effort cleanup,
+in-process writer failures, etc.). The lens successfully identifies them for review.
+No fixes applied this release — the findings are catalogued as known intentional discards.
+
+#### What's not yet detected
+
+- `_ = f()` (blank-assign explicit discard) — these are `AssignStmt`, not `ExprStmt`.
+  The user made an explicit choice; flagging would be noisy.
+- Cross-package calls (`json.Unmarshal(...)` etc.) — requires type info (`go/types`),
+  incompatible with ADR-0001 zero-dep constraint.
+- Method calls on external types (e.g., `w.Write(data)` on `http.ResponseWriter`) —
+  same constraint.
+
 ## [v0.67.0] - 2026-06-20
 
 ### Theme — "return-check: closing the output-width blind spot (Socratic signature trilogy complete)"

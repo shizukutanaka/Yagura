@@ -32,6 +32,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
+	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
@@ -1523,4 +1524,20 @@ func humanAlertSnapshot(w io.Writer, states []alertfix.CurrentState, stats map[a
 		stats[alertfix.StatusResolved],
 		stats[alertfix.StatusSnoozed],
 	)
+}
+
+// humanErrDiscard は errdiscard.Report を人が読みやすい形式で出力する。
+func humanErrDiscard(w io.Writer, r errdiscard.Report) {
+	fmt.Fprintf(w, "err-discard: %d/%d calls discard an error\n", r.ErrorsDiscarded, r.CallsScanned)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no discarded error returns found")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tCALLER\tCALLEE")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n",
+			f.Severity, f.File, f.Line, f.Caller, f.Callee)
+	}
+	tw.Flush()
 }

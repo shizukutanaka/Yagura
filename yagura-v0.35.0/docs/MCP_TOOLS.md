@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **74 tools**.
+Generated from a live yagura — **75 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (27)
+- [Misc](#misc) (28)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -458,6 +458,19 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 ### `yagura_dedupe_stats`
 
 [S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.
+
+---
+
+### `yagura_err_discard`
+
+[Q] Error-discard smell: call sites where a returned error is silently ignored
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
+| `strict` (boolean) |  |  |
 
 ---
 
