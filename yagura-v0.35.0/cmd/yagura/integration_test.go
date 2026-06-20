@@ -169,6 +169,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_err_policy",
 		// v0.36 — cyclomatic complexity (testability precondition)
 		"yagura_complexity",
+		// v0.65 — long-parameter-list smell (complexity's horizontal pair)
+		"yagura_param_check",
 		// v0.36 — package import coupling (architecture / SDP)
 		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)

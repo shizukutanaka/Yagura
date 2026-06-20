@@ -63,6 +63,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/injectscan"
 	"github.com/shizukutanaka/yagura/internal/mcp"
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
+	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
@@ -126,7 +127,7 @@ var cliHandlers = map[string]cliHandler{
 	"diff-scan": cliDiffScan, "flow-risk": cliFlowRisk, "coverage": cliCoverage,
 	"assert-check": cliAssertCheck, "err-policy": cliErrPolicy, "complexity": cliComplexity,
 	"coupling": cliCoupling, "api-doc": cliAPIDoc, "dead-code": cliDeadCode,
-	"recv-check": cliRecvCheck, "code-health": cliCodeHealth,
+	"recv-check": cliRecvCheck, "code-health": cliCodeHealth, "param-check": cliParamCheck,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2457,6 +2458,41 @@ func cliComplexity(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// cliParamCheck は `yagura param-check` を処理する。Go 関数のパラメータ数を計測し、
+// しきい値(--max、既定 5)超過の関数を flag する。--strict で超過時に exit 1。
+// ソクラテス的動機: complexity が関数内部の縦の複雑さなら、これは入口の横幅。
+// Fowler の "Long Parameter List" smell を検出し、複雑度リファクタが引数列に
+// ツケを回す退行を可視化する(complexity の水平方向の対)。token 不要。
+func cliParamCheck(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("param-check", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	max := fset.Int("max", 5, "parameter-count threshold; functions above this are flagged")
+	strict := fset.Bool("strict", false, "exit non-zero if any function exceeds --max")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return err
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+
+	rep := paramcheck.Scan(sr.Files, *max)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanParamCheck(stdout, rep)
+	}
+	if *strict && rep.OverThreshold > 0 {
+		return fmt.Errorf("%d function(s) exceed parameter threshold %d (max observed %d)", rep.OverThreshold, rep.Threshold, rep.MaxParams)
+	}
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4317,7 +4353,7 @@ var yaguraVerbs = []string{
 	"dead-code", "diff-scan", "err-policy", "feature-list", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "init-sh", "inject-scan",
-	"list", "mcp-audit", "ops-risk", "parallel-plan", "path-policy",
+	"list", "mcp-audit", "ops-risk", "parallel-plan", "param-check", "path-policy",
 	"pin-drift", "plan-status", "plugin-audit", "progress-file", "publicity-scan",
 	"quality-check", "recv-check", "recovery-decide", "register", "release-radar",
 	"review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
@@ -4429,6 +4465,7 @@ func buildZshVerbLines() string {
 		"mcp-audit":            "audit .mcp.json / tools for poisoning & config risk",
 		"ops-risk":             "classify operation autonomy tier (auto/log/review/human)",
 		"parallel-plan":        "LPT fan-out plan across AI agents",
+		"param-check":          "long-parameter-list smell (Fowler); complexity's horizontal pair",
 		"path-policy":          "gate changed paths against .yagura/paths.json",
 		"pin-drift":            "SHA-pinned dep drift (needs YAGURA_GITHUB_TOKEN)",
 		"plan-status":          "Plan.md progress for a project (checkboxes)",

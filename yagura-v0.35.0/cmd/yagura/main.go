@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.64.0"
+	version     = "0.65.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -186,6 +186,7 @@ CLI direct mode (no MCP client required):
   yagura assert-check [--dir .] [--max-hollow F] [--strict]  Test assertion density: detect hollow *_test.go files (zero assertions always pass, proving nothing)
   yagura err-policy [--dir .] [--min-wrap R] [--strict]      Error-context discipline: wrap ratio (fmt.Errorf %w vs naked return err) + blank-discard (_ = call()) detection
   yagura complexity [--dir .] [--max N] [--strict]  Cyclomatic complexity (McCabe, gocyclo-compatible): per-function score, flags functions over --max (default 10) = testability precondition
+  yagura param-check [--dir .] [--max N] [--strict]  Long-parameter-list smell (Fowler): per-function param count, flags functions over --max (default 5) = complexity's horizontal pair
   yagura coupling [--dir .] [--module M] [--strict]  Package import coupling: fan-in/out + instability + Stable Dependencies Principle violations (module path auto-detected from go.mod)
   yagura api-doc [--dir .] [--min-doc R] [--strict]          Exported-API doc discipline: documented ratio + undocumented exported funcs/types/consts/vars/methods (godoc, golint-compatible)
   yagura dead-code [--dir .] [--strict]           Dead unexported declarations: package-level funcs/types/consts/vars never referenced within their own package

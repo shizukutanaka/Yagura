@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 65 internal packages
+## Map — 66 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 71 tool definitions
+- `internal/mcp` — MCP server + 72 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -108,6 +108,11 @@ cortex flywheel 4 段階すべてを単体で機械化:
   (ソクラテス新視点)。「そもそも完全にテストできるか」という testability の前提
   条件 = 全パス網羅に要するテスト数の下限。関数別スコア + しきい値超過 flag。
   CLI `complexity --dir . [--max N] [--strict]`、MCP `yagura_complexity`★ v0.36
+- `internal/paramcheck` — 関数のパラメータ数(Fowler "Long Parameter List" smell)を
+  go/ast で計測(ソクラテス新視点、complexity の *水平方向の対*)。complexity だけを
+  gate にすると巨大関数をヘルパに割って複雑度を下げつつ 6・7 個と引数を引き回す退行を
+  見逃す——その盲点を塞ぐ。引数は名前単位で計数(`a, b int`=2)、可変長=1、レシーバ除外。
+  CLI `param-check --dir . [--max N] [--strict]`、MCP `yagura_param_check`★ v0.65
 - `internal/coupling` — package 間 import 結合度(アーキテクチャの絡まり)を計測
   (ソクラテス新視点)。fan-in(Ca)/fan-out(Ce)/instability I=Ce/(Ca+Ce)+ Stable
   Dependencies Principle 違反(安定 package が より不安定な package に依存)。

@@ -4,6 +4,47 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.65.0] - 2026-06-20
+
+### Theme — "param-check: closing complexity's blind spot (Socratic self-correction)"
+
+#### New lens: `internal/paramcheck` (Fowler "Long Parameter List")
+- **Why now (Socratic)**: v0.64.0 drove `internal/mcp` from code-health C→B by
+  decomposing 16 tool handlers — but a complexity-only gate can be *gamed*: split a
+  big function into helpers and the cyclomatic score drops even as you thread 6–7
+  parameters through the new helpers. Yagura measured complexity/apidoc/coupling/
+  deadcode/recvcheck/astcheck/assertcheck — but had **no lens for parameter-list
+  width**. The grade improved while the smell moved sideways, undetected.
+- `paramcheck.Scan(files, threshold)` counts parameters per function via go/ast
+  (zero-dep): names counted individually (`a, b int` = 2), variadic = 1, receiver
+  excluded, blank `_` counted, FuncDecl-only (callback FuncLits excluded). Default
+  threshold 5 (flags 6+). Deterministic File→Line→Func ordering.
+- complexity's **horizontal pair**: complexity measures branch-path depth (vertical),
+  paramcheck measures signature width (horizontal).
+- Standalone lens (like `err-policy`/`coupling`/`coverage`) — intentionally **not**
+  wired into the composite `code-health` grade, so it informs without silently
+  regressing existing package grades.
+
+#### CLI + MCP
+- CLI `param-check --dir . [--max N] [--strict]` (`--strict` exits non-zero on findings)
+- MCP `yagura_param_check` (72nd tool) — `[G] Long-parameter-list smell`
+
+#### Dogfooded — the lens immediately flagged the regression it predicted
+- Ran on its own repo: **6** production functions over threshold, including **two of
+  v0.64.0's own helpers** (`generateInitScript`, `runAIVerifyScan` at 6 params each).
+  Physician, heal thyself.
+- Fixes (behavior-preserving): `riskreason.tri` **9→2** params (extracted `factorAcc`
+  accumulator + `triFactor` struct), `triHi` **7→5**, `generateInitScript` **6→2**
+  (`initScriptParams` struct), `runAIVerifyScan` **6→3** (folded text/path into the
+  files map). Repo max params **9→6**, over-threshold production funcs **6→1**.
+- The one remaining (`plantracker.ReleaseReadinessExt`, 6) is a stable exported API
+  with genuinely distinct domain signals — left **visible** rather than churned, since
+  the lens reports and the human judges (forcing every finding to zero would be the
+  proxy-gaming this lens exists to expose).
+
+#### No new dependencies
+Zero new Go dependencies (ADR-0001 maintained, 60 consecutive releases).
+
 ## [v0.64.0] - 2026-06-17
 
 ### Theme — "internal/mcp complexity refactor: code-health C → B"

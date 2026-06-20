@@ -261,20 +261,27 @@ func initScriptToolsFiles(language string) (tools, files []string) {
 
 // generateInitScript は target("posix" / "powershell")に応じた init script を
 // 生成し、body / filename / file-mode を返す。未知 target は *ToolError。
-func generateInitScript(target, slug, workDir, language string, tools, files []string) (string, string, os.FileMode, *ToolError) {
+// initScriptParams は init script 生成の project 由来パラメータ群。
+// (引数列の肥大を避けるため struct に束ねる — paramcheck dogfood)
+type initScriptParams struct {
+	slug, workDir, language string
+	tools, files            []string
+}
+
+func generateInitScript(target string, p initScriptParams) (string, string, os.FileMode, *ToolError) {
 	handoff := []string{"claude-progress.txt", "AGENTS.md"}
 	switch target {
 	case "powershell", "ps1", "windows", "win":
 		body := initps1.Generate(initps1.BootSpec{
-			Project: slug, GeneratedBy: "yagura " + version(), WorkDir: workDir,
-			Language: language, RequiredTools: tools, RequiredFiles: files, HandoffFiles: handoff,
+			Project: p.slug, GeneratedBy: "yagura " + version(), WorkDir: p.workDir,
+			Language: p.language, RequiredTools: p.tools, RequiredFiles: p.files, HandoffFiles: handoff,
 		})
 		// PS scripts don't need +x; ExecutionPolicy gates execution.
 		return body, "init.ps1", 0o644, nil
 	case "", "posix", "sh", "bash", "unix", "linux", "macos", "darwin":
 		body := initsh.Generate(initsh.BootSpec{
-			Project: slug, GeneratedBy: "yagura " + version(), WorkDir: workDir,
-			Language: language, RequiredTools: tools, RequiredFiles: files, HandoffFiles: handoff,
+			Project: p.slug, GeneratedBy: "yagura " + version(), WorkDir: p.workDir,
+			Language: p.language, RequiredTools: p.tools, RequiredFiles: p.files, HandoffFiles: handoff,
 		})
 		return body, "init.sh", 0o755, nil
 	default:
@@ -322,7 +329,9 @@ func buildInitShTool(d Deps) *Tool {
 			tools, files := initScriptToolsFiles(p.Language)
 
 			target := strings.ToLower(strings.TrimSpace(in.Target))
-			body, filename, mode, terr := generateInitScript(target, in.Slug, p.LocalPath, p.Language, tools, files)
+			body, filename, mode, terr := generateInitScript(target, initScriptParams{
+				slug: in.Slug, workDir: p.LocalPath, language: p.Language, tools: tools, files: files,
+			})
 			if terr != nil {
 				return nil, terr
 			}

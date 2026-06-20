@@ -163,6 +163,7 @@ func ScoreWith(in Input, w Weights) Result {
 			score += delta
 		}
 	}
+	acc := factorAcc{r: &r, score: &score}
 
 	// ── (1) 深刻度ベース ──
 	switch sev := severityBucket(in.CVSS, in.Severity); sev {
@@ -200,23 +201,26 @@ func ScoreWith(in Input, w Weights) Result {
 	add(tagSignal(in.Tags, w))
 
 	// ── (3) 到達可能性 ──
-	tri(in.InternetExposed, &r, &score,
-		"reachability", w.Exposed, "internet-exposed (reachable by external attackers)",
-		w.NotExposed, "not internet-exposed (internal only)",
-		"internet exposure")
-	tri(in.AuthRequired, &r, &score,
-		"auth", w.AuthRequired, "authentication required to reach",
-		w.NoAuth, "reachable without authentication",
-		"authentication requirement")
-	tri(in.WAFProtected, &r, &score,
-		"waf", w.WAFProtected, "WAF/edge filtering in front",
-		w.NoWAF, "no WAF in front",
-		"WAF coverage")
+	acc.tri(in.InternetExposed, triFactor{
+		name: "reachability", dTrue: w.Exposed, detailTrue: "internet-exposed (reachable by external attackers)",
+		dFalse: w.NotExposed, detailFalse: "not internet-exposed (internal only)",
+		unknownLabel: "internet exposure",
+	})
+	acc.tri(in.AuthRequired, triFactor{
+		name: "auth", dTrue: w.AuthRequired, detailTrue: "authentication required to reach",
+		dFalse: w.NoAuth, detailFalse: "reachable without authentication",
+		unknownLabel: "authentication requirement",
+	})
+	acc.tri(in.WAFProtected, triFactor{
+		name: "waf", dTrue: w.WAFProtected, detailTrue: "WAF/edge filtering in front",
+		dFalse: w.NoWAF, detailFalse: "no WAF in front",
+		unknownLabel: "WAF coverage",
+	})
 
 	// ── (4) 攻撃可能性 ──
-	triHi(in.KnownExploited, &r, &score, "known_exploited", w.KnownExploited,
+	acc.triHi(in.KnownExploited, "known_exploited", w.KnownExploited,
 		"actively exploited in the wild (e.g. CISA KEV)", "known-exploited status (CISA KEV)")
-	triHi(in.PublicExploit, &r, &score, "public_exploit", w.PublicExploit,
+	acc.triHi(in.PublicExploit, "public_exploit", w.PublicExploit,
 		"public exploit code available", "public exploit availability")
 	// EPSS(exploit 予測確率)。>=0.5 高 / >=0.1 中(CISA "act" 閾値)。0 は不明。
 	switch {
@@ -337,32 +341,50 @@ func tagSignal(tags []string, w Weights) (string, int, string) {
 	return "tags", delta, "asset tags: " + strings.Join(parts, ", ")
 }
 
+// factorAcc は加点先(Result.Factors / Unknowns)と走行スコアを 1 つに束ねる
+// アキュムレータ。tri/triHi が共通して引き回していた (&r, &score) を内包し、
+// 引数列の肥大を避ける(paramcheck dogfood)。
+type factorAcc struct {
+	r     *Result
+	score *int
+}
+
+// triFactor は tristate(真/偽/不明)factor の定義。真と偽で別 delta/detail を持つ。
+type triFactor struct {
+	name         string
+	dTrue        int
+	detailTrue   string
+	dFalse       int
+	detailFalse  string
+	unknownLabel string
+}
+
 // tri は *bool(不明/真/偽)を factor に落とす(真と偽で別 detail、nil は Unknowns)。
-func tri(v *bool, r *Result, score *int, name string, dTrue int, detailTrue string, dFalse int, detailFalse string, unknownLabel string) {
+func (a factorAcc) tri(v *bool, f triFactor) {
 	if v == nil {
-		r.Unknowns = append(r.Unknowns, unknownLabel)
+		a.r.Unknowns = append(a.r.Unknowns, f.unknownLabel)
 		return
 	}
 	if *v {
-		if dTrue != 0 {
-			r.Factors = append(r.Factors, Factor{Name: name, Delta: dTrue, Detail: detailTrue})
-			*score += dTrue
+		if f.dTrue != 0 {
+			a.r.Factors = append(a.r.Factors, Factor{Name: f.name, Delta: f.dTrue, Detail: f.detailTrue})
+			*a.score += f.dTrue
 		}
-	} else if dFalse != 0 {
-		r.Factors = append(r.Factors, Factor{Name: name, Delta: dFalse, Detail: detailFalse})
-		*score += dFalse
+	} else if f.dFalse != 0 {
+		a.r.Factors = append(a.r.Factors, Factor{Name: f.name, Delta: f.dFalse, Detail: f.detailFalse})
+		*a.score += f.dFalse
 	}
 }
 
 // triHi は「真の時だけ加点、偽は無印、nil は Unknowns」の脅威インテル型 factor。
-func triHi(v *bool, r *Result, score *int, name string, dTrue int, detailTrue, unknownLabel string) {
+func (a factorAcc) triHi(v *bool, name string, dTrue int, detailTrue, unknownLabel string) {
 	if v == nil {
-		r.Unknowns = append(r.Unknowns, unknownLabel)
+		a.r.Unknowns = append(a.r.Unknowns, unknownLabel)
 		return
 	}
 	if *v {
-		r.Factors = append(r.Factors, Factor{Name: name, Delta: dTrue, Detail: detailTrue})
-		*score += dTrue
+		a.r.Factors = append(a.r.Factors, Factor{Name: name, Delta: dTrue, Detail: detailTrue})
+		*a.score += dTrue
 	}
 }
 

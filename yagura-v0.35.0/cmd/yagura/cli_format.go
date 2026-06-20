@@ -37,6 +37,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
+	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/recovery"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
@@ -1004,6 +1005,25 @@ func humanComplexity(w io.Writer, r complexity.Report) {
 			continue
 		}
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Complexity, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanParamCheck(w io.Writer, r paramcheck.Report) {
+	fmt.Fprintf(w, "files_scanned: %d   functions: %d   max: %d   avg: %.1f   over_threshold(>%d): %d\n",
+		r.FilesScanned, len(r.Functions), r.MaxParams, r.AvgParams, r.Threshold, r.OverThreshold)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no functions over the parameter threshold")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tPARAMS\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		if f.Rule == "parse-error" {
+			fmt.Fprintf(tw, "%s\t-\t%s\t%d\t%s\n", f.Severity, f.File, f.Line, f.Message)
+			continue
+		}
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Params, f.File, f.Line, f.Func)
 	}
 	tw.Flush()
 }

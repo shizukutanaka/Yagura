@@ -167,6 +167,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildErrPolicyTool(d))
 	// [Q] v0.36.0 — cyclomatic complexity (testability precondition)
 	s.Register(buildComplexityTool(d))
+	// [Q] v0.65.0 — long-parameter-list smell (complexity's horizontal pair)
+	s.Register(buildParamCheckTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

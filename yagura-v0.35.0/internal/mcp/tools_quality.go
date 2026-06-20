@@ -19,6 +19,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
+	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
@@ -165,8 +166,14 @@ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
 				return nil, terr
 			}
 
-			res := runAIVerifyScan(in.Files, in.Text, in.Path, rules,
-				cache, len(in.CustomRules) == 0 && len(in.DisableRules) == 0)
+			// Cache is only safe with default rules in file mode (cache key is
+			// content-based and does not encode custom rules); else pass nil.
+			scanFiles := aiVerifyInputFiles(in.Files, in.Text, in.Path)
+			var scanCache aiverify.CacheLike
+			if in.Text == "" && len(in.CustomRules) == 0 && len(in.DisableRules) == 0 {
+				scanCache = cache
+			}
+			res := runAIVerifyScan(scanFiles, rules, scanCache)
 
 			// v0.26.0: testcoverage と結合し untested AI 生成を flag (+5/file)
 			// files が複数与えられた場合のみ意味があるので text mode は skip
@@ -180,21 +187,25 @@ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
 }
 
 // runAIVerifyScan は入力モード(text 単体 / cache 経由 / 明示 rules)を選んで
-// aiverify を実行する。defaultRules は custom/disable 指定が無い(= cache 安全)か。
-func runAIVerifyScan(files map[string]string, text, path string, rules []aiverify.Rule,
-	cache aiverify.CacheLike, defaultRules bool) aiverify.Result {
-	if text != "" {
-		if path == "" {
-			path = "<input>"
-		}
-		return aiverify.ScanWithRules(map[string]string{path: text}, rules)
-	}
-	// Cache is only safe when the rule set is the default (cache key is
-	// content-based and does not encode custom rules).
-	if cache != nil && defaultRules {
+// aiverify を実行する。cache 非 nil なら content-addressed cache 経由
+//(呼び出し側が「default rule かつ file mode」のときだけ cache を渡す)。
+func runAIVerifyScan(files map[string]string, rules []aiverify.Rule, cache aiverify.CacheLike) aiverify.Result {
+	if cache != nil {
 		return aiverify.ScanCached(files, cache)
 	}
 	return aiverify.ScanWithRules(files, rules)
+}
+
+// aiVerifyInputFiles は text/path 単体入力を files map に正規化する(text 空なら
+// 元の files をそのまま返す)。
+func aiVerifyInputFiles(files map[string]string, text, path string) map[string]string {
+	if text == "" {
+		return files
+	}
+	if path == "" {
+		path = "<input>"
+	}
+	return map[string]string{path: text}
 }
 
 // aiVerifyRules は default rules に user config(custom/disable)を適用して
@@ -436,6 +447,56 @@ func buildComplexityTool(d Deps) *Tool {
 				"threshold":      rep.Threshold,
 				"max_complexity": rep.MaxComplexity,
 				"avg_complexity": rep.AvgComplexity,
+				"over_threshold": rep.OverThreshold,
+				"functions":      rep.Functions,
+				"findings":       rep.Findings,
+			}, nil
+		},
+	}
+}
+
+// ─── yagura_param_check (v0.65.0) ─────────────────────────────
+//
+// ソクラテス的動機: complexity が関数内部の縦の複雑さ(分岐パス数)なら、param_check は
+// 入口の横幅(引数の数)。Fowler の "Long Parameter List" smell を検出する。複雑度
+// だけを gate にすると、巨大関数をヘルパに割って複雑度を下げつつ引数を引き回す退行を
+// 見逃す——本 tool はその盲点(complexity の水平方向の対)を塞ぐ。
+
+func buildParamCheckTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_param_check",
+		Description: "[G] Long-parameter-list smell (Go, Fowler). Per-function param count; flags functions over threshold (default 5).",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for .go files to analyse",
+				},
+				"threshold": map[string]any{
+					"type":        "integer",
+					"description": "parameter-count threshold for findings (default 5)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files     map[string]string `json:"files"`
+				Threshold int               `json:"threshold"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := paramcheck.Scan(in.Files, in.Threshold)
+			return map[string]any{
+				"files_scanned":  rep.FilesScanned,
+				"threshold":      rep.Threshold,
+				"max_params":     rep.MaxParams,
+				"avg_params":     rep.AvgParams,
 				"over_threshold": rep.OverThreshold,
 				"functions":      rep.Functions,
 				"findings":       rep.Findings,

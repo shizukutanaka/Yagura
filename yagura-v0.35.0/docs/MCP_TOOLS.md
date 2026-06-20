@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **71 tools**.
+Generated from a live yagura — **72 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (24)
+- [Misc](#misc) (25)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -522,6 +522,19 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | `strategy` (string) |  |  |
 | `task_count` (integer) |  | Shorthand: N uniform unit-weight tasks (task-1..task-N) when 'tasks' omitted. |
 | `tasks` (array) |  | Independent work items. Each: {id, weight?, min_tier?}. |
+
+---
+
+### `yagura_param_check`
+
+[G] Long-parameter-list smell (Go, Fowler). Per-function param count; flags functions over threshold (default 5).
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ | map of filename → content for .go files to analyse |
+| `threshold` (integer) |  | parameter-count threshold for findings (default 5) |
 
 ---
 
