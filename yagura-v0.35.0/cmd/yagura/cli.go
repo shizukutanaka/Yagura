@@ -63,6 +63,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/injectscan"
 	"github.com/shizukutanaka/yagura/internal/mcp"
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
+	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
@@ -128,6 +129,7 @@ var cliHandlers = map[string]cliHandler{
 	"assert-check": cliAssertCheck, "err-policy": cliErrPolicy, "complexity": cliComplexity,
 	"coupling": cliCoupling, "api-doc": cliAPIDoc, "dead-code": cliDeadCode,
 	"recv-check": cliRecvCheck, "code-health": cliCodeHealth, "param-check": cliParamCheck,
+	"flag-arg": cliFlagArg,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -1863,7 +1865,11 @@ func cliAIVerify(args []string, stdout, stderr io.Writer) error {
 	if *jsonOut {
 		return emitJSON(stdout, res)
 	}
-	humanAIVerify(stdout, res, *summaryOnly)
+	if *summaryOnly {
+		humanAIVerifySummary(stdout, res)
+	} else {
+		humanAIVerify(stdout, res)
+	}
 	return nil
 }
 
@@ -1960,7 +1966,11 @@ func cliQualityCheck(args []string, stdout, stderr io.Writer) error {
 	if *jsonOut {
 		return emitJSON(stdout, res)
 	}
-	humanQualityCheck(stdout, res, *summaryOnly)
+	if *summaryOnly {
+		humanQualityCheckSummary(stdout, res)
+	} else {
+		humanQualityCheck(stdout, res)
+	}
 	return nil
 }
 
@@ -2013,7 +2023,11 @@ func cliTestAudit(args []string, stdout, stderr io.Writer) error {
 	if *jsonOut {
 		return emitJSON(stdout, res)
 	}
-	humanTestAudit(stdout, res, *untestedOnly)
+	if *untestedOnly {
+		humanTestAuditUntestedOnly(stdout, res)
+	} else {
+		humanTestAudit(stdout, res)
+	}
 	if *strict && len(res.UntestedFiles) > 0 {
 		return fmt.Errorf("%d source file(s) lack a matching test — failing because --strict is set", len(res.UntestedFiles))
 	}
@@ -2489,6 +2503,42 @@ func cliParamCheck(args []string, stdout, stderr io.Writer) error {
 	}
 	if *strict && rep.OverThreshold > 0 {
 		return fmt.Errorf("%d function(s) exceed parameter threshold %d (max observed %d)", rep.OverThreshold, rep.Threshold, rep.MaxParams)
+	}
+	return nil
+}
+
+// ─── flag-arg (v0.66.0) ──────────────────────────────────────
+
+// cliFlagArg は `yagura flag-arg` を処理する。Go 関数の bool パラメータ(Fowler
+// "Flag Argument" smell)を ast で検出する。--min-bools=2 で単一 bool をスキップ。
+// ソクラテス的動機: complexity は分岐数、paramcheck は引数総数を測るが、bool 1 個でも
+// `process(data, true)` の呼び出し元で意味が不透明になる制御結合の臭いを補完する。
+func cliFlagArg(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("flag-arg", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	minBools := fset.Int("min-bools", 1, "minimum number of bool params to flag (2 to skip single-bool cases)")
+	strict := fset.Bool("strict", false, "exit non-zero if any flag arguments found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return err
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+
+	rep := flagarg.Scan(sr.Files, *minBools)
+	if *jsonOut {
+		if err := emitJSON(stdout, rep); err != nil {
+			return err
+		}
+	} else {
+		humanFlagArg(stdout, rep)
+	}
+	if *strict && rep.FlagsFound > 0 {
+		return fmt.Errorf("%d flag-argument(s) found (bool params ≥ %d)", rep.FlagsFound, rep.Threshold)
 	}
 	return nil
 }
@@ -4350,7 +4400,7 @@ var yaguraVerbs = []string{
 	"alert-fix", "alert-resolve", "alert-snapshot", "api-doc",
 	"assert-check", "ast-check", "cc-security", "claudemd-audit",
 	"code-health", "complexity", "completion", "coupling", "coverage",
-	"dead-code", "diff-scan", "err-policy", "feature-list", "flow-risk",
+	"dead-code", "diff-scan", "err-policy", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "init-sh", "inject-scan",
 	"list", "mcp-audit", "ops-risk", "parallel-plan", "param-check", "path-policy",
@@ -4449,6 +4499,7 @@ func buildZshVerbLines() string {
 		"diff-scan":            "delta scan of unified diff: secrets in added lines",
 		"err-policy":           "error-context discipline: wrap ratio + blank-discard",
 		"feature-list":         "convert Plan.md to Anthropic-style feature-list.json",
+		"flag-arg":             "boolean flag-argument smell (Fowler); bool params encoding hidden branches",
 		"flow-risk":            "temporal scan of op sequence: exfiltration / injection",
 		"gha-audit":            "GitHub Actions workflow audit (pinning/permissions)",
 		"get":                  "get project by slug",

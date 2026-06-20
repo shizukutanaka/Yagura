@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **72 tools**.
+Generated from a live yagura — **73 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (25)
+- [Misc](#misc) (26)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -458,6 +458,19 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 ### `yagura_dedupe_stats`
 
 [S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.
+
+---
+
+### `yagura_flag_arg`
+
+[G] Boolean flag-argument smell (Go, Fowler). Detects functions with bool parameters that encode hidden control-flow branches. A bool arg that selects behavior ('if verbose', 'if dryRun') is opaque at call sites; consider splitting into two clearly named functions.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ | map of filename → content for .go files to analyse |
+| `threshold` (integer) |  | minimum number of bool params to flag (default 1; set 2 to skip single-bool cases) |
 
 ---
 

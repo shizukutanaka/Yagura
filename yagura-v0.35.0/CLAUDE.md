@@ -21,7 +21,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 66 internal packages
+## Map — 67 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -113,6 +113,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
   gate にすると巨大関数をヘルパに割って複雑度を下げつつ 6・7 個と引数を引き回す退行を
   見逃す——その盲点を塞ぐ。引数は名前単位で計数(`a, b int`=2)、可変長=1、レシーバ除外。
   CLI `param-check --dir . [--max N] [--strict]`、MCP `yagura_param_check`★ v0.65
+- `internal/flagarg` — bool 型引数(Fowler "Flag Argument" smell)を go/ast で検出
+  (ソクラテス新視点)。complexity=分岐パス数、paramcheck=引数総数を補完する「引数の
+  意味的制御結合」軸。`process(data, true)` の呼び出し元で "true" が何を意味するか
+  即座にわからない問題を可視化。threshold>=1 bool param でフラグ(default=1)。
+  _test.go / TestXxx 関数 / *bool ポインタは除外。low(1 bool)/medium(2+ bool)。
+  CLI `flag-arg --dir . [--min-bools N] [--strict]`、MCP `yagura_flag_arg`★ v0.66
 - `internal/coupling` — package 間 import 結合度(アーキテクチャの絡まり)を計測
   (ソクラテス新視点)。fan-in(Ca)/fan-out(Ce)/instability I=Ce/(Ca+Ce)+ Stable
   Dependencies Principle 違反(安定 package が より不安定な package に依存)。

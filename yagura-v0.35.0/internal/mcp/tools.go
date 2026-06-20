@@ -169,6 +169,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildComplexityTool(d))
 	// [Q] v0.65.0 — long-parameter-list smell (complexity's horizontal pair)
 	s.Register(buildParamCheckTool(d))
+	// [Q] v0.66.0 — boolean flag-argument smell (Fowler; semantic coupling)
+	s.Register(buildFlagArgTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

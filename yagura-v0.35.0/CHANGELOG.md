@@ -4,6 +4,53 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.66.0] - 2026-06-20
+
+### Theme — "flag-arg: closing the semantic-coupling blind spot (Socratic self-correction II)"
+
+#### New lens: `internal/flagarg` (Fowler "Flag Argument")
+
+- **Why now (Socratic)**: v0.65.0 added `paramcheck` to detect the "Long Parameter
+  List" smell. Immediately after, the question arose: *what do complexity + paramcheck
+  still fail to capture?* The answer: **semantic meaning of individual parameters**.
+  A function with 1 bool param scores fine on both axes — cyclomatic 1, paramcheck 1.
+  But `process(data, true)` is opaque at the call site; the reader cannot know what
+  "true" means without reading the body. Fowler calls this "Flag Argument": a bool
+  that *selects behaviour* is a hidden branch disguised as a data value.
+  Yagura had no lens for this. Now it does.
+- `flagarg.Scan(files, threshold)` detects functions with `bool` type parameters via
+  go/ast (zero deps). Detection rules: `*bool` pointers excluded (pointer semantics ≠
+  flag arg); `_test.go` files entirely skipped; `TestXxx`/`BenchmarkXxx`/`ExampleXxx`
+  functions skipped; FuncLit callbacks excluded (FuncDecl only); receiver not counted.
+  Threshold = minimum bool params to flag (default 1). Severity: low (1 bool), medium
+  (2+ bool). Deterministic File→Line→Func output.
+- Standalone lens (not wired into code-health composite) — consistent with `paramcheck`,
+  `err-policy`, `coupling`.
+
+#### CLI + MCP
+- CLI `flag-arg --dir . [--min-bools N] [--strict]` (`--strict` exits non-zero on findings)
+- MCP `yagura_flag_arg` (73rd tool) — `[G] Boolean flag-argument smell (Go, Fowler)`
+
+#### Dogfooding — 18 findings, 5 fixed
+
+Ran `yagura flag-arg` on itself immediately after wiring. Found 18 flag arguments.
+Fixed the 5 true Fowler smells (all in formatter functions where the bool controlled
+which output block to emit):
+- `humanAIVerify(w, res, summaryOnly bool)` → split into `humanAIVerify` + `humanAIVerifySummary`, shared via `writeAIVerifyHeader`
+- `humanQualityCheck(w, res, summaryOnly bool)` → split into `humanQualityCheck` + `humanQualityCheckSummary`, shared via `writeQualityCheckHeader`
+- `humanTestAudit(w, res, untestedOnly bool)` → split into `humanTestAudit` + `humanTestAuditUntestedOnly`, shared via `writeTestAuditHeader`
+- `formatQualityResult(res, summaryOnly bool)` → `formatQualityResult` + `formatQualityResultSummary`, shared via `qualityResultBase`
+- `formatAIVerifyResult(res, summaryOnly bool)` → `formatAIVerifyResult` + `formatAIVerifyResultSummary`, shared via `aiVerifyResultBase`
+
+Remaining 13 are intentionally left: converters (`yesNo(b bool)`, `Bool(v bool)` — bool IS the data), display values (`humanReleaseRadar.scanCode` — not a branch), computation inputs (`ReleaseReadinessExt` — intentionally stable API), and well-understood dry-run flags (`launchTargetAgent.dryRun`).
+
+#### Test coverage
+- 15 TDD tests in `internal/flagarg/flagarg_test.go` (Red→Green)
+- Updated `integration_test.go` expectedTools (72→73)
+- All tests green under `-race`
+
+---
+
 ## [v0.65.0] - 2026-06-20
 
 ### Theme — "param-check: closing complexity's blind spot (Socratic self-correction)"

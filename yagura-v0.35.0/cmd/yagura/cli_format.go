@@ -37,6 +37,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
+	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/recovery"
@@ -654,8 +655,9 @@ func shortSHA(s string) string {
 }
 
 // ─── ai-verify (v0.36.0) ─────────────────────────────────────
+// flag-arg 修正(v0.66.0): summaryOnly bool を除去し humanAIVerifySummary に分割。
 
-func humanAIVerify(w io.Writer, res aiverify.Result, summaryOnly bool) {
+func writeAIVerifyHeader(w io.Writer, res aiverify.Result) {
 	fmt.Fprintf(w, "files_scanned: %d  total_lines: %d  ai_gen_lines: %d\n",
 		res.FilesScanned, res.TotalLines, res.AIGenLines)
 	fmt.Fprintf(w, "risk_score: %d  has_critical: %v\n", res.RiskScore, res.HasCritical)
@@ -668,7 +670,11 @@ func humanAIVerify(w io.Writer, res aiverify.Result, summaryOnly bool) {
 	if len(res.AIGenWithoutTests) > 0 {
 		fmt.Fprintf(w, "ai_gen_without_tests: %s\n", strings.Join(res.AIGenWithoutTests, ", "))
 	}
-	if summaryOnly || len(res.Findings) == 0 {
+}
+
+func humanAIVerify(w io.Writer, res aiverify.Result) {
+	writeAIVerifyHeader(w, res)
+	if len(res.Findings) == 0 {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -684,9 +690,14 @@ func humanAIVerify(w io.Writer, res aiverify.Result, summaryOnly bool) {
 	tw.Flush()
 }
 
-// ─── quality-check (v0.36.0) ─────────────────────────────────
+func humanAIVerifySummary(w io.Writer, res aiverify.Result) {
+	writeAIVerifyHeader(w, res)
+}
 
-func humanQualityCheck(w io.Writer, res qualitycheck.Result, summaryOnly bool) {
+// ─── quality-check (v0.36.0) ─────────────────────────────────
+// flag-arg 修正(v0.66.0): summaryOnly bool を除去し humanQualityCheckSummary に分割。
+
+func writeQualityCheckHeader(w io.Writer, res qualitycheck.Result) {
 	fmt.Fprintf(w, "files_scanned: %d  total_lines: %d\n", res.FilesScanned, res.TotalLines)
 	fmt.Fprintf(w, "findings: %d  (prohibited=%d warning=%d info=%d)  has_prohibited: %v\n",
 		len(res.Findings),
@@ -694,7 +705,11 @@ func humanQualityCheck(w io.Writer, res qualitycheck.Result, summaryOnly bool) {
 		res.BySeverity[qualitycheck.SevWarning],
 		res.BySeverity[qualitycheck.SevInfo],
 		res.HasProhibited())
-	if summaryOnly || len(res.Findings) == 0 {
+}
+
+func humanQualityCheck(w io.Writer, res qualitycheck.Result) {
+	writeQualityCheckHeader(w, res)
+	if len(res.Findings) == 0 {
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -706,26 +721,22 @@ func humanQualityCheck(w io.Writer, res qualitycheck.Result, summaryOnly bool) {
 	tw.Flush()
 }
 
-// ─── test-audit (v0.36.0) ────────────────────────────────────
+func humanQualityCheckSummary(w io.Writer, res qualitycheck.Result) {
+	writeQualityCheckHeader(w, res)
+}
 
-func humanTestAudit(w io.Writer, res testcoverage.AuditResult, untestedOnly bool) {
+// ─── test-audit (v0.36.0) ────────────────────────────────────
+// flag-arg 修正(v0.66.0): untestedOnly bool を除去し humanTestAuditUntestedOnly に分割。
+
+func writeTestAuditHeader(w io.Writer, res testcoverage.AuditResult) {
 	fmt.Fprintf(w, "files_scanned: %d  source_files: %d  test_files: %d\n",
 		res.FilesScanned, res.SourceFiles, res.TestFiles)
 	fmt.Fprintf(w, "sources_with_test: %d  sources_no_test: %d  coverage_ratio: %.2f\n",
 		res.SourcesWithTest, res.SourcesNoTest, res.CoverageRatio)
+}
 
-	if untestedOnly {
-		if len(res.UntestedFiles) == 0 {
-			fmt.Fprintln(w, "no untested sources")
-			return
-		}
-		fmt.Fprintln(w, "untested sources:")
-		for _, p := range res.UntestedFiles {
-			fmt.Fprintf(w, "  %s\n", p)
-		}
-		return
-	}
-
+func humanTestAudit(w io.Writer, res testcoverage.AuditResult) {
+	writeTestAuditHeader(w, res)
 	if len(res.ByLanguage) > 0 {
 		langs := make([]string, 0, len(res.ByLanguage))
 		for l := range res.ByLanguage {
@@ -742,6 +753,18 @@ func humanTestAudit(w io.Writer, res testcoverage.AuditResult, untestedOnly bool
 	}
 	if len(res.UntestedFiles) > 0 {
 		fmt.Fprintf(w, "untested: %s\n", strings.Join(res.UntestedFiles, ", "))
+	}
+}
+
+func humanTestAuditUntestedOnly(w io.Writer, res testcoverage.AuditResult) {
+	writeTestAuditHeader(w, res)
+	if len(res.UntestedFiles) == 0 {
+		fmt.Fprintln(w, "no untested sources")
+		return
+	}
+	fmt.Fprintln(w, "untested sources:")
+	for _, p := range res.UntestedFiles {
+		fmt.Fprintf(w, "  %s\n", p)
 	}
 }
 
@@ -1024,6 +1047,26 @@ func humanParamCheck(w io.Writer, r paramcheck.Report) {
 			continue
 		}
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Params, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanFlagArg(w io.Writer, r flagarg.Report) {
+	fmt.Fprintf(w, "files_scanned: %d   funcs_scanned: %d   flags_found(bool_params≥%d): %d\n",
+		r.FilesScanned, r.FuncsScanned, r.Threshold, r.FlagsFound)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no boolean flag arguments found")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tBOOL_PARAMS\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		if f.Rule == "parse-error" {
+			fmt.Fprintf(tw, "%s\t-\t%s\t%d\t%s\n", f.Severity, f.File, f.Line, f.Message)
+			continue
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+			f.Severity, strings.Join(f.BoolParams, ","), f.File, f.Line, f.Func)
 	}
 	tw.Flush()
 }

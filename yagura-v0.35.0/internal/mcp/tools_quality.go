@@ -19,6 +19,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
+	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
@@ -86,18 +87,39 @@ func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
 					res.BySeverity[f.Severity]++
 					res.ByRule[f.RuleID]++
 				}
-				return formatQualityResult(res, in.SummaryOnly), nil
+				if in.SummaryOnly {
+					return formatQualityResultSummary(res), nil
+				}
+				return formatQualityResult(res), nil
 			}
 			// v0.23.0: cache 統合(content-hash で同 content の再 scan を skip)
 			res := qualitycheck.ScanFilesCached(in.Files, rules, cache)
-			return formatQualityResult(res, in.SummaryOnly), nil
+			if in.SummaryOnly {
+				return formatQualityResultSummary(res), nil
+			}
+			return formatQualityResult(res), nil
 		},
 	}
 }
 
-// formatQualityResult is MCP-friendly output formatter.
-func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
-	out := map[string]any{
+// formatQualityResult は MCP-friendly 出力フォーマッタ(全 findings 含む)。
+// flag-arg 修正(v0.66.0): summaryOnly bool を除去し関数を目的別に分割。
+func formatQualityResult(res qualitycheck.Result) any {
+	out := qualityResultBase(res)
+	out["findings"] = res.Findings
+	if len(res.ByFile) > 0 {
+		out["by_file"] = res.ByFile
+	}
+	return out
+}
+
+// formatQualityResultSummary は findings を省いた集計のみを返す。
+func formatQualityResultSummary(res qualitycheck.Result) any {
+	return qualityResultBase(res)
+}
+
+func qualityResultBase(res qualitycheck.Result) map[string]any {
+	return map[string]any{
 		"files_scanned":  res.FilesScanned,
 		"total_lines":    res.TotalLines,
 		"finding_count":  len(res.Findings),
@@ -106,13 +128,6 @@ func formatQualityResult(res qualitycheck.Result, summaryOnly bool) any {
 		"has_prohibited": res.HasProhibited(),
 		"summary":        res.Summary(),
 	}
-	if !summaryOnly {
-		out["findings"] = res.Findings
-		if len(res.ByFile) > 0 {
-			out["by_file"] = res.ByFile
-		}
-	}
-	return out
 }
 
 
@@ -181,7 +196,10 @@ func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
 				res = annotateUntestedAI(res, in.Files)
 			}
 
-			return formatAIVerifyResult(res, in.SummaryOnly), nil
+			if in.SummaryOnly {
+				return formatAIVerifyResultSummary(res), nil
+			}
+			return formatAIVerifyResult(res), nil
 		},
 	}
 }
@@ -245,7 +263,20 @@ func annotateUntestedAI(res aiverify.Result, files map[string]string) aiverify.R
 	})
 }
 
-func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
+// formatAIVerifyResult は全 findings を含む MCP 出力を返す。
+// flag-arg 修正(v0.66.0): summaryOnly bool を除去し関数を目的別に分割。
+func formatAIVerifyResult(res aiverify.Result) any {
+	out := aiVerifyResultBase(res)
+	out["findings"] = res.Findings
+	return out
+}
+
+// formatAIVerifyResultSummary は findings を省いた集計のみを返す。
+func formatAIVerifyResultSummary(res aiverify.Result) any {
+	return aiVerifyResultBase(res)
+}
+
+func aiVerifyResultBase(res aiverify.Result) map[string]any {
 	out := map[string]any{
 		"files_scanned": res.FilesScanned,
 		"total_lines":   res.TotalLines,
@@ -259,9 +290,6 @@ func formatAIVerifyResult(res aiverify.Result, summaryOnly bool) any {
 	}
 	if len(res.AIGenWithoutTests) > 0 {
 		out["ai_gen_without_tests"] = res.AIGenWithoutTests
-	}
-	if !summaryOnly {
-		out["findings"] = res.Findings
 	}
 	if res.CacheHits > 0 || res.CacheMisses > 0 {
 		out["cache_hits"] = res.CacheHits
@@ -500,6 +528,54 @@ func buildParamCheckTool(d Deps) *Tool {
 				"over_threshold": rep.OverThreshold,
 				"functions":      rep.Functions,
 				"findings":       rep.Findings,
+			}, nil
+		},
+	}
+}
+
+// ─── yagura_flag_arg (v0.66.0) ────────────────────────────────
+//
+// ソクラテス的動機: complexity は分岐パス数(垂直)、paramcheck は引数の総数(水平)を測る。
+// しかし bool 型の引数はカウント以上の臭いを持つ: `process(data, true)` の呼び出し元で
+// "true" が何を意味するか即座にわからない(Martin Fowler "Flag Argument" smell)。
+// 本 tool は complexity + paramcheck が見逃す「引数の意味的制御結合」を補完する。
+
+func buildFlagArgTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_flag_arg",
+		Description: "[G] Boolean flag-argument smell (Go, Fowler). Detects functions with bool parameters that encode hidden control-flow branches. A bool arg that selects behavior ('if verbose', 'if dryRun') is opaque at call sites; consider splitting into two clearly named functions.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":        "object",
+					"description": "map of filename → content for .go files to analyse",
+				},
+				"threshold": map[string]any{
+					"type":        "integer",
+					"description": "minimum number of bool params to flag (default 1; set 2 to skip single-bool cases)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files     map[string]string `json:"files"`
+				Threshold int               `json:"threshold"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := flagarg.Scan(in.Files, in.Threshold)
+			return map[string]any{
+				"files_scanned": rep.FilesScanned,
+				"funcs_scanned": rep.FuncsScanned,
+				"threshold":     rep.Threshold,
+				"flags_found":   rep.FlagsFound,
+				"findings":      rep.Findings,
 			}, nil
 		},
 	}
