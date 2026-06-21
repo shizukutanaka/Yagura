@@ -51,6 +51,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/config"
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/coverage"
+	"github.com/shizukutanaka/yagura/internal/ctxcheck"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/deprank"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
@@ -139,6 +140,7 @@ var cliHandlers = map[string]cliHandler{
 	"dep-rank":    cliDepRank,
 	"hotspot":     cliHotspot,
 	"name-check":  cliNameCheck,
+	"ctx-check":   cliCtxCheck,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2729,6 +2731,35 @@ func cliNameCheck(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ─── ctx-check (v0.75.0) ─────────────────────────────────────
+
+// cliCtxCheck は `yagura ctx-check` を処理する。context.Context の取り扱い規律
+// (第一引数規約 + struct field 非格納)を検査する並行性軸のレンズ。型情報不要・
+// 決定論的。--strict で違反時 exit 1。
+func cliCtxCheck(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("ctx-check", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any violation is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := ctxcheck.Scan(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanCtxCheck(stdout, rep)
+	if *strict && rep.Flagged > 0 {
+		return fmt.Errorf("%d context.Context discipline violation(s)", rep.Flagged)
+	}
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4587,7 +4618,7 @@ var yaguraVerbs = []string{
 	"agent-config-audit", "agent-event", "agents-md", "ai-verify",
 	"alert-fix", "alert-resolve", "alert-snapshot", "api-doc",
 	"assert-check", "ast-check", "cc-security", "claudemd-audit",
-	"code-health", "complexity", "completion", "coupling", "coverage",
+	"code-health", "complexity", "completion", "coupling", "coverage", "ctx-check",
 	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
@@ -4703,6 +4734,7 @@ func buildZshVerbLines() string {
 		"help":                 "print help message",
 		"hotspot":              "convergent-signal hotspots: functions flagged by 2+ signature lenses",
 		"name-check":           "name↔signature consistency: predicates return bool, getters/constructors return a value",
+		"ctx-check":            "context.Context discipline: must be first param, not stored in struct fields",
 		"init-sh":              "generate init.sh or init.ps1 for agent sessions",
 		"inject-scan":          "scan untrusted content for indirect prompt injection",
 		"list":                 "list registry projects",

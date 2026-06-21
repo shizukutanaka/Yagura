@@ -4,6 +4,72 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.75.0] - 2026-06-21
+
+### Theme — "ctxcheck: context.Context discipline (Socratic blind spot VIII)"
+
+#### Why this release
+
+A second Qiita/Zenn survey — this round on Go concurrency and `context.Context`
+conventions — surfaced a whole axis Yagura's lens family never measured:
+**cancellation-propagation discipline**. The Go community has two canonical,
+deterministically-checkable rules here, each backed by a well-known linter:
+
+- `context.Context` should be the **first** parameter (golint check; JetBrains
+  GoLand GO-5820; Bytesize Go "Context Should Be First")
+- a `context.Context` should **not** be stored in a struct field
+  (`sivchari/containedctx`, justified by the Go blog *Contexts and structs*)
+
+Sources surveyed (representative):
+- [containedctx linter (sivchari)](https://github.com/sivchari/containedctx)
+- [contextcheck linter (sylvia7788)](https://pkg.go.dev/github.com/sylvia7788/contextcheck)
+- [Context Should Be the First Argument (bytesizego)](https://www.bytesizego.com/blog/context-should-be-first-go)
+- [Goのgoroutineリーク／contextの終了条件 (Qiita / ysmreg1)](https://qiita.com/ysmreg1/items/b79e3988b74ffe6d9ab1)
+- [goleak でゴールーチンリーク検出 (Qiita / tenntenn)](https://qiita.com/tenntenn/items/9243f742c0b3bc041998)
+- [Goのアンチパターン集 (Zenn / baleenstudio)](https://zenn.dev/baleenstudio/articles/330740f3a3babd)
+
+#### New lens: `internal/ctxcheck` (concurrency axis, 79th MCP tool, 73rd package)
+
+Two deterministic, type-free rules:
+
+- **`context-not-first` (medium)**: a func/method has a `context.Context`
+  parameter not in position 0. Exception: a `*testing.T`/`*testing.B`/`*testing.F`
+  first parameter (test-helper pattern) is exempt — the canonical carve-out.
+- **`contained-ctx` (low)**: a struct has a `context.Context` field, named or
+  embedded.
+
+Conservative detection: only the literal `context.Context` selector is matched;
+an aliased `context` import is not flagged (no `go/types`, no false positives).
+
+#### Dogfood: found and fixed a real violation
+
+```
+# before:
+$ yagura ctx-check --dir .
+ctx-check: 279 files, 1 violation(s)
+medium  context-not-first  cmd/yagura/httpapi.go  225  writeSSEPinDrift
+
+# after:
+$ yagura ctx-check --dir .
+ctx-check: 279 files, 0 violation(s)
+```
+
+`writeSSEPinDrift(w http.ResponseWriter, ctx context.Context, …)` had context as
+its **second** parameter. Reordered to `writeSSEPinDrift(ctx, w, …)` and updated
+all call sites (1 production caller in `httpapi.go`, 3 test callers). Like v0.73
+(namecheck → `hasSensitivityTag`), the lens found a genuine defect on its first
+run against the codebase.
+
+#### Wiring
+- CLI `ctx-check --dir . [--strict]`
+- MCP `yagura_ctx_check` (79th tool)
+- `docs/quality-lens-spec.md` §8 added; §3 taxonomy gains a Concurrency axis row
+- 22 TDD tests (Red→Green), all passing under `-race`
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 70 consecutive
+releases (v0.6 → v0.75). 79 MCP tools, 73 internal packages.
+
 ## [v0.74.0] - 2026-06-21
 
 ### Theme — "namecheck × Go community standards (Qiita/Zenn survey)"

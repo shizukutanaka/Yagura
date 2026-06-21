@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **78 tools**.
+Generated from a live yagura — **79 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (31)
+- [Misc](#misc) (32)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -452,6 +452,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `event` (object) | ★ | the raw lifecycle event object from any agent's hook/telemetry. |
+
+---
+
+### `yagura_ctx_check`
+
+[Q] context.Context discipline: must be first param (not in struct fields). Go convention (containedctx-style)
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
 
 ---
 

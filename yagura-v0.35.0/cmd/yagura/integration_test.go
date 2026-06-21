@@ -182,6 +182,7 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		// v0.70 — convergent-signal hotspots (functions flagged by 2+ signature lenses)
 		"yagura_hotspot",
 		"yagura_name_check",
+		"yagura_ctx_check",
 		// v0.36 — package import coupling (architecture / SDP)
 		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)

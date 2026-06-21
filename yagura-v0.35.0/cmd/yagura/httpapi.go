@@ -194,7 +194,7 @@ func (d *httpAPIDeps) handlePinDrift(w http.ResponseWriter, r *http.Request) {
 
 	// v0.12.0: SSE streaming mode
 	if r.URL.Query().Get("stream") == "1" && conc >= 0 {
-		writeSSEPinDrift(w, ctx, d.PinDrift, pins, conc)
+		writeSSEPinDrift(ctx, w, d.PinDrift, pins, conc)
 		return
 	}
 
@@ -222,7 +222,7 @@ func (d *httpAPIDeps) handlePinDrift(w http.ResponseWriter, r *http.Request) {
 // 最後に done event を送信する:
 //   event: done
 //   data: {"summary":{...}}
-func writeSSEPinDrift(w http.ResponseWriter, ctx context.Context, checker PinDriftStreamer, pins []pindrift.Pin, concurrency int) {
+func writeSSEPinDrift(ctx context.Context, w http.ResponseWriter, checker PinDriftStreamer, pins []pindrift.Pin, concurrency int) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no") // nginx 後ろでも buffering 無効化

@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 72 internal packages
+## Map — 73 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 78 tool definitions
+- `internal/mcp` — MCP server + 79 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -164,6 +164,13 @@ cortex flywheel 4 段階すべてを単体で機械化:
   で「Go コミュニティ標準だが Yagura 未計測」だったルールを取り込み。語境界(接頭辞の次が
   大文字)で "Hash" を "has"、"Errno" を "Err" と誤認しない。型情報不要・決定論的。
   CLI `name-check --dir . [--strict]`、MCP `yagura_name_check`★ v0.73
+- `internal/ctxcheck` — context.Context の取り扱い規律を検査する *並行性軸* のレンズ
+  (ソクラテス新視点 VIII、Qiita/Zenn 調査)。context-not-first(ctx は第一引数であるべき、
+  *testing.T 先頭の test helper は例外)+ contained-ctx(struct field に context を溜めない、
+  Go 公式 blog "Contexts and structs")。canonical linter containedctx / 引数順チェックを機械化。
+  literal `context.Context` selector のみ照合(別名 import は型解決要のため対象外)。型情報
+  不要・決定論的。dogfood で `writeSSEPinDrift(w, ctx, …)` を発見し `(ctx, w, …)` に修正。
+  CLI `ctx-check --dir . [--strict]`、MCP `yagura_ctx_check`★ v0.75
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

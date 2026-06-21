@@ -17,6 +17,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/codehealth"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
+	"github.com/shizukutanaka/yagura/internal/ctxcheck"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/deprank"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
@@ -1042,6 +1043,36 @@ func buildNameCheckTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := namecheck.Scan(in.Files)
+			return rep, nil
+		},
+	}
+}
+
+func buildCtxCheckTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_ctx_check",
+		Description: "[Q] context.Context discipline: must be first param (not in struct fields). Go convention (containedctx-style)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := ctxcheck.Scan(in.Files)
 			return rep, nil
 		},
 	}

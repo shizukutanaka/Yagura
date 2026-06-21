@@ -264,7 +264,7 @@ func (m *mockPinDriftStreamer) CheckPinsStream(ctx context.Context, pins []pindr
 
 func TestWriteSSEPinDrift_EmptyPins(t *testing.T) {
 	w := httptest.NewRecorder()
-	writeSSEPinDrift(w, context.Background(), &mockPinDriftStreamer{}, nil, 1)
+	writeSSEPinDrift(context.Background(), w, &mockPinDriftStreamer{}, nil, 1)
 	resp := w.Result()
 	if resp.Header.Get("Content-Type") != "text/event-stream" {
 		t.Errorf("expected text/event-stream, got %q", resp.Header.Get("Content-Type"))
@@ -400,7 +400,7 @@ func (r *strippedRecorder) WriteHeader(code int)        { r.code = code }
 func TestWriteSSEPinDrift_NonFlusher(t *testing.T) {
 	// strippedRecorder does NOT implement http.Flusher → triggers the !ok branch.
 	w := &strippedRecorder{}
-	writeSSEPinDrift(w, context.Background(), &mockPinDriftStreamer{}, nil, 1)
+	writeSSEPinDrift(context.Background(), w, &mockPinDriftStreamer{}, nil, 1)
 	if w.code != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", w.code)
 	}
@@ -426,7 +426,7 @@ func (m *resultPinDriftStreamer) CheckPinsStream(ctx context.Context, pins []pin
 func TestWriteSSEPinDrift_WithResult(t *testing.T) {
 	w := httptest.NewRecorder()
 	pins := []pindrift.Pin{{Owner: "actions", Repo: "checkout"}}
-	writeSSEPinDrift(w, context.Background(), &resultPinDriftStreamer{}, pins, 1)
+	writeSSEPinDrift(context.Background(), w, &resultPinDriftStreamer{}, pins, 1)
 	body := w.Body.String()
 	if !strings.Contains(body, "event: result") {
 		t.Errorf("expected 'event: result' in SSE body, got %q", body)

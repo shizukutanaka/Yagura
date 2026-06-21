@@ -30,6 +30,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/coverage"
+	"github.com/shizukutanaka/yagura/internal/ctxcheck"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/deprank"
@@ -1599,6 +1600,21 @@ func humanNameCheck(w io.Writer, r namecheck.Report) {
 		r.FilesScanned, r.FuncsScanned, r.Flagged)
 	if len(r.Findings) == 0 {
 		fmt.Fprintln(w, "no name↔signature inconsistencies — names keep their promises")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tRULE\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+			f.Severity, f.Rule, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanCtxCheck(w io.Writer, r ctxcheck.Report) {
+	fmt.Fprintf(w, "ctx-check: %d files, %d violation(s)\n", r.FilesScanned, r.Flagged)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no context.Context discipline violations — context flows as a first argument")
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)

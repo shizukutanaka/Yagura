@@ -181,6 +181,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildHotspotTool(d))
 	// [Q] v0.73.0 — name↔signature consistency (semantic axis: name keeps its promise)
 	s.Register(buildNameCheckTool(d))
+	// [Q] v0.75.0 — context.Context discipline (first-param + no struct-field; containedctx-style)
+	s.Register(buildCtxCheckTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

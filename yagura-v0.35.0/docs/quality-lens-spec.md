@@ -44,6 +44,7 @@ Lenses are organized by the **axis** they measure:
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
 | Public contract | `apidoc` (exported-symbol docs), `recvcheck` (receiver consistency) |
 | Test trust | `testcoverage` (source↔test mapping), `assertcheck` (assertion density) |
+| Concurrency | `ctxcheck` (`context.Context` first-param + no struct field) |
 | Meta | `coverage` (scan blind spots), `hotspot` (multi-lens convergence) |
 
 ## 4. Strengths (長所)
@@ -130,3 +131,32 @@ function-signature picture: `paramcheck` (input), `returncheck` (output),
 `flagarg` (coupling), `namecheck` (the name's promise about all three) and now
 also the Go community's two well-established error-naming conventions —
 catching naming defects that would otherwise survive every structural lens.
+
+## 8. `ctxcheck` — specification
+
+**Question:** *Does `context.Context` flow the way Go convention requires?*
+
+Added v0.75 after a Qiita/Zenn survey of Go concurrency conventions identified
+two canonical, deterministically-checkable rules (`containedctx` linter + the
+golint "context first arg" check) that no Yagura lens measured. This is the
+first lens on the **concurrency / cancellation-propagation** axis.
+
+| Rule | Condition | Severity |
+|---|---|---|
+| `context-not-first` | a func/method has a `context.Context` parameter that is not in position 0 | medium |
+| `contained-ctx` | a struct type has a field (named or embedded) of type `context.Context` | low |
+
+**Exception** (`context-not-first`): if the first parameter is `*testing.T`,
+`*testing.B`, or `*testing.F`, the function is a test helper and is exempt — the
+canonical carve-out every implementation of this rule includes.
+
+**Conservative detection**: only the literal selector `context.Context` (the
+standard import name) is matched. An aliased import (`import ctxpkg "context"`)
+would need type resolution and is deliberately **not** flagged — consistent with
+the lens family's zero-`go/types` stance (no false positives without type info).
+
+Rationale for `contained-ctx`: the Go blog *Contexts and structs* establishes
+that contexts should be passed explicitly per-call as the first argument, never
+stashed in a struct, so that cancellation scope is visible at every call site
+rather than hidden in object lifetime. Storing a context in a struct couples the
+context's lifetime to the object's and obscures who can cancel what.
