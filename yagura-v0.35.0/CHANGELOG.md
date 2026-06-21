@@ -4,6 +4,71 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.74.0] - 2026-06-21
+
+### Theme — "namecheck × Go community standards (Qiita/Zenn survey)"
+
+#### Why this release
+
+A survey of Qiita and Zenn — the two main Japanese Go-community technical
+content platforms — for established static-analysis conventions exposed a
+specific gap in `namecheck` (v0.73): every well-known Go linter, including
+`Antonboom/errname` and the `go-ruleguard` recipe collections, enforces two
+error-naming rules that Yagura did not yet measure. The Go community treats
+these as basic hygiene; Yagura's lens family had blind-spot coverage of them.
+
+Sources surveyed (representative):
+- [tenntenn — 逆引き Goによる静的解析 (Zenn book)](https://zenn.dev/tenntenn/books/d168faebb1a739)
+- [hsaki — Goで作る静的解析ツール開発入門 (Zenn book)](https://zenn.dev/hsaki/books/golang-static-analysis)
+- [Antonboom/errname (canonical errname linter)](https://github.com/Antonboom/errname)
+- [Go Modules時代の静的解析 (Qiita / nakario)](https://qiita.com/nakario/items/737177a9472d7ac9c2fd)
+- [go-ruleguard で命名規則を linter に (Zenn / HRBrain)](https://zenn.dev/hrbrain/articles/4365c28245e2d3)
+
+#### Extended lens: `internal/namecheck` — error-naming axis
+
+Two new rules, both deterministic and type-free (consistent with the lens
+contract L1–L10 in `docs/quality-lens-spec.md`):
+
+- **`sentinel-err-prefix` (medium)**: `var` initialized by `errors.New(…)` or
+  `fmt.Errorf(…)`, or declared with explicit `error` type, must start with
+  `Err…` (exported) or `err…` (unexported). Word-boundary discipline applies:
+  `Errno` is **not** an `Err` prefix.
+- **`error-type-suffix` (medium)**: a type whose `func (T) Error() string`
+  method exists (i.e. implements `error`) must end with `Error` or `Errors`.
+  Both pointer and value receivers count.
+
+Detection is intentionally conservative — only the two standard error
+constructors (`errors.New`, `fmt.Errorf`) and explicit `error`-type annotations
+trigger the sentinel check; user-defined constructors require type information
+and are skipped. Same for the error-type check: only the exact
+`func (T) Error() string` shape qualifies.
+
+#### Dogfood: 0 violations (regression guard, not backlog)
+
+```
+$ yagura name-check --dir .
+name-check: 277 files, 1201 funcs, 0 inconsistency(ies)
+no name↔signature inconsistencies — names keep their promises
+```
+
+Yagura's own error naming was already clean. Unlike v0.73 (where namecheck
+caught and fixed `hasSensitivityTag` → `findSensitivityTag` on its first run),
+v0.74 finds nothing to fix — the value is preventing future regressions and
+making the codebase's adherence to community convention **measurable** rather
+than implicit.
+
+#### Spec updated
+
+`docs/quality-lens-spec.md` §7 extended with the two new rules and their
+detection semantics. No new MCP tools or CLI verbs — the existing
+`yagura_name_check` / `yagura name-check` cover both axes, and `[--strict]`
+naturally extends to the new rules.
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 69 consecutive
+releases (v0.6 → v0.74). Still 78 MCP tools, 72 internal packages — this
+release deepens an existing lens rather than adding a new one.
+
 ## [v0.73.0] - 2026-06-20
 
 ### Theme — "namecheck: the semantic axis (Socratic blind spot VII)"

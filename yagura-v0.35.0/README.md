@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.73.0** — 78 MCP tools, 72 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). New `namecheck` lens (semantic axis): the first lens to check whether a function's *name keeps its signature's promise* — predicates (`is`/`has`) must return `bool`, getters/constructors must return a value. Dogfooded on Yagura itself: found and fixed `hasSensitivityTag` (returned `(string, bool)` — a `v, ok` lookup misnamed as a pure predicate → renamed `findSensitivityTag`). See `docs/quality-lens-spec.md` for the full lens-system specification. Reproducible build verified (byte-for-byte identical via `make verify`).
+Status: **v0.74.0** — 78 MCP tools, 72 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). `namecheck` extended after surveying Qiita/Zenn for established Go static-analysis conventions: added the two `errname`-derived rules every well-known Go linter enforces but Yagura did not yet measure — `sentinel-err-prefix` (`Err…`/`err…` for `errors.New`/`fmt.Errorf` vars) and `error-type-suffix` (`…Error`/`…Errors` for types with `Error() string`). Yagura is already clean on both (0 inconsistencies on 277 files / 1201 funcs), so they act as regression guards rather than backlog. Reproducible build verified.
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-68 consecutive releases (v0.6 → v0.73) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+69 consecutive releases (v0.6 → v0.74) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

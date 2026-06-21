@@ -156,12 +156,14 @@ cortex flywheel 4 段階すべてを単体で機械化:
   .go に scope を確定してから委譲(下流レンズの _test.go/parse-error 挙動差を吸収)。
   2 レンズ収束=medium / 3+ 収束=high。CLI `hotspot --dir . [--min-lenses N] [--strict]`、
   MCP `yagura_hotspot`★ v0.70; `ReleaseReadinessExt` top finding resolved v0.71
-- `internal/namecheck` — 関数名がシグネチャの約束を守るか検査する *意味軸* の最初のレンズ
-  (ソクラテス新視点 VII)。これまで全レンズは *構造* を測ったが、名前と振る舞いの整合は
-  未計測の契約だった(W2)。is/has/can/should/must 述語は第一戻り値 bool を、Get/New 接頭辞は
-  戻り値を返すべき。語境界(接頭辞の次が大文字)で "Hash" を "has" 述語と誤認しない。型情報
-  不要・決定論的。dogfood で `hasSensitivityTag`(`(string,bool)` の v,ok lookup)を発見し
-  `findSensitivityTag` に改名。CLI `name-check --dir . [--strict]`、MCP `yagura_name_check`★ v0.73
+- `internal/namecheck` — 関数名・error 変数・error 型のシグネチャ整合を検査する *意味軸*
+  のレンズ(ソクラテス新視点 VII)。これまで全レンズは *構造* を測ったが、名前と振る舞いの
+  整合は未計測の契約だった(W2)。is/has/can/should/must 述語は第一戻り値 bool を、Get/New
+  接頭辞は戻り値を返すべき(v0.73)。v0.74 で errname 準拠の error 命名規約を追加: sentinel
+  は Err…/err… 接頭辞、Error() string メソッド持ち型は Error/Errors 接尾辞。Qiita/Zenn 調査
+  で「Go コミュニティ標準だが Yagura 未計測」だったルールを取り込み。語境界(接頭辞の次が
+  大文字)で "Hash" を "has"、"Errno" を "Err" と誤認しない。型情報不要・決定論的。
+  CLI `name-check --dir . [--strict]`、MCP `yagura_name_check`★ v0.73
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

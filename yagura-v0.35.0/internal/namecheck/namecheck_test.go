@@ -241,3 +241,144 @@ func clean() bool { return true }
 		t.Errorf("Flagged: want 3, got %d", r.Flagged)
 	}
 }
+
+// ─── sentinel-err-prefix (errname-style) ─────────────────
+
+func TestScan_ExportedSentinelMissingErrPrefixFlagged(t *testing.T) {
+	src := `package p
+import "errors"
+var InvalidURL = errors.New("bad url")
+var TimeoutFailure = errors.New("timeout")
+`
+	r := Scan(map[string]string{"x.go": src})
+	if !has(r, "InvalidURL", "sentinel-err-prefix") {
+		t.Error("InvalidURL must be flagged sentinel-err-prefix")
+	}
+	if !has(r, "TimeoutFailure", "sentinel-err-prefix") {
+		t.Error("TimeoutFailure must be flagged sentinel-err-prefix")
+	}
+}
+
+func TestScan_UnexportedSentinelMissingErrPrefixFlagged(t *testing.T) {
+	src := `package p
+import "errors"
+var notFound = errors.New("nope")
+`
+	r := Scan(map[string]string{"x.go": src})
+	if !has(r, "notFound", "sentinel-err-prefix") {
+		t.Error("unexported sentinel without err prefix must be flagged")
+	}
+}
+
+func TestScan_SentinelWithErrPrefixClean(t *testing.T) {
+	src := `package p
+import "errors"
+import "fmt"
+var ErrNotFound = errors.New("not found")
+var errInternal = errors.New("internal")
+var ErrTimeout = fmt.Errorf("timeout after %ds", 5)
+`
+	r := Scan(map[string]string{"x.go": src})
+	if len(r.Findings) != 0 {
+		t.Errorf("properly-prefixed sentinels should be clean, got: %+v", r.Findings)
+	}
+}
+
+// Word boundary: "Errno" must NOT be read as "Err" prefix (no uppercase follows).
+// But "ErrInvalid" is a proper prefix (Err + Invalid). And a bare "Err" with
+// no suffix is too vague — flag as missing-boundary too.
+func TestScan_ErrnoNotPrefixed(t *testing.T) {
+	src := `package p
+import "errors"
+var Errno = errors.New("errno")
+`
+	r := Scan(map[string]string{"x.go": src})
+	if !has(r, "Errno", "sentinel-err-prefix") {
+		t.Error("Errno (no word-boundary after Err) should be flagged")
+	}
+}
+
+// Detection signal: only obvious error constructors trigger the check (errors.New, fmt.Errorf).
+// A var initialized by a custom constructor is NOT inspected (avoids false positives without types).
+func TestScan_CustomConstructorNotChecked(t *testing.T) {
+	src := `package p
+var Something = makeWidget()
+func makeWidget() string { return "" }
+`
+	r := Scan(map[string]string{"x.go": src})
+	for _, f := range r.Findings {
+		if f.Func == "Something" {
+			t.Errorf("non-error constructor must not be checked, got: %+v", f)
+		}
+	}
+}
+
+// Explicit error type declaration also triggers the check.
+func TestScan_ExplicitErrorTypeChecked(t *testing.T) {
+	src := `package p
+var Broken error = nil
+`
+	r := Scan(map[string]string{"x.go": src})
+	if !has(r, "Broken", "sentinel-err-prefix") {
+		t.Error("var with explicit error type must be checked")
+	}
+}
+
+// ─── error-type-suffix (errname-style) ────────────────────
+
+func TestScan_ErrorTypeMissingSuffixFlagged(t *testing.T) {
+	src := `package p
+type DecodeFailure struct{}
+func (d *DecodeFailure) Error() string { return "decode" }
+`
+	r := Scan(map[string]string{"x.go": src})
+	if !has(r, "DecodeFailure", "error-type-suffix") {
+		t.Error("DecodeFailure (implements error, no Error suffix) must be flagged")
+	}
+}
+
+func TestScan_ErrorTypeWithSuffixClean(t *testing.T) {
+	src := `package p
+type DecodeError struct{}
+func (d *DecodeError) Error() string { return "decode" }
+type ValidationErrors []string
+func (v ValidationErrors) Error() string { return "many" }
+type internalError struct{}
+func (i internalError) Error() string { return "x" }
+`
+	r := Scan(map[string]string{"x.go": src})
+	if len(r.Findings) != 0 {
+		t.Errorf("error types with Error/Errors suffix should be clean, got: %+v", r.Findings)
+	}
+}
+
+// The Error() method must have the right signature (() string) to count.
+// A method named Error() with different signature does not make the type an error.
+func TestScan_NonStandardErrorMethodIgnored(t *testing.T) {
+	src := `package p
+type Thing struct{}
+func (t *Thing) Error() int { return 0 }
+func (t *Thing) Error(extra string) string { return "" }
+`
+	// Go would not allow two methods with same name in real code, but we treat each FuncDecl
+	// independently and check signatures. Neither matches func() string, so Thing is NOT an error type.
+	r := Scan(map[string]string{"x.go": src})
+	for _, f := range r.Findings {
+		if f.Func == "Thing" && f.Rule == "error-type-suffix" {
+			t.Errorf("non-standard Error() signature should not classify as error type, got: %+v", f)
+		}
+	}
+}
+
+// Pointer receiver and value receiver both qualify.
+func TestScan_ValueReceiverErrorTypeFlagged(t *testing.T) {
+	src := `package p
+type Bad struct{}
+func (b Bad) Error() string { return "" }
+`
+	r := Scan(map[string]string{"x.go": src})
+	if !has(r, "Bad", "error-type-suffix") {
+		t.Error("value-receiver error type without suffix must be flagged")
+	}
+}
+

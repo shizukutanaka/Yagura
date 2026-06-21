@@ -86,10 +86,13 @@ ADR-0001 and is deferred; #3 is catalogued.
 
 ## 7. `namecheck` — specification
 
-**Question:** *Does each function's name keep the promise its signature makes?*
+**Question:** *Does each identifier's name keep the promise its declaration makes?*
 
 Deterministic rules (all use `go/ast`; word boundary = prefix followed by an
-uppercase letter or end-of-name, so `Hash` is **not** a `has` predicate):
+uppercase letter or end-of-name, so `Hash` is **not** a `has` predicate and
+`Errno` is **not** an `Err` prefix):
+
+### Function-name rules (signature axis)
 
 | Rule | Condition | Severity |
 |---|---|---|
@@ -97,13 +100,33 @@ uppercase letter or end-of-name, so `Hash` is **not** a `has` predicate):
 | `getter-no-return` | name is `Get`/`get` prefix but function returns nothing | medium |
 | `constructor-no-return` | name is `New`/`new` prefix but function returns nothing | low |
 
-Exclusions: `_test.go` files; `TestXxx`/`BenchmarkXxx`/`ExampleXxx`/`FuzzXxx`;
-function literals; the bare names `is`/`get`/`new`/`has`… with no suffix (no
-word boundary). Same-package, no type resolution: the first result's type is
-read syntactically (`*ast.Ident{Name:"bool"}`), so only the literal predeclared
-`bool` counts — a named type aliasing bool is conservatively **not** flagged
-(avoids false positives without type info).
+### Error-naming rules (Go community standard; errname-derived)
+
+Added v0.74 after Qiita/Zenn survey of established Go static-analysis
+conventions identified two rules every well-known linter (`errname`,
+`go-ruleguard` recipes) enforces but Yagura did not yet measure.
+
+| Rule | Condition | Severity |
+|---|---|---|
+| `sentinel-err-prefix` | `var` initialized by `errors.New(…)` / `fmt.Errorf(…)`, or declared with explicit `error` type, whose name does not start with `Err…` (exported) / `err…` (unexported) | medium |
+| `error-type-suffix` | type with `Error() string` method (i.e. implements `error`) whose name does not end with `Error` or `Errors` | medium |
+
+Detection is conservative — only `errors.New`/`fmt.Errorf` and explicit
+`error`-type annotations trigger the sentinel check; user-defined constructors
+(e.g. `NewMyError()`) would require type resolution and are skipped. Same for
+the error-type check: only the standard `func (T) Error() string` shape counts.
+
+### Exclusions
+
+`_test.go` files; `TestXxx`/`BenchmarkXxx`/`ExampleXxx`/`FuzzXxx`;
+function literals; bare prefix names with no suffix (no word boundary).
+Same-package, no type resolution: the first result's type is read syntactically
+(`*ast.Ident{Name:"bool"}`), so only the literal predeclared `bool` counts —
+a named type aliasing bool is conservatively **not** flagged (avoids false
+positives without type info).
 
 This is the first lens to measure the **semantic** axis (W2) and completes the
 function-signature picture: `paramcheck` (input), `returncheck` (output),
-`flagarg` (coupling), and now `namecheck` (the name's promise about all three).
+`flagarg` (coupling), `namecheck` (the name's promise about all three) and now
+also the Go community's two well-established error-naming conventions —
+catching naming defects that would otherwise survive every structural lens.
