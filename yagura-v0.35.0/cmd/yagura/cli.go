@@ -58,6 +58,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/errwrap"
+	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/featurelist"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
@@ -145,6 +146,7 @@ var cliHandlers = map[string]cliHandler{
 	"ctx-check":   cliCtxCheck,
 	"err-wrap":    cliErrWrap,
 	"sync-check":  cliSyncCheck,
+	"naked-ret":   cliNakedRet,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2822,6 +2824,36 @@ func cliSyncCheck(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ─── naked-ret (v0.78.0) ─────────────────────────────────────
+
+// cliNakedRet は `yagura naked-ret` を処理する。named result を持つ長い関数内の
+// naked return を検出する可読性軸のレンズ(nakedret 同等)。型情報不要・決定論的。
+// --max-lines で関数行数しきい値(既定 30)、--strict で検出時 exit 1。
+func cliNakedRet(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("naked-ret", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	maxLines := fset.Int("max-lines", 30, "function line-count threshold above which naked returns are flagged")
+	strict := fset.Bool("strict", false, "exit non-zero if any naked return is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := nakedret.Scan(sr.Files, *maxLines)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanNakedRet(stdout, rep)
+	if *strict && rep.Flagged > 0 {
+		return fmt.Errorf("%d naked-return readability issue(s)", rep.Flagged)
+	}
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4684,7 +4716,7 @@ var yaguraVerbs = []string{
 	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "err-wrap", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
-	"list", "mcp-audit", "name-check", "ops-risk", "parallel-plan", "param-check", "path-policy",
+	"list", "mcp-audit", "naked-ret", "name-check", "ops-risk", "parallel-plan", "param-check", "path-policy",
 	"pin-drift", "plan-status", "plugin-audit", "progress-file", "publicity-scan",
 	"quality-check", "recv-check", "recovery-decide", "register", "release-radar",
 	"return-check", "review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
@@ -4782,6 +4814,7 @@ func buildZshVerbLines() string {
 		"err-discard":          "error-discard smell: call sites silently ignoring returned errors",
 		"err-policy":           "error-context discipline: wrap ratio + blank-discard",
 		"err-wrap":             "error-wrapping discipline: %w over %v, errors.Is/As over ==/type-assert",
+		"naked-ret":            "naked-return readability: naked return in long named-result functions",
 		"sync-check":           "sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex",
 		"feature-list":         "convert Plan.md to Anthropic-style feature-list.json",
 		"flag-arg":             "boolean flag-argument smell (Fowler); bool params encoding hidden branches",

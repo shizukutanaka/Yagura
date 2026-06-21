@@ -4,6 +4,70 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.78.0] - 2026-06-21
+
+### Theme — "nakedret: naked-return readability (Socratic blind spot XI)"
+
+#### Why this release
+
+A Qiita/Zenn survey of Go's named-return / naked-return conventions pointed to
+`alexkohler/nakedret`, a widely-used linter no Yagura lens covered. `returncheck`
+(v0.67) measures the *width* of the result signature; nothing measured how the
+body *uses* named results. A bare `return` is fine in a short function and a
+readability hazard in a long one — the reader must scroll to the signature and
+track each named result's current value to know what is returned.
+
+Sources surveyed (representative):
+- [alexkohler/nakedret](https://github.com/alexkohler/nakedret)
+- [GoのNamed Return Valueとそのうまい使い方 (Qiita / tsukasaI)](https://qiita.com/tsukasaI/items/fe93c74f057a0253115c)
+- [golangの名前付き戻り値に関して (Qiita / solaris1000)](https://qiita.com/solaris1000/items/cab77411b116f55283f8)
+- [名前付き戻り値との正しい付き合い方 (Medium / eureka)](https://medium.com/eureka-engineering/named-return-values-7f485d867df0)
+- [Golangの設計で気を付けている事 (Qiita / kishibashi3)](https://qiita.com/kishibashi3/items/a244c4e4b42684bcd801)
+
+#### New lens: `internal/nakedret` (readability axis, 82nd MCP tool, 76th package)
+
+One deterministic, type-free rule:
+
+- **`naked-return-long-func` (medium)**: a `return` with no operands inside a
+  function/closure that has named results and spans more than the threshold
+  (default 30) lines.
+
+**Recursive detection**: nested `FuncLit` closures are analyzed independently so
+a naked return binds to its **innermost** enclosing function — a long outer
+function does not implicate a naked return inside a short closure, and vice
+versa. Naked returns are only legal with named results, so the named-result
+check alone scopes the rule precisely. Threshold configurable via `--max-lines`
+(MCP `max_lines`), default 30 (matching nakedret).
+
+#### Dogfood: 0 issues at default — and the lens proves the convention
+
+```
+$ yagura naked-ret --dir .
+naked-ret: 285 files, 0 issue(s) (threshold 30 lines)
+
+$ yagura naked-ret --dir . --max-lines 5
+naked-ret: 285 files, 2 issue(s) (threshold 5 lines)
+medium  11  cmd/yagura/cli_format.go   553  assessmentCounts
+medium  27  internal/harness/audit.go  351  splitFrontmatterAndBody
+```
+
+Yagura's only two naked returns live in an 11-line and a 27-line function —
+both under the default 30, exactly where the convention says naked returns are
+fine. The lens makes that boundary an enforceable CI gate (`naked-ret --strict`)
+without churning code that is already within convention. Synthetic injection
+(a 42-line named-result function with a bare `return`) confirmed the rule fires.
+
+#### Wiring
+- CLI `naked-ret --dir . [--max-lines N] [--strict]`
+- MCP `yagura_naked_ret` (82nd tool)
+- `docs/quality-lens-spec.md` §11 added; §3 taxonomy gains a Function-body
+  readability row
+- 17 TDD tests (Red→Green), all passing under `-race`
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 73 consecutive
+releases (v0.6 → v0.78). 82 MCP tools, 76 internal packages.
+
 ## [v0.77.0] - 2026-06-21
 
 ### Theme — "synccheck: sync-lock copy discipline (Socratic blind spot X)"

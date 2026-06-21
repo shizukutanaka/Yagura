@@ -26,6 +26,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
+	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
@@ -1135,6 +1136,41 @@ func buildSyncCheckTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := synccheck.Scan(in.Files)
+			return rep, nil
+		},
+	}
+}
+
+func buildNakedRetTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_naked_ret",
+		Description: "[Q] Naked-return readability: naked `return` in long named-result functions (nakedret-style, default >30 lines)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+				"max_lines": map[string]any{
+					"type":        "integer",
+					"description": "function line-count threshold above which naked returns are flagged (default 30)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files    map[string]string `json:"files"`
+				MaxLines int               `json:"max_lines"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := nakedret.Scan(in.Files, in.MaxLines)
 			return rep, nil
 		},
 	}

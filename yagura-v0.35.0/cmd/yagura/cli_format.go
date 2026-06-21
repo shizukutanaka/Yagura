@@ -39,6 +39,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/errwrap"
+	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
@@ -1654,6 +1655,21 @@ func humanSyncCheck(w io.Writer, r synccheck.Report) {
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
 			f.Severity, f.Rule, f.File, f.Line, f.Name)
+	}
+	tw.Flush()
+}
+
+func humanNakedRet(w io.Writer, r nakedret.Report) {
+	fmt.Fprintf(w, "naked-ret: %d files, %d issue(s) (threshold %d lines)\n", r.FilesScanned, r.Flagged, r.Threshold)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no naked returns in long functions — return values stay explicit")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tLINES\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n",
+			f.Severity, f.FuncLines, f.File, f.Line, f.Func)
 	}
 	tw.Flush()
 }

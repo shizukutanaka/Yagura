@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **81 tools**.
+Generated from a live yagura — **82 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (34)
+- [Misc](#misc) (35)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -571,6 +571,19 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `content` (string) | ★ | full .mcp.json server config or a tools/list JSON |
+
+---
+
+### `yagura_naked_ret`
+
+[Q] Naked-return readability: naked `return` in long named-result functions (nakedret-style, default >30 lines)
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
+| `max_lines` (integer) |  | function line-count threshold above which naked returns are flagged (default 30) |
 
 ---
 

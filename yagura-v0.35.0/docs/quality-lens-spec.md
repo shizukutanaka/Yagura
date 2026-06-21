@@ -40,6 +40,7 @@ Lenses are organized by the **axis** they measure:
 | Axis | Lenses |
 |---|---|
 | Function signature | `paramcheck` (input width), `flagarg` (bool control-coupling), `returncheck` (output width) |
+| Function-body readability | `nakedret` (naked return in long named-result functions) |
 | Function internals | `complexity` (cyclomatic), `errdiscard` (discarded errors), `errpolicy` (diagnosability) |
 | Error-chain integrity | `errwrap` (`%w` / `errors.Is` / `errors.As`; errorlint-style) |
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
@@ -232,3 +233,36 @@ trade recall for precision in line with the rest of the lens family.
 receivers on every locked type. Unlike v0.76 (where errwrap found 14 latent
 defects), v0.77's value is making that absence-of-defects measurable: a future
 patch that adds a value receiver to a mutex-bearing struct now fails CI.
+
+## 11. `nakedret` — specification
+
+**Question:** *In a long function, can a reader tell what `return` returns?*
+
+Added v0.78 after a Qiita/Zenn survey of Go's named-return / naked-return
+conventions, mechanized by `alexkohler/nakedret`. Where `returncheck` measures
+the *width* of the result signature, `nakedret` measures how the body *uses* it:
+a bare `return` (no operands) is only legal when results are named, and in a
+short function it is fine — but in a long function the reader must scroll back to
+the signature and mentally track each named result's current value to know what
+is actually returned. That is a readability and latent-bug risk.
+
+| Rule | Condition | Severity |
+|---|---|---|
+| `naked-return-long-func` | a `return` with no operands, inside a function/closure that has named results and spans more than the threshold (default 30) lines | medium |
+
+**Detection** (recursive, type-free): each `FuncDecl` body is analyzed; nested
+`FuncLit` closures are analyzed independently so a naked return binds to its
+**innermost** enclosing function — a long outer function does not implicate a
+naked return inside a short closure, and vice versa. Line span is measured from
+the body's opening to closing brace. Naked returns only occur in named-result
+functions (an unnamed-result naked return is a compile error), so the named-result
+check alone scopes the rule precisely. `_test.go` files are skipped.
+
+The threshold is configurable (`--max-lines`, MCP `max_lines`); the default of 30
+matches `nakedret`'s default.
+
+**Dogfood note**: at the default threshold Yagura reports **0** issues across 285
+files. It does contain two naked returns — in an 11-line and a 27-line function —
+both comfortably under 30, which is exactly the line the convention draws:
+naked returns are a readability tool for short functions, a hazard for long ones.
+`naked-ret --strict` now blocks any future long-function naked return in CI.

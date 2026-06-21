@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.77.0** — 81 MCP tools, 75 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). New `synccheck` lens (concurrency-safety axis), added after surveying Qiita/Zenn for Go's `go vet copylocks` conventions: types containing `sync.Mutex`/`RWMutex`/`WaitGroup`/`Once`/`Cond` must not be copied — flags value receivers (`mutex-value-receiver`), value parameters (`mutex-by-value-param`), and value returns (`mutex-by-value-return`), with one-hop transitive detection. Two-pass: lock-bearing struct set collected file-set-wide, then methods/sigs scanned. Yagura is already clean (0 violations across 283 files, 21 lock-bearing structs) so this acts as a regression guard. Reproducible build verified.
+Status: **v0.78.0** — 82 MCP tools, 76 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). New `nakedret` lens (readability axis), added after surveying Qiita/Zenn for Go's named-return / naked-return conventions (`alexkohler/nakedret`): a naked `return` in a named-result function longer than the threshold (default 30 lines) forces readers to scroll to the signature to learn what is returned. Closures bind to their innermost function. Yagura is already clean at the default (0 issues across 285 files; the two naked returns it has sit in 11- and 27-line functions, well under threshold), so this acts as a regression guard. Reproducible build verified.
 
 ---
 
@@ -36,7 +36,7 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
 │        ▼                              │              │
 │  ┌────────────────────────────────────────────────┐  │
 │  │  yagura daemon (single binary, ~9 MB)          │  │
-│  │  - 81 MCP tools                                │  │
+│  │  - 82 MCP tools                                │  │
 │  │  - HTTP hook receiver                          │  │
 │  │  - Prometheus /metrics                         │  │
 │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -69,7 +69,7 @@ icon that opens in its own window, like a native app. On Windows, double-click
 as an app window; on macOS/Linux, run `yagura-tray` for the same one-click
 launch. From the app you can **register your first project with a form** (no
 terminal needed) — it goes through the MCP server and is audited like any other
-call. This adds nothing to the core — the daemon and the 81 MCP tools are
+call. This adds nothing to the core — the daemon and the 82 MCP tools are
 unchanged; the desktop app is just the dashboard made installable via web
 standards. See [docs/desktop.md](docs/desktop.md).
 
@@ -181,7 +181,7 @@ Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has bee
 
 ### Other agents (Gemini CLI, Codex, custom)
 
-Yagura is agent-agnostic. Its 81 MCP tools work with **any** MCP client, and the
+Yagura is agent-agnostic. Its 82 MCP tools work with **any** MCP client, and the
 daemon's hook ingestion is agent-neutral too: **point any agent's lifecycle
 hooks at `/hooks/agent`** (Gemini CLI, Codex, raw OpenTelemetry, or a generic
 shape) and the receiver normalizes them via `internal/agentevent` — aligned to
@@ -193,7 +193,7 @@ normalization for programmatic use, and `/metrics` exports per-project, per-tool
 agent activity (`yagura_hook_tool_calls_total{project,tool}`, aligned to the
 OTel `gen_ai.tool.name` convention) for Prometheus/Grafana.
 
-## MCP tools (81 total)
+## MCP tools (82 total)
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-72 consecutive releases (v0.6 → v0.77) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+73 consecutive releases (v0.6 → v0.78) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
@@ -267,7 +267,7 @@ sha256sum -c SHA256SUMS
 ```
 .
 ├── cmd/yagura/              # Entry point (single binary)
-├── internal/                # 75 packages, none exported
+├── internal/                # 76 packages, none exported
 │   ├── mcp/                 # MCP server, tool registration
 │   ├── registry/            # Project registry (JSON file per project)
 │   ├── scanner/             # Background sensor loop (24 h)

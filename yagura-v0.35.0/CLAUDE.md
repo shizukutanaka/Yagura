@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 75 internal packages
+## Map — 76 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 81 tool definitions
+- `internal/mcp` — MCP server + 82 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -186,6 +186,14 @@ cortex flywheel 4 段階すべてを単体で機械化:
   も解決)→ FuncDecl を走査。別名 import は対象外。型情報不要・決定論的。dogfood で
   0 違反(Yagura は元々 21 lock-bearing struct すべてで pointer receiver を使用)。
   CLI `sync-check --dir . [--strict]`、MCP `yagura_sync_check`★ v0.77
+- `internal/nakedret` — named result を持つ長い関数内の naked return を go/ast で検出する
+  *可読性軸* のレンズ(ソクラテス新視点 XI、Qiita/Zenn 調査、alexkohler/nakedret 由来)。
+  returncheck が戻り値の *数* を測るのに対し、nakedret は本体の中の `return` の書き方を見る。
+  短い関数なら無害だが、閾値(既定 30)行を超える関数末尾の引数なし return は「今何が返るか」
+  を読み手がスクロールで named result を追わねば分からずバグの温床。naked return は named
+  result を持つ関数でしか書けないので named 判定で対象を絞る。クロージャ内 naked return は
+  最も内側の関数に帰属。dogfood は既定で 0(naked return は 11/27 行関数のみ、閾値以下)。
+  CLI `naked-ret --dir . [--max-lines N] [--strict]`、MCP `yagura_naked_ret`★ v0.78
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に
