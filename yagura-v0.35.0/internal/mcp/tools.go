@@ -185,6 +185,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildCtxCheckTool(d))
 	// [Q] v0.76.0 — error-wrapping discipline (%w / errors.Is / errors.As; errorlint-style)
 	s.Register(buildErrWrapTool(d))
+	// [Q] v0.77.0 — sync-lock copy discipline (mutex value-receiver/param/return; copylocks-style)
+	s.Register(buildSyncCheckTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

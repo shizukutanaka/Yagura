@@ -39,6 +39,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/errwrap"
+	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/harness"
@@ -1638,6 +1639,21 @@ func humanErrWrap(w io.Writer, r errwrap.Report) {
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
 			f.Severity, f.Rule, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanSyncCheck(w io.Writer, r synccheck.Report) {
+	fmt.Fprintf(w, "sync-check: %d files, %d violation(s)\n", r.FilesScanned, r.Flagged)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no sync-lock copy violations — mutexes stay where they belong")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tRULE\tFILE\tLINE\tNAME")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+			f.Severity, f.Rule, f.File, f.Line, f.Name)
 	}
 	tw.Flush()
 }

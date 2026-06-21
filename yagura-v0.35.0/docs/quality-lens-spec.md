@@ -45,7 +45,7 @@ Lenses are organized by the **axis** they measure:
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
 | Public contract | `apidoc` (exported-symbol docs), `recvcheck` (receiver consistency) |
 | Test trust | `testcoverage` (source↔test mapping), `assertcheck` (assertion density) |
-| Concurrency | `ctxcheck` (`context.Context` first-param + no struct field) |
+| Concurrency | `ctxcheck` (`context.Context` first-param + no struct field), `synccheck` (sync-lock copy discipline) |
 | Meta | `coverage` (scan blind spots), `hotspot` (multi-lens convergence) |
 
 ## 4. Strengths (長所)
@@ -194,3 +194,41 @@ both are latent bugs that surface only after someone *adds* wrapping elsewhere.
 `err.(scanner.ErrorList)` assertions in the lens packages' own parse-error
 handlers and 1 `err == io.EOF` — all converted to `errors.As`/`errors.Is`. The
 lens that checks error chains hardened the error chains of every other lens.
+
+## 10. `synccheck` — specification
+
+**Question:** *Are types that own a mutex ever copied?*
+
+Added v0.77 after a Qiita/Zenn survey of Go's `go vet copylocks` conventions.
+A type that embeds or contains `sync.Mutex` (or `RWMutex`/`WaitGroup`/`Once`/
+`Cond`) must not be copied — copying produces a fresh, unrelated lock and
+silently breaks the invariant the mutex was supposed to protect. `go vet`
+enforces this; Yagura's ADR-0001 forbids shelling out to `go vet`, so the same
+check is implemented natively as a lens.
+
+| Rule | Condition | Severity |
+|---|---|---|
+| `mutex-value-receiver` | a method has a value receiver on a struct that (directly or one-hop transitively) contains a known lock type | high |
+| `mutex-by-value-param` | a function/method parameter passes a lock-bearing type by value | high |
+| `mutex-by-value-return` | a function/method returns a lock-bearing type by value | medium |
+
+**Detection** (two-pass, type-free):
+
+1. **Pass 1 — Collect lock-bearing types.** Walk every `TypeSpec` in the file
+   set. Seed the set with structs that have a field of type `sync.Mutex`,
+   `sync.RWMutex`, `sync.WaitGroup`, `sync.Once`, or `sync.Cond` (matched as
+   literal selectors). Apply a fixed-point pass: a struct whose field type is
+   an already-known lock-bearing struct (same package) joins the set. Single
+   hop only — deeper transitivity is not chased (avoids false positives).
+2. **Pass 2 — Apply rules.** Walk every `FuncDecl` and check receiver, params,
+   and results against the lock-bearing set.
+
+**Conservative scope**: aliased `sync` imports (`import s "sync"`) are not
+matched (no `go/types`). Multi-hop transitivity is not chased. Both consequences
+trade recall for precision in line with the rest of the lens family.
+
+**Dogfood note**: synccheck's first run on Yagura found **0 violations** across
+283 files and 21 lock-bearing structs — Yagura was already strict about pointer
+receivers on every locked type. Unlike v0.76 (where errwrap found 14 latent
+defects), v0.77's value is making that absence-of-defects measurable: a future
+patch that adds a value receiver to a mutex-bearing struct now fails CI.

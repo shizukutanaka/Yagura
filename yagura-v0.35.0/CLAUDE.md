@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 74 internal packages
+## Map — 75 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 80 tool definitions
+- `internal/mcp` — MCP server + 81 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -178,6 +178,14 @@ cortex flywheel 4 段階すべてを単体で機械化:
   err-type-assert(x.(T) でなく errors.As)。エラー値らしさは命名規約で type-free 判定。
   dogfood で 14 件の error-chain 切断リスク(13× `err.(scanner.ErrorList)` + 1× io.EOF 比較)を
   検出し全て errors.As/Is へ修正。CLI `err-wrap --dir . [--strict]`、MCP `yagura_err_wrap`★ v0.76
+- `internal/synccheck` — sync ロック型(Mutex/RWMutex/WaitGroup/Once/Cond)を含む型の値
+  コピー誤用を go/ast で検査する *concurrency-safety 軸* のレンズ(ソクラテス新視点 X、
+  Qiita/Zenn 調査、go vet copylocks 由来)。値レシーバ(mutex-value-receiver)/ 値引数
+  (mutex-by-value-param)/ 値返却(mutex-by-value-return)。2 パス: ファイル集合全体から
+  TypeSpec を集めてロック含有型の集合を構築(1 hop の固定点反復で `Outer{ Inner }` 推移
+  も解決)→ FuncDecl を走査。別名 import は対象外。型情報不要・決定論的。dogfood で
+  0 違反(Yagura は元々 21 lock-bearing struct すべてで pointer receiver を使用)。
+  CLI `sync-check --dir . [--strict]`、MCP `yagura_sync_check`★ v0.77
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

@@ -58,6 +58,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/errwrap"
+	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/featurelist"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
@@ -143,6 +144,7 @@ var cliHandlers = map[string]cliHandler{
 	"name-check":  cliNameCheck,
 	"ctx-check":   cliCtxCheck,
 	"err-wrap":    cliErrWrap,
+	"sync-check":  cliSyncCheck,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2791,6 +2793,35 @@ func cliErrWrap(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ─── sync-check (v0.77.0) ────────────────────────────────────
+
+// cliSyncCheck は `yagura sync-check` を処理する。sync.Mutex 等ロック型を含む
+// 型の値コピー誤用を検査する concurrency safety 軸のレンズ(go vet copylocks 同等)。
+// 型情報不要・決定論的。--strict で違反時 exit 1。
+func cliSyncCheck(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("sync-check", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any violation is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := synccheck.Scan(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanSyncCheck(stdout, rep)
+	if *strict && rep.Flagged > 0 {
+		return fmt.Errorf("%d sync-lock copy violation(s)", rep.Flagged)
+	}
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4658,7 +4689,7 @@ var yaguraVerbs = []string{
 	"quality-check", "recv-check", "recovery-decide", "register", "release-radar",
 	"return-check", "review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
 	"self-improve-history", "session-summary", "settings-audit", "skill-audit",
-	"stats", "test-audit", "today", "unregister", "update", "vex-audit",
+	"stats", "sync-check", "test-audit", "today", "unregister", "update", "vex-audit",
 	"verify", "version", "workflow-audit",
 }
 
@@ -4751,6 +4782,7 @@ func buildZshVerbLines() string {
 		"err-discard":          "error-discard smell: call sites silently ignoring returned errors",
 		"err-policy":           "error-context discipline: wrap ratio + blank-discard",
 		"err-wrap":             "error-wrapping discipline: %w over %v, errors.Is/As over ==/type-assert",
+		"sync-check":           "sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex",
 		"feature-list":         "convert Plan.md to Anthropic-style feature-list.json",
 		"flag-arg":             "boolean flag-argument smell (Fowler); bool params encoding hidden branches",
 		"flow-risk":            "temporal scan of op sequence: exfiltration / injection",

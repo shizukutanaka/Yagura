@@ -4,6 +4,69 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.77.0] - 2026-06-21
+
+### Theme — "synccheck: sync-lock copy discipline (Socratic blind spot X)"
+
+#### Why this release
+
+A Qiita/Zenn survey of Go concurrency static-analysis surfaced one canonical
+check no Yagura lens implements: **`go vet copylocks`**. Every well-known Go
+static-analysis stack runs it; Yagura's ADR-0001 forbids shelling out to `go
+vet`, so the rule is invisible to Yagura's own dogfood loop. Adding it native
+closes that gap on the concurrency-safety axis (the second axis after
+`ctxcheck`'s context-propagation axis from v0.75).
+
+Sources surveyed (representative):
+- [Beware of copying mutexes in Go (Eli Bendersky)](https://eli.thegreenplace.net/2018/beware-of-copying-mutexes-in-go/)
+- [Detect locks passed by value in Go (golangspec / Medium)](https://medium.com/golangspec/detect-locks-passed-by-value-in-go-efb4ac9a3f2b)
+- [Preventing accidental struct copies in Go (Redowan)](https://rednafi.com/go/prevent-struct-copies/)
+- [cmd/vet copylocks testdata (golang/go)](https://go.dev/src/cmd/vet/testdata/copylock/copylock.go)
+- [もう迷わない time.Timer の正しい使い方 (Zenn / schottman13)](https://zenn.dev/schottman13/articles/a67a86cb8a32bd) — surveyed but deferred (Go 1.23 changes; flow-sensitive)
+
+#### New lens: `internal/synccheck` (concurrency-safety axis, 81st MCP tool, 75th package)
+
+Three deterministic, type-free rules:
+
+- **`mutex-value-receiver` (high)**: a method has a value receiver on a struct
+  that (directly or one-hop transitively) contains `sync.Mutex`/`RWMutex`/
+  `WaitGroup`/`Once`/`Cond` — every call copies the mutex.
+- **`mutex-by-value-param` (high)**: a parameter passes a lock-bearing type by
+  value.
+- **`mutex-by-value-return` (medium)**: a function returns a lock-bearing type
+  by value.
+
+**Two-pass detection**: file-set-wide TypeSpec collection determines the
+lock-bearing set (with one fixed-point iteration for `Outer{ Inner }`
+one-hop transitivity); then `FuncDecl` walk applies the three rules.
+Aliased `sync` imports are not chased (no `go/types`, no false positives).
+
+#### Dogfood: 0 violations — Yagura was already disciplined
+
+```
+$ yagura sync-check --dir .
+sync-check: 283 files, 0 violation(s)
+no sync-lock copy violations — mutexes stay where they belong
+```
+
+All 21 lock-bearing structs in Yagura (`telemetry.go`, `metrics.go`, `audit.go`,
+`hookreceiver`, `registry`, `mcp/server.go`, …) already use pointer receivers
+everywhere — explicit invariant the previous release cycles maintained, now
+**mechanically measured**.
+
+Synthetic injection confirmed all three rules fire correctly on bad code; the
+lens turns the discipline into an enforceable CI gate via `sync-check --strict`.
+
+#### Wiring
+- CLI `sync-check --dir . [--strict]`
+- MCP `yagura_sync_check` (81st tool)
+- `docs/quality-lens-spec.md` §10 added; §3 taxonomy Concurrency row extended
+- 17 TDD tests (Red→Green), all passing under `-race`
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 72 consecutive
+releases (v0.6 → v0.77). 81 MCP tools, 75 internal packages.
+
 ## [v0.76.0] - 2026-06-21
 
 ### Theme — "errwrap: error-chain integrity (Socratic blind spot IX)"
