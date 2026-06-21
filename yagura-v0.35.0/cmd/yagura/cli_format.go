@@ -24,6 +24,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
+	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/codehealth"
@@ -1688,4 +1689,21 @@ func humanPredeclared(w io.Writer, r predeclared.Report) {
 			f.Severity, f.Kind, f.File, f.Line, f.Name)
 	}
 	tw.Flush()
+}
+
+func humanCalibrate(w io.Writer, r calibrate.Report) {
+	fmt.Fprintf(w, "calibrate: %d files, %d functions\n", r.FilesScanned, r.FuncsScanned)
+	if r.FuncsScanned == 0 {
+		fmt.Fprintln(w, "no functions to calibrate")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "METRIC\tMIN\tMED\tP90\tP95\tP99\tMAX\tDEFAULT\tOVER\tSUGGEST")
+	for _, d := range r.Distributions {
+		fmt.Fprintf(tw, "%s\t%d\t%.0f\t%.0f\t%.1f\t%.0f\t%d\t%d\t%d\t%d\n",
+			d.Metric, d.Min, d.Median, d.P90, d.P95, d.P99, d.Max,
+			d.CurrentDefault, d.OverCurrentDefault, d.SuggestedThreshold)
+	}
+	tw.Flush()
+	fmt.Fprintln(w, "(SUGGEST = ceil(P95); OVER = functions strictly above current --max default)")
 }

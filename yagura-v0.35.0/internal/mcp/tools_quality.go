@@ -14,6 +14,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
+	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/codehealth"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
@@ -1208,6 +1209,36 @@ func buildPredeclaredTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := predeclared.Scan(in.Files, in.Ignore)
+			return rep, nil
+		},
+	}
+}
+
+func buildCalibrateTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_calibrate",
+		Description: "[Q] Threshold calibration: percentile distributions of complexity/params/returns/func-lines to set data-driven --max gates",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := calibrate.Scan(in.Files)
 			return rep, nil
 		},
 	}

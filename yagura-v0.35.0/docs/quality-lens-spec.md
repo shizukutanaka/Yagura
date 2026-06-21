@@ -48,7 +48,7 @@ Lenses are organized by the **axis** they measure:
 | Public contract | `apidoc` (exported-symbol docs), `recvcheck` (receiver consistency) |
 | Test trust | `testcoverage` (source↔test mapping), `assertcheck` (assertion density) |
 | Concurrency | `ctxcheck` (`context.Context` first-param + no struct field), `synccheck` (sync-lock copy discipline) |
-| Meta | `coverage` (scan blind spots), `hotspot` (multi-lens convergence) |
+| Meta | `coverage` (scan blind spots), `hotspot` (multi-lens convergence), `calibrate` (corpus-derived thresholds) |
 
 ## 4. Strengths (長所)
 
@@ -74,6 +74,8 @@ Lenses are organized by the **axis** they measure:
   actively misleading readers. **Naming is an unmeasured contract.**
 - **W3 — Threshold arbitrariness.** Per-lens default thresholds (params>5,
   returns>3) are conventions, not derived — defensible but not self-justifying.
+  *Addressed v0.80 by the `calibrate` meta-lens (§13), which derives
+  corpus-specific percentile distributions so thresholds can be data-driven.*
 - **W4 — Convergence needs population.** `hotspot` is only meaningful on a
   codebase large enough for signals to overlap; on a 3-file project it is noise.
 
@@ -300,3 +302,39 @@ renamed (`cap`→`maxRows`/`capName`/`capLower`, `min`→`minSev`/`minScore`/
 `minRisk`, `max`→`maxThreshold`/`maxVal`); the lens now reports 0. This is the
 fifth release where a new lens found and fixed genuine defects on first run
 (after v0.73 namecheck, v0.75 ctxcheck, v0.76 errwrap, v0.77's clean guard).
+
+## 13. `calibrate` — specification
+
+**Question:** *Are the numeric `--max` thresholds right for THIS codebase?*
+
+Added v0.80 to address **W3**. The numeric lenses gate on conventional
+constants — `complexity --max 10`, `param-check --max 5`, `return-check --max 3`,
+`naked-ret --max-lines 30`. These are community defaults, not values derived
+from the code under analysis. `calibrate` is a **meta-lens**: it emits no
+findings, only the empirical distribution of each metric, so a project can set
+thresholds from its own data.
+
+For every **named function** (top-level `FuncDecl` and methods; `FuncLit`
+closures excluded), `calibrate` computes four metrics:
+
+| Metric | Definition | Mapped gate (default) |
+|---|---|---|
+| `complexity` | McCabe cyclomatic (same decision-point set as the `complexity` lens) | `complexity --max 10` |
+| `params` | parameter count, name-unit (`a, b int` = 2), variadic = 1, receiver excluded | `param-check --max 5` |
+| `returns` | result count, name-unit | `return-check --max 3` |
+| `func_lines` | body line span (`{` … `}`) | `naked-ret --max-lines 30` |
+
+Each metric's `Distribution` reports `Min/Max/Mean/Median/P75/P90/P95/P99`, the
+current gate default, the number of functions strictly above it
+(`OverCurrentDefault`), and a `SuggestedThreshold = ceil(P95)` — a data-driven
+gate that would flag roughly the worst 5% of the corpus. Percentiles use linear
+interpolation (R-7). `_test.go` files and `TestXxx`/`BenchmarkXxx`/`ExampleXxx`/
+`FuzzXxx` are excluded.
+
+**Dogfood note**: on Yagura (1277 functions) calibrate showed `complexity` p95=13
+(default `--max 10` is slightly stricter than the corpus's 95th percentile),
+`params` p95≈3 (default 5 is lenient — 4 would fit), `returns` p95=2 (default 3
+is well-calibrated), and `func_lines` p95=65 with a 543-line outlier. This is
+the first **meta** lens whose deliverable is calibration insight rather than
+defects or convergence — completing the spec's W1–W4 weakness review by turning
+W3 from an open caveat into a measurable, tunable quantity.

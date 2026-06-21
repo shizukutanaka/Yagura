@@ -44,6 +44,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
+	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/audit"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/codehealth"
@@ -149,6 +150,7 @@ var cliHandlers = map[string]cliHandler{
 	"sync-check":  cliSyncCheck,
 	"naked-ret":   cliNakedRet,
 	"predeclared": cliPredeclared,
+	"calibrate":   cliCalibrate,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2891,6 +2893,31 @@ func cliPredeclared(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ─── calibrate (v0.80.0) ─────────────────────────────────────
+
+// cliCalibrate は `yagura calibrate` を処理する。complexity/params/returns/
+// func-lines の percentile 分布を算出し、各レンズの --max しきい値をコーパス由来に
+// 校正するためのデータを提供する(W3 への対応)。findings ではなく分布を出す meta。
+func cliCalibrate(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("calibrate", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := calibrate.Scan(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanCalibrate(stdout, rep)
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4748,7 +4775,7 @@ func auditMutation(stderr io.Writer, kind, target string, fields map[string]any)
 var yaguraVerbs = []string{
 	"agent-config-audit", "agent-event", "agents-md", "ai-verify",
 	"alert-fix", "alert-resolve", "alert-snapshot", "api-doc",
-	"assert-check", "ast-check", "cc-security", "claudemd-audit",
+	"assert-check", "ast-check", "calibrate", "cc-security", "claudemd-audit",
 	"code-health", "complexity", "completion", "coupling", "coverage", "ctx-check",
 	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "err-wrap", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
@@ -4851,6 +4878,7 @@ func buildZshVerbLines() string {
 		"err-discard":          "error-discard smell: call sites silently ignoring returned errors",
 		"err-policy":           "error-context discipline: wrap ratio + blank-discard",
 		"err-wrap":             "error-wrapping discipline: %w over %v, errors.Is/As over ==/type-assert",
+		"calibrate":            "threshold calibration: percentile distributions for data-driven --max gates",
 		"naked-ret":            "naked-return readability: naked return in long named-result functions",
 		"predeclared":          "predeclared-identifier shadowing: vars/params/types/funcs shadowing Go builtins",
 		"sync-check":           "sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex",

@@ -191,6 +191,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildNakedRetTool(d))
 	// [Q] v0.79.0 — predeclared-identifier shadowing (vars/params/types shadowing builtins)
 	s.Register(buildPredeclaredTool(d))
+	// [Q] v0.80.0 — threshold calibration (percentile distributions for data-driven --max gates)
+	s.Register(buildCalibrateTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

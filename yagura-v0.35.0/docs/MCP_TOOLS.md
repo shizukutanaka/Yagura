@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **83 tools**.
+Generated from a live yagura — **84 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (36)
+- [Misc](#misc) (37)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -452,6 +452,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `event` (object) | ★ | the raw lifecycle event object from any agent's hook/telemetry. |
+
+---
+
+### `yagura_calibrate`
+
+[Q] Threshold calibration: percentile distributions of complexity/params/returns/func-lines to set data-driven --max gates
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
 
 ---
 

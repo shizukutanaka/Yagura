@@ -5,7 +5,7 @@ description: Use when the user asks about portfolio status, project registry, de
 
 # yagura — Portfolio Orchestrator Skill
 
-yagura is a long-running daemon that manages m's 23+ project portfolio. It exposes 83 MCP tools. Call them via the local MCP endpoint instead of guessing portfolio state from memory.
+yagura is a long-running daemon that manages m's 23+ project portfolio. It exposes 84 MCP tools. Call them via the local MCP endpoint instead of guessing portfolio state from memory.
 
 ## Mental model
 

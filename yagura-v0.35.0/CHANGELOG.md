@@ -4,6 +4,67 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.80.0] - 2026-06-21
+
+### Theme — "calibrate: corpus-derived thresholds (closes spec weakness W3)"
+
+#### Why this release
+
+Twelve Socratic releases added lenses across nearly every deterministic axis;
+the remaining well-known linters need `go/types` (conflicts with ADR-0001) or
+flow analysis. So this release turns inward to the **catalogued improvement #3**
+in `docs/quality-lens-spec.md` — and the spec's own weakness **W3 (threshold
+arbitrariness)**: the numeric lenses gate on conventional constants
+(`complexity --max 10`, `param-check --max 5`, `return-check --max 3`,
+`naked-ret --max-lines 30`) that were never derived from the code under
+analysis. `calibrate` makes thresholds data-driven.
+
+#### New meta-lens: `internal/calibrate` (84th MCP tool, 78th package)
+
+Unlike every prior lens, `calibrate` emits **no findings** — it reports the
+empirical distribution of four metrics across the corpus so gates can be set
+from data. For each named function (top-level + methods; `FuncLit` excluded):
+
+| Metric | Definition | Mapped gate |
+|---|---|---|
+| `complexity` | McCabe (same decision-point set as the `complexity` lens) | `--max 10` |
+| `params` | parameter count (name-unit, variadic=1, receiver excluded) | `--max 5` |
+| `returns` | result count (name-unit) | `--max 3` |
+| `func_lines` | body line span | `--max-lines 30` |
+
+Each `Distribution` carries `Min/Max/Mean/Median/P75/P90/P95/P99`, the current
+gate default, `OverCurrentDefault` (functions strictly above it), and
+`SuggestedThreshold = ceil(P95)`. Percentiles use linear interpolation (R-7).
+
+#### Dogfood: calibration insight on Yagura's 1277 functions
+
+```
+$ yagura calibrate --dir .
+METRIC      MIN  MED  P90  P95   P99  MAX  DEFAULT  OVER  SUGGEST
+complexity  1    3    9    13.0  20   32   10       97    13
+params      0    1    3    3.2   5    7    5        3     4
+returns     0    1    1    2.0   3    4    3        2     2
+func_lines  1    15   48   65.0  117  543  30       268   65
+```
+
+Reading: `complexity` default 10 sits just below the corpus p95 of 13 (tight,
+defensible); `params` default 5 is **lenient** — the corpus p95 is ~3, so 4
+would fit; `returns` default 3 is **well-calibrated** (p95=2, only 2 functions
+over); `func_lines` shows a 543-line outlier worth a look. The deliverable is
+the *insight* — W3 turns from an open caveat into a measured, tunable quantity.
+This is the first meta-lens whose output is calibration data rather than
+defects (errwrap/predeclared) or convergence (hotspot).
+
+#### Wiring
+- CLI `calibrate --dir . [--json]` (no `--strict` — it reports, never gates)
+- MCP `yagura_calibrate` (84th tool)
+- `docs/quality-lens-spec.md` §13 added; W3 marked addressed; Meta taxonomy row extended
+- 18 TDD tests (Red→Green), all passing under `-race`
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 75 consecutive
+releases (v0.6 → v0.80). 84 MCP tools, 78 internal packages.
+
 ## [v0.79.0] - 2026-06-21
 
 ### Theme — "predeclared: builtin shadowing (Socratic blind spot XII)"
