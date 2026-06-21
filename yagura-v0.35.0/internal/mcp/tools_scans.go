@@ -133,12 +133,12 @@ func filterSecretScanSeverity(r secretscan.BatchResult, minSeverity string) (sec
 	if minSeverity == "" {
 		return r, nil
 	}
-	min := strings.ToUpper(minSeverity)
-	if min != "LOW" && min != "MEDIUM" && min != "HIGH" && min != "CRITICAL" {
+	minUpper := strings.ToUpper(minSeverity)
+	if minUpper != "LOW" && minUpper != "MEDIUM" && minUpper != "HIGH" && minUpper != "CRITICAL" {
 		return r, &ToolError{Code: "invalid_input",
 			Message: "min_severity must be LOW/MEDIUM/HIGH/CRITICAL"}
 	}
-	return filterFindingsBatch(r, secretscan.Severity(min)), nil
+	return filterFindingsBatch(r, secretscan.Severity(minUpper)), nil
 }
 
 // projectFieldsAsScanItems は Project のテキストフィールドを ScanItem 配列にする。
@@ -169,8 +169,8 @@ func projectFieldsAsScanItems(p *project.Project) []secretscan.ScanItem {
 }
 
 // filterFindingsBatch は min 以上の severity だけを残した新しい BatchResult を返す。
-func filterFindingsBatch(r secretscan.BatchResult, min secretscan.Severity) secretscan.BatchResult {
-	minRank := secretScanSeverityRank(min)
+func filterFindingsBatch(r secretscan.BatchResult, minSev secretscan.Severity) secretscan.BatchResult {
+	minRank := secretScanSeverityRank(minSev)
 	out := secretscan.BatchResult{
 		BySource:    map[string][]secretscan.Finding{},
 		SourceOrder: []string{},

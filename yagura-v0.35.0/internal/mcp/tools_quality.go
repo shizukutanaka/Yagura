@@ -28,6 +28,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
+	"github.com/shizukutanaka/yagura/internal/predeclared"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/returncheck"
@@ -1171,6 +1172,42 @@ func buildNakedRetTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := nakedret.Scan(in.Files, in.MaxLines)
+			return rep, nil
+		},
+	}
+}
+
+func buildPredeclaredTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_predeclared",
+		Description: "[Q] Predeclared-identifier shadowing: vars/params/types/funcs that shadow Go builtins (predeclared-style)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+				"ignore": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+					"description": "predeclared identifiers to allow shadowing (e.g. [\"cap\",\"min\",\"max\"])",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files  map[string]string `json:"files"`
+				Ignore []string          `json:"ignore"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := predeclared.Scan(in.Files, in.Ignore)
 			return rep, nil
 		},
 	}

@@ -4,6 +4,73 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.79.0] - 2026-06-21
+
+### Theme — "predeclared: builtin shadowing (Socratic blind spot XII)"
+
+#### Why this release
+
+A Qiita/Zenn survey of classic Go pitfalls kept surfacing one: shadowing
+predeclared identifiers, mechanized by `nishanths/predeclared`. Go lets you
+redeclare any of its 39 predeclared identifiers — `len`, `cap`, `new`, `error`,
+and (since Go 1.21) `min`/`max`/`clear`. A local `cap := capacity` makes the
+builtin `cap(s)` uncallable in that scope; a later edit that "obviously" calls
+the builtin silently reads the variable instead. No Yagura lens measured this.
+
+Sources surveyed (representative):
+- [nishanths/predeclared](https://github.com/nishanths/predeclared)
+- [Goのアンチパターン集 (Zenn / baleenstudio)](https://zenn.dev/baleenstudio/articles/330740f3a3babd)
+- [新人エンジニアに役立った命名規則とアンチパターン (Qiita / uehiro22)](https://qiita.com/uehiro22/items/7a2b0b3b72f458018632)
+- [短変数宣言(:=)のブロック内外の挙動 (Qiita / enoenoeno11)](https://qiita.com/enoenoeno11/items/baa8aecd23c7ea1f8470)
+- [Go言語で使用できる変数名 (Qiita / kei-yagasaki)](https://qiita.com/kei-yagasaki/items/2c05aaf2d7fd62afc243)
+
+#### New lens: `internal/predeclared` (correctness axis, 83rd MCP tool, 77th package)
+
+One deterministic, type-free rule:
+
+- **`shadow-predeclared`**: a declaration whose name equals a predeclared
+  identifier. Severity `high` for functions/types/constants, `medium` for
+  variables/parameters/results.
+
+Checks parameters, named results, top-level function names, type/const/var
+declarations, `:=` short declarations, and `for range` key/value. The blank
+identifier `_` is skipped. **Methods are not flagged** — a method `len()` is
+namespaced by its receiver (matching the canonical linter). `--ignore`
+(MCP `ignore`) suppresses chosen identifiers.
+
+#### Dogfood: found and fixed 20 real shadowings
+
+```
+# before:
+$ yagura predeclared --dir .
+predeclared: 287 files, 20 shadowing(s)
+  cap  (cli_format.go row caps, astcheck/surface, opsrisk)
+  min  (cli.go severity-filter helpers, mcp severity filters)
+  max  (cli.go complexity/param/return threshold vars, codehealth)
+
+# after:
+$ yagura predeclared --dir .
+predeclared: 287 files, 0 shadowing(s)
+```
+
+Every one was a `cap`/`min`/`max` local that *became* a builtin in Go 1.21,
+spread across 9 files. All 20 renamed to non-shadowing identifiers
+(`cap`→`maxRows`/`capName`/`capLower`, `min`→`minSev`/`minScore`/`minRisk`,
+`max`→`maxThreshold`/`maxVal`). The lens caught a real, version-introduced class
+of latent bugs — Go 1.21 silently turned a dozen ordinary variable names into
+builtin shadows — and now reports 0. Fifth release where a new lens found and
+fixed genuine defects on first run (v0.73, v0.75, v0.76, and now v0.79).
+
+#### Wiring
+- CLI `predeclared --dir . [--ignore a,b] [--strict]`
+- MCP `yagura_predeclared` (83rd tool)
+- `docs/quality-lens-spec.md` §12 added; §3 taxonomy gains a Correctness/shadowing row
+- 19 TDD tests (Red→Green), all passing under `-race`
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 74 consecutive
+releases (v0.6 → v0.79). 83 MCP tools, 77 internal packages.
+
 ## [v0.78.0] - 2026-06-21
 
 ### Theme — "nakedret: naked-return readability (Socratic blind spot XI)"

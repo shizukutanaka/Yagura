@@ -145,9 +145,9 @@ func scoreOne(s PackageSignals) PackageGrade {
 	return PackageGrade{Package: s.Package, Score: score, Grade: grade(score), Reasons: reasons}
 }
 
-func capPenalty(p, max int) int {
-	if p > max {
-		return max
+func capPenalty(p, maxVal int) int {
+	if p > maxVal {
+		return maxVal
 	}
 	return p
 }

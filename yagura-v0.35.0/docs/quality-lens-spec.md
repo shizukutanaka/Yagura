@@ -41,6 +41,7 @@ Lenses are organized by the **axis** they measure:
 |---|---|
 | Function signature | `paramcheck` (input width), `flagarg` (bool control-coupling), `returncheck` (output width) |
 | Function-body readability | `nakedret` (naked return in long named-result functions) |
+| Correctness / shadowing | `predeclared` (declarations shadowing Go builtins) |
 | Function internals | `complexity` (cyclomatic), `errdiscard` (discarded errors), `errpolicy` (diagnosability) |
 | Error-chain integrity | `errwrap` (`%w` / `errors.Is` / `errors.As`; errorlint-style) |
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
@@ -266,3 +267,36 @@ files. It does contain two naked returns — in an 11-line and a 27-line functio
 both comfortably under 30, which is exactly the line the convention draws:
 naked returns are a readability tool for short functions, a hazard for long ones.
 `naked-ret --strict` now blocks any future long-function naked return in CI.
+
+## 12. `predeclared` — specification
+
+**Question:** *Does any declaration silently mask a Go builtin?*
+
+Added v0.79 after a Qiita/Zenn survey of classic Go pitfalls highlighted
+shadowing of predeclared identifiers, mechanized by `nishanths/predeclared`.
+Go permits redeclaring any of its 39 predeclared identifiers — `len`, `cap`,
+`new`, `error`, `string`, and (since Go 1.21) `min`/`max`/`clear`. A local
+`cap := capacity` makes the builtin `cap(s)` uncallable in that scope; a later
+edit that "obviously" calls the builtin instead silently reads the variable.
+
+| Rule | Condition | Severity |
+|---|---|---|
+| `shadow-predeclared` | a declaration whose name equals a predeclared identifier | high for `function`/`type`/`constant`, medium for `variable`/`parameter`/`result` |
+
+**Scope of declarations checked**: function/method parameters, named results,
+top-level function names, type/const/var declarations, `:=` short declarations,
+and `for range` key/value. The blank identifier `_` is skipped. **Methods**
+(receiver-bearing `FuncDecl`) are *not* flagged — a method `len()` is namespaced
+by its receiver and never shadows the builtin (matching the canonical linter's
+default). An `ignore` list (`--ignore cap,min,max`, MCP `ignore`) suppresses
+chosen identifiers, since `min`/`max`/`cap` as locals predate their builtin
+status and some teams accept them.
+
+**Dogfood note**: predeclared's first run on Yagura found **20** real
+shadowings — every one a `cap`, `min`, or `max` local that became a builtin in
+Go 1.21, spread across 9 files (`cli.go` threshold vars, `cli_format.go` row
+caps, severity-filter helpers, `opsrisk`, `astcheck/surface`). All 20 were
+renamed (`cap`→`maxRows`/`capName`/`capLower`, `min`→`minSev`/`minScore`/
+`minRisk`, `max`→`maxThreshold`/`maxVal`); the lens now reports 0. This is the
+fifth release where a new lens found and fixed genuine defects on first run
+(after v0.73 namecheck, v0.75 ctxcheck, v0.76 errwrap, v0.77's clean guard).

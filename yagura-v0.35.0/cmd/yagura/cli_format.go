@@ -40,6 +40,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/errwrap"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
+	"github.com/shizukutanaka/yagura/internal/predeclared"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
@@ -871,9 +872,9 @@ func humanAPIDoc(w io.Writer, r apidoc.Report) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "KIND\tFILE\tLINE\tNAME")
 	shown := r.Findings
-	const cap = 25
-	if len(shown) > cap {
-		shown = shown[:cap]
+	const maxRows = 25
+	if len(shown) > maxRows {
+		shown = shown[:maxRows]
 	}
 	for _, f := range shown {
 		if f.Rule == "parse-error" {
@@ -883,8 +884,8 @@ func humanAPIDoc(w io.Writer, r apidoc.Report) {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", f.Kind, f.File, f.Line, f.Name)
 	}
 	tw.Flush()
-	if len(r.Findings) > cap {
-		fmt.Fprintf(w, "... %d more undocumented (use --json for the full list)\n", len(r.Findings)-cap)
+	if len(r.Findings) > maxRows {
+		fmt.Fprintf(w, "... %d more undocumented (use --json for the full list)\n", len(r.Findings)-maxRows)
 	}
 }
 
@@ -898,9 +899,9 @@ func humanDeadCode(w io.Writer, r deadcode.Report) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "KIND\tPACKAGE\tFILE\tLINE\tNAME")
 	shown := r.Findings
-	const cap = 30
-	if len(shown) > cap {
-		shown = shown[:cap]
+	const maxRows = 30
+	if len(shown) > maxRows {
+		shown = shown[:maxRows]
 	}
 	for _, f := range shown {
 		if f.Rule == "parse-error" {
@@ -910,8 +911,8 @@ func humanDeadCode(w io.Writer, r deadcode.Report) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", f.Kind, f.Package, f.File, f.Line, f.Name)
 	}
 	tw.Flush()
-	if len(r.Findings) > cap {
-		fmt.Fprintf(w, "... %d more (use --json for the full list)\n", len(r.Findings)-cap)
+	if len(r.Findings) > maxRows {
+		fmt.Fprintf(w, "... %d more (use --json for the full list)\n", len(r.Findings)-maxRows)
 	}
 }
 
@@ -1005,9 +1006,9 @@ func humanCodeHealth(w io.Writer, r codehealth.Report) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "GRADE\tSCORE\tPACKAGE\tTOP ISSUE")
 	shown := r.Packages
-	const cap = 25
-	if len(shown) > cap {
-		shown = shown[:cap]
+	const maxRows = 25
+	if len(shown) > maxRows {
+		shown = shown[:maxRows]
 	}
 	for _, p := range shown {
 		top := "-"
@@ -1017,8 +1018,8 @@ func humanCodeHealth(w io.Writer, r codehealth.Report) {
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%s\n", p.Grade, p.Score, p.Package, top)
 	}
 	tw.Flush()
-	if len(r.Packages) > cap {
-		fmt.Fprintf(w, "... %d more packages (use --json for the full report)\n", len(r.Packages)-cap)
+	if len(r.Packages) > maxRows {
+		fmt.Fprintf(w, "... %d more packages (use --json for the full report)\n", len(r.Packages)-maxRows)
 	}
 }
 
@@ -1670,6 +1671,21 @@ func humanNakedRet(w io.Writer, r nakedret.Report) {
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n",
 			f.Severity, f.FuncLines, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanPredeclared(w io.Writer, r predeclared.Report) {
+	fmt.Fprintf(w, "predeclared: %d files, %d shadowing(s)\n", r.FilesScanned, r.Flagged)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no predeclared-identifier shadowing — Go builtins keep their meaning")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tKIND\tFILE\tLINE\tNAME")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+			f.Severity, f.Kind, f.File, f.Line, f.Name)
 	}
 	tw.Flush()
 }

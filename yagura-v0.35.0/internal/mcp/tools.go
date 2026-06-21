@@ -189,6 +189,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildSyncCheckTool(d))
 	// [Q] v0.78.0 — naked-return readability (naked return in long named-result funcs; nakedret-style)
 	s.Register(buildNakedRetTool(d))
+	// [Q] v0.79.0 — predeclared-identifier shadowing (vars/params/types shadowing builtins)
+	s.Register(buildPredeclaredTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

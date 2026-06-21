@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 76 internal packages
+## Map — 77 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 82 tool definitions
+- `internal/mcp` — MCP server + 83 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -194,6 +194,14 @@ cortex flywheel 4 段階すべてを単体で機械化:
   result を持つ関数でしか書けないので named 判定で対象を絞る。クロージャ内 naked return は
   最も内側の関数に帰属。dogfood は既定で 0(naked return は 11/27 行関数のみ、閾値以下)。
   CLI `naked-ret --dir . [--max-lines N] [--strict]`、MCP `yagura_naked_ret`★ v0.78
+- `internal/predeclared` — Go の組み込み識別子(len/cap/new/error/min/max/clear 等 39 個)を
+  shadowing する宣言を go/ast で検出する *correctness 軸* のレンズ(ソクラテス新視点 XII、
+  Qiita/Zenn 調査、nishanths/predeclared 由来)。`cap := capacity` のような shadowing は
+  そのスコープで組み込み `cap(s)` を呼べなくする静的バグの温床。引数・名前付き戻り値・
+  関数/型/定数/変数宣言・短縮宣言・range key/value を対象。method (receiver 付き) は名前空間
+  が分かれるため除外。`--ignore` で許容識別子を列挙可。dogfood で 20 件(全て cap/min/max の
+  Go 1.21+ builtin shadowing)を検出し全リネーム修正。CLI `predeclared --dir . [--ignore a,b]
+  [--strict]`、MCP `yagura_predeclared`★ v0.79
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

@@ -163,11 +163,11 @@ func projectToSnapshot(p project.Project) alertfix.ProjectSnapshot {
 // filterBySeverity は severity_min 以上のみ残す。
 //
 // "critical" → critical only / "high" → critical+high / "medium" → critical+high+medium 等。
-func filterBySeverity(r alertfix.Report, min string) alertfix.Report {
+func filterBySeverity(r alertfix.Report, minSev string) alertfix.Report {
 	rank := map[string]int{
 		"critical": 0, "high": 1, "medium": 2, "low": 3,
 	}
-	maxRank, ok := rank[strings.ToLower(min)]
+	maxRank, ok := rank[strings.ToLower(minSev)]
 	if !ok {
 		return r
 	}

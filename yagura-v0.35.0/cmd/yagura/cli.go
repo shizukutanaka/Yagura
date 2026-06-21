@@ -59,6 +59,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/errwrap"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
+	"github.com/shizukutanaka/yagura/internal/predeclared"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/featurelist"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
@@ -147,6 +148,7 @@ var cliHandlers = map[string]cliHandler{
 	"err-wrap":    cliErrWrap,
 	"sync-check":  cliSyncCheck,
 	"naked-ret":   cliNakedRet,
+	"predeclared": cliPredeclared,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -758,14 +760,14 @@ func cliGhaAudit(args []string, stdout, stderr io.Writer) error {
 
 // filterGhaFindings は severity が min 以上の findings のみ残す。
 // severity rank: CRITICAL(0) > HIGH(1) > MEDIUM(2) > LOW(3)。
-func filterGhaFindings(results map[string][]ghaaudit.Finding, min ghaaudit.Severity) map[string][]ghaaudit.Finding {
+func filterGhaFindings(results map[string][]ghaaudit.Finding, minSev ghaaudit.Severity) map[string][]ghaaudit.Finding {
 	rank := map[ghaaudit.Severity]int{
 		ghaaudit.SeverityCritical: 0,
 		ghaaudit.SeverityHigh:     1,
 		ghaaudit.SeverityMedium:   2,
 		ghaaudit.SeverityLow:      3,
 	}
-	minRank := rank[min]
+	minRank := rank[minSev]
 	out := make(map[string][]ghaaudit.Finding, len(results))
 	for file, findings := range results {
 		var kept []ghaaudit.Finding
@@ -836,15 +838,15 @@ type skillAuditEntry struct {
 // cliSkillAudit は dir 配下の SKILL.md を走査し、品質スコアと retire 候補を
 // まとめて報告する(MUSE-Autoskill のライブラリ単位の self-cleaning を CLI で
 // 実用化)。disk 走査なので MCP の単発 yagura_skill_audit ではなく CLI 側に置く。
-// minScoreGate は --min-score 用の CI ゲート。score < min の item があれば error
-// を返す(min<=0 で無効)。結果自体は呼び出し側で既に出力済み。決定論的な順序。
-func minScoreGate(min int, scored map[string]int) error {
-	if min <= 0 {
+// minScoreGate は --min-score 用の CI ゲート。score < minScore の item があれば error
+// を返す(minScore<=0 で無効)。結果自体は呼び出し側で既に出力済み。決定論的な順序。
+func minScoreGate(minScore int, scored map[string]int) error {
+	if minScore <= 0 {
 		return nil
 	}
 	var below []string
 	for path, sc := range scored {
-		if sc < min {
+		if sc < minScore {
 			below = append(below, fmt.Sprintf("%s (%d)", path, sc))
 		}
 	}
@@ -852,7 +854,7 @@ func minScoreGate(min int, scored map[string]int) error {
 		return nil
 	}
 	sort.Strings(below)
-	return fmt.Errorf("%d item(s) below --min-score %d: %s", len(below), min, strings.Join(below, ", "))
+	return fmt.Errorf("%d item(s) below --min-score %d: %s", len(below), minScore, strings.Join(below, ", "))
 }
 
 // auditResolveOpts は resolveSingleAuditTarget の入力を束ねる構造体。
@@ -1799,8 +1801,8 @@ func projectScanItems(p *project.Project) []secretscan.ScanItem {
 
 // filterBySeverity は min 以上の severity だけを残した BatchResult を返す。
 // internal/mcp.filterFindingsBatch と同じロジック。
-func filterBySeverity(r secretscan.BatchResult, min secretscan.Severity) secretscan.BatchResult {
-	minRank := severityRank(min)
+func filterBySeverity(r secretscan.BatchResult, minSev secretscan.Severity) secretscan.BatchResult {
+	minRank := severityRank(minSev)
 	out := secretscan.BatchResult{
 		BySource:    map[string][]secretscan.Finding{},
 		SourceOrder: []string{},
@@ -1908,14 +1910,14 @@ func cliAIVerify(args []string, stdout, stderr io.Writer) error {
 }
 
 // filterAIVerifyByRisk は risk が min 以上の findings のみ残し集計を再計算する。
-func filterAIVerifyByRisk(r aiverify.Result, min aiverify.RiskLevel) aiverify.Result {
+func filterAIVerifyByRisk(r aiverify.Result, minRisk aiverify.RiskLevel) aiverify.Result {
 	rank := map[aiverify.RiskLevel]int{
 		aiverify.RiskCritical: 0,
 		aiverify.RiskHigh:     1,
 		aiverify.RiskMedium:   2,
 		aiverify.RiskLow:      3,
 	}
-	minRank := rank[min]
+	minRank := rank[minRisk]
 	kept := r.Findings[:0]
 	for _, f := range r.Findings {
 		if rank[f.Risk] <= minRank {
@@ -2010,13 +2012,13 @@ func cliQualityCheck(args []string, stdout, stderr io.Writer) error {
 
 // filterQualityBySeverity は severity が min 以上の findings のみ残す。
 // rank: prohibited(0) > warning(1) > info(2) — prohibited が最も厳しい。
-func filterQualityBySeverity(r qualitycheck.Result, min qualitycheck.Severity) qualitycheck.Result {
+func filterQualityBySeverity(r qualitycheck.Result, minSev qualitycheck.Severity) qualitycheck.Result {
 	rank := map[qualitycheck.Severity]int{
 		qualitycheck.SevProhibited: 0,
 		qualitycheck.SevWarning:    1,
 		qualitycheck.SevInfo:       2,
 	}
-	minRank := rank[min]
+	minRank := rank[minSev]
 	kept := r.Findings[:0]
 	for _, f := range r.Findings {
 		if rank[f.Severity] <= minRank {
@@ -2479,7 +2481,7 @@ func cliComplexity(args []string, stdout, stderr io.Writer) error {
 	fset := newFlagSet("complexity", stderr)
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
-	max := fset.Int("max", 10, "complexity threshold; functions above this are flagged")
+	maxThreshold := fset.Int("max", 10, "complexity threshold; functions above this are flagged")
 	strict := fset.Bool("strict", false, "exit non-zero if any function exceeds --max")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
@@ -2491,7 +2493,7 @@ func cliComplexity(args []string, stdout, stderr io.Writer) error {
 	}
 	warnIncompleteScan(stderr, sr, *dir)
 
-	rep := complexity.Scan(sr.Files, *max)
+	rep := complexity.Scan(sr.Files, *maxThreshold)
 	if *jsonOut {
 		if err := emitJSON(stdout, rep); err != nil {
 			return err
@@ -2514,7 +2516,7 @@ func cliParamCheck(args []string, stdout, stderr io.Writer) error {
 	fset := newFlagSet("param-check", stderr)
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
-	max := fset.Int("max", 5, "parameter-count threshold; functions above this are flagged")
+	maxThreshold := fset.Int("max", 5, "parameter-count threshold; functions above this are flagged")
 	strict := fset.Bool("strict", false, "exit non-zero if any function exceeds --max")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
@@ -2526,7 +2528,7 @@ func cliParamCheck(args []string, stdout, stderr io.Writer) error {
 	}
 	warnIncompleteScan(stderr, sr, *dir)
 
-	rep := paramcheck.Scan(sr.Files, *max)
+	rep := paramcheck.Scan(sr.Files, *maxThreshold)
 	if *jsonOut {
 		if err := emitJSON(stdout, rep); err != nil {
 			return err
@@ -2586,7 +2588,7 @@ func cliReturnCheck(args []string, stdout, stderr io.Writer) error {
 	fset := newFlagSet("return-check", stderr)
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
-	max := fset.Int("max", 3, "return-value count threshold; functions above this are flagged (default 3)")
+	maxThreshold := fset.Int("max", 3, "return-value count threshold; functions above this are flagged (default 3)")
 	strict := fset.Bool("strict", false, "exit non-zero if any function exceeds --max")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
@@ -2598,7 +2600,7 @@ func cliReturnCheck(args []string, stdout, stderr io.Writer) error {
 	}
 	warnIncompleteScan(stderr, sr, *dir)
 
-	rep := returncheck.Scan(sr.Files, *max)
+	rep := returncheck.Scan(sr.Files, *maxThreshold)
 	if *jsonOut {
 		if err := emitJSON(stdout, rep); err != nil {
 			return err
@@ -2850,6 +2852,41 @@ func cliNakedRet(args []string, stdout, stderr io.Writer) error {
 	humanNakedRet(stdout, rep)
 	if *strict && rep.Flagged > 0 {
 		return fmt.Errorf("%d naked-return readability issue(s)", rep.Flagged)
+	}
+	return nil
+}
+
+// ─── predeclared (v0.79.0) ───────────────────────────────────
+
+// cliPredeclared は `yagura predeclared` を処理する。Go の組み込み識別子
+// (len/cap/new/error/string/min/max/clear 等)を shadowing する宣言を検出。
+// 型情報不要・決定論的。--ignore で許容する識別子を列挙(`cap,min,max` 等)。
+// --strict で検出時 exit 1。
+func cliPredeclared(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("predeclared", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	ignore := fset.String("ignore", "", "comma-separated predeclared identifiers to allow shadowing (e.g. cap,min,max)")
+	strict := fset.Bool("strict", false, "exit non-zero if any shadowing is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	var ignored []string
+	if *ignore != "" {
+		ignored = strings.Split(*ignore, ",")
+	}
+	rep := predeclared.Scan(sr.Files, ignored)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanPredeclared(stdout, rep)
+	if *strict && rep.Flagged > 0 {
+		return fmt.Errorf("%d predeclared-identifier shadowing(s)", rep.Flagged)
 	}
 	return nil
 }
@@ -3198,9 +3235,9 @@ func validAlertSeverity(s string) bool {
 // filterReportBySeverity は severity_min 以上の alert のみ残し集計を再計算する。
 // mcp.filterBySeverity と同じ rank だが、Total だけでなく by_* も再計算する。
 // 未知の min は呼出側(cliAlertFix)が事前検証する前提(ここに来ない)。
-func filterReportBySeverity(r alertfix.Report, min string) alertfix.Report {
+func filterReportBySeverity(r alertfix.Report, minSev string) alertfix.Report {
 	rank := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3}
-	maxRank, ok := rank[strings.ToLower(min)]
+	maxRank, ok := rank[strings.ToLower(minSev)]
 	if !ok {
 		return r
 	}
@@ -4717,7 +4754,7 @@ var yaguraVerbs = []string{
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
 	"list", "mcp-audit", "naked-ret", "name-check", "ops-risk", "parallel-plan", "param-check", "path-policy",
-	"pin-drift", "plan-status", "plugin-audit", "progress-file", "publicity-scan",
+	"pin-drift", "plan-status", "plugin-audit", "predeclared", "progress-file", "publicity-scan",
 	"quality-check", "recv-check", "recovery-decide", "register", "release-radar",
 	"return-check", "review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
 	"self-improve-history", "session-summary", "settings-audit", "skill-audit",
@@ -4815,6 +4852,7 @@ func buildZshVerbLines() string {
 		"err-policy":           "error-context discipline: wrap ratio + blank-discard",
 		"err-wrap":             "error-wrapping discipline: %w over %v, errors.Is/As over ==/type-assert",
 		"naked-ret":            "naked-return readability: naked return in long named-result functions",
+		"predeclared":          "predeclared-identifier shadowing: vars/params/types/funcs shadowing Go builtins",
 		"sync-check":           "sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex",
 		"feature-list":         "convert Plan.md to Anthropic-style feature-list.json",
 		"flag-arg":             "boolean flag-argument smell (Fowler); bool params encoding hidden branches",

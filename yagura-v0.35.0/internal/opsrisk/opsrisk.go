@@ -104,15 +104,15 @@ type Result struct {
 
 // Classify は 1 操作の自律 tier を決定論的に分類する。
 func Classify(op Op) Decision {
-	cap := strings.ToLower(strings.TrimSpace(op.Capability))
+	capLower := strings.ToLower(strings.TrimSpace(op.Capability))
 	var reasons []string
 
-	base, known := capBase[cap]
+	base, known := capBase[capLower]
 	if !known {
 		base = TierReview
 		reasons = append(reasons, fmt.Sprintf("unknown capability %q → review (secure by default)", op.Capability))
 	} else {
-		reasons = append(reasons, fmt.Sprintf("capability %q", cap))
+		reasons = append(reasons, fmt.Sprintf("capability %q", capLower))
 	}
 	r := rank(base)
 
@@ -151,7 +151,7 @@ func Classify(op Op) Decision {
 	// consent ゲート: write/exec に確認があれば 1 段緩和(最低 log は残す)。
 	// delete/auth/billing/data/external は緩和しない(OWASP: edit/delete consent は
 	// 必須だが、破壊的・特権操作の人間承認を consent で代替させない)。
-	if op.HasGate && (cap == "write" || cap == "exec") && r > rank(TierLog) {
+	if op.HasGate && (capLower == "write" || capLower == "exec") && r > rank(TierLog) {
 		r--
 		reasons = append(reasons, "consent gate present (−1)")
 	}
@@ -162,7 +162,7 @@ func Classify(op Op) Decision {
 	tier := tierOf(r)
 	return Decision{
 		Name:       op.Name,
-		Capability: cap,
+		Capability: capLower,
 		Tier:       tier,
 		Controls:   controlsFor(tier),
 		Rationale:  strings.Join(reasons, "; "),

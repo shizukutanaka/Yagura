@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **82 tools**.
+Generated from a live yagura — **83 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (35)
+- [Misc](#misc) (36)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -662,6 +662,19 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `content` (string) | ★ | full plugin.json or marketplace.json text |
+
+---
+
+### `yagura_predeclared`
+
+[Q] Predeclared-identifier shadowing: vars/params/types/funcs that shadow Go builtins (predeclared-style)
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
+| `ignore` (array) |  | predeclared identifiers to allow shadowing (e.g. ["cap","min","max"]) |
 
 ---
 
