@@ -277,3 +277,105 @@ func C() {}
 		t.Errorf("FuncsScanned: want 3, got %d", r.FuncsScanned)
 	}
 }
+
+// ─── Tukey-fence outlier detection (v0.81) ───────────────
+
+func hasOutlier(r Report, fn, metric string) bool {
+	for _, o := range r.Outliers {
+		if o.Func == fn && o.Metric == metric {
+			return true
+		}
+	}
+	return false
+}
+
+func TestScan_P25Present(t *testing.T) {
+	src := "package p\n"
+	for i := 1; i <= 5; i++ {
+		src += fnWithParams("F"+string(rune('0'+i)), i)
+	}
+	r := Scan(map[string]string{"x.go": src})
+	d, _ := dist(r, "params")
+	// sorted [1,2,3,4,5], p25 rank = 0.25*4 = 1 → sorted[1] = 2
+	if d.P25 != 2 {
+		t.Errorf("P25: want 2, got %v", d.P25)
+	}
+}
+
+func TestScan_ComplexityOutlierDetected(t *testing.T) {
+	// Nine trivial funcs (complexity 1) + one very complex func.
+	src := "package p\n"
+	for i := 0; i < 9; i++ {
+		src += "func Triv" + string(rune('a'+i)) + "() {}\n"
+	}
+	// Monster: many ifs → high complexity.
+	src += "func Monster(x int) {\n"
+	for i := 0; i < 15; i++ {
+		src += "\tif x > " + string(rune('0'+i%10)) + " {\n\t}\n"
+	}
+	src += "}\n"
+	r := Scan(map[string]string{"x.go": src})
+	if !hasOutlier(r, "Monster", "complexity") {
+		t.Errorf("Monster should be a complexity outlier, got outliers: %+v", r.Outliers)
+	}
+	// Trivial funcs must not be outliers.
+	if hasOutlier(r, "Triva", "complexity") {
+		t.Errorf("trivial func should not be an outlier")
+	}
+}
+
+func TestScan_UniformNoOutliers(t *testing.T) {
+	// All funcs identical (complexity 1, 0 params, 0 returns, ~1 line).
+	src := "package p\n"
+	for i := 0; i < 10; i++ {
+		src += "func F" + string(rune('a'+i)) + "() {}\n"
+	}
+	r := Scan(map[string]string{"x.go": src})
+	if len(r.Outliers) != 0 {
+		t.Errorf("uniform corpus should have no outliers, got: %+v", r.Outliers)
+	}
+}
+
+func TestScan_OutlierFieldsPopulated(t *testing.T) {
+	// Trivial funcs each take 1 param so Q1=Q3=1 → fence = 1 (IQR 0, but positive Q3).
+	src := "package p\n"
+	for i := 0; i < 9; i++ {
+		src += "func Triv" + string(rune('a'+i)) + "(p int) {}\n"
+	}
+	src += "func Big(a, b, c, d, e, f, g, h int) {}\n" // 8 params, far above the rest (1)
+	r := Scan(map[string]string{"x.go": src})
+	var found *Outlier
+	for i := range r.Outliers {
+		if r.Outliers[i].Func == "Big" && r.Outliers[i].Metric == "params" {
+			found = &r.Outliers[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("Big should be a params outlier, got: %+v", r.Outliers)
+	}
+	if found.File != "x.go" || found.Line == 0 || found.Value != 8 {
+		t.Errorf("outlier fields incomplete: %+v", *found)
+	}
+	if found.Fence != 1 {
+		t.Errorf("outlier should carry the upper fence (Q3=1, IQR=0 → fence 1), got %v", found.Fence)
+	}
+}
+
+func TestScan_OutliersDeterministicOrder(t *testing.T) {
+	src := "package p\n"
+	for i := 0; i < 9; i++ {
+		src += "func Triv" + string(rune('a'+i)) + "() {}\n"
+	}
+	src += "func Big1(a, b, c, d, e, f int) {}\n"
+	src += "func Big2(a, b, c, d, e, f, g, h int) {}\n"
+	a := Scan(map[string]string{"x.go": src})
+	b := Scan(map[string]string{"x.go": src})
+	if len(a.Outliers) != len(b.Outliers) {
+		t.Fatalf("non-deterministic outlier count: %d vs %d", len(a.Outliers), len(b.Outliers))
+	}
+	for i := range a.Outliers {
+		if a.Outliers[i] != b.Outliers[i] {
+			t.Errorf("outlier %d differs: %+v vs %+v", i, a.Outliers[i], b.Outliers[i])
+		}
+	}
+}

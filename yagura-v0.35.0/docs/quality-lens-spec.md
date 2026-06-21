@@ -324,12 +324,41 @@ closures excluded), `calibrate` computes four metrics:
 | `returns` | result count, name-unit | `return-check --max 3` |
 | `func_lines` | body line span (`{` … `}`) | `naked-ret --max-lines 30` |
 
-Each metric's `Distribution` reports `Min/Max/Mean/Median/P75/P90/P95/P99`, the
-current gate default, the number of functions strictly above it
+Each metric's `Distribution` reports `Min/Max/Mean/Median/P25/P75/P90/P95/P99`,
+the current gate default, the number of functions strictly above it
 (`OverCurrentDefault`), and a `SuggestedThreshold = ceil(P95)` — a data-driven
 gate that would flag roughly the worst 5% of the corpus. Percentiles use linear
 interpolation (R-7). `_test.go` files and `TestXxx`/`BenchmarkXxx`/`ExampleXxx`/
 `FuzzXxx` are excluded.
+
+### Outlier identification (v0.81)
+
+Distributions describe; they do not point at specific functions. v0.81 adds an
+`Outliers` list that makes calibrate **actionable**: a function is an outlier on
+a metric when its value exceeds **both**
+
+1. the **Tukey far-out fence** `UpperFence = Q3 + 3·IQR` (the *outer* fence,
+   for genuinely extreme values — the inner 1.5·IQR fence floods the upper
+   quartile on a large corpus), **and**
+2. the metric's **conventional gate** (`CurrentDefault`).
+
+The conjunction is deliberate. Low-cardinality metrics (`returns`, `params`
+cluster at 0/1/2) have near-zero IQR, so the Tukey fence alone would flag
+idiomatic `(T, error)` returns; requiring the value to also beat the community
+baseline removes that noise. Outliers are sorted deterministically
+(metric → value desc → file → line → func).
+
+**Dogfood note**: on Yagura (1280 functions) calibrate showed `complexity` p95=13
+(default `--max 10` is slightly stricter than the corpus's 95th percentile),
+`params` p95≈3 (default 5 is lenient — 4 would fit), `returns` p95=2 (default 3
+is well-calibrated), and `func_lines` p95=65 with a 543-line outlier. The outlier
+list surfaced **41** functions worth review — the 543-line `cmd/yagura/main.go:run`,
+the complexity-32 `plantracker.Parse`, and (notably) three param-count outliers in
+the lens code itself (`nakedret.analyzeFunc`, `predeclared.emitIfShadow`,
+`errwrap.emit`), catalogued for follow-up. This is the first **meta** lens whose
+deliverable is calibration insight rather than defects or convergence —
+completing the spec's W1–W4 weakness review by turning W3 from an open caveat
+into a measurable, tunable, and now actionable quantity.
 
 **Dogfood note**: on Yagura (1277 functions) calibrate showed `complexity` p95=13
 (default `--max 10` is slightly stricter than the corpus's 95th percentile),

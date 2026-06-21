@@ -207,9 +207,11 @@ cortex flywheel 4 段階すべてを単体で機械化:
   W3「threshold arbitrariness」への対応)。findings ではなく分布(min/median/p90/p95/p99/
   max/mean + ceil(P95) の suggested threshold + 現行 default 超過数)を出す。named function
   のみ走査(FuncLit 除外)、complexity は complexity レンズと同一の McCabe 定義、percentile は
-  線形補間(R-7)。dogfood(1277 関数)で complexity p95=13 vs `--max 10`、params p95≈3 vs
-  `--max 5`(緩い)、returns p95=2 vs `--max 3`(妥当)、func-lines p95=65・最大 543 行を可視化。
-  CLI `calibrate --dir . [--json]`、MCP `yagura_calibrate`★ v0.80
+  線形補間(R-7)。v0.81 で outlier 検出を追加: Tukey 外側フェンス(Q3+3·IQR)*かつ* 慣習
+  しきい値超過の関数を「直すべき極端値」として列挙(積を取ることで returns/params の
+  `(T,error)` 等の慣用ノイズを排除)。dogfood(1280 関数)で 41 outliers(543 行 run、
+  complexity-32 plantracker.Parse、レンズ自身の param 過多 3 件)を surface。
+  CLI `calibrate --dir . [--json]`、MCP `yagura_calibrate`★ v0.80(outliers v0.81)
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

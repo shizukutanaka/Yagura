@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.80.0** — 84 MCP tools, 78 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). New `calibrate` meta-lens (addresses spec weakness **W3 — threshold arbitrariness**): instead of flagging findings, it reports the **percentile distribution** (min/median/p90/p95/p99/max) of complexity, params, returns, and function-length across the corpus, so `--max` gates can be set from the codebase's own data rather than convention. Dogfooded on Yagura (1277 functions): complexity p95=13 vs default `--max 10`, params p95≈3 vs `--max 5` (lenient), returns p95=2 vs `--max 3` (well-calibrated), func-lines p95=65 with a 543-line outlier. Reproducible build verified.
+Status: **v0.81.0** — 84 MCP tools, 78 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). `calibrate` deepened (closes the W3 loop): beyond percentile distributions it now flags **statistical outliers** — functions whose metric exceeds the Tukey far-out fence (Q3 + 3·IQR) **and** the conventional gate, turning calibration from descriptive into actionable. Dogfooded on Yagura (1280 functions): 41 outliers surfaced, including the 543-line `run`, the complexity-32 `plantracker.Parse`, and 3 param-count outliers in the lens code itself. Reproducible build verified.
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-75 consecutive releases (v0.6 → v0.80) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+76 consecutive releases (v0.6 → v0.81) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

@@ -1706,4 +1706,15 @@ func humanCalibrate(w io.Writer, r calibrate.Report) {
 	}
 	tw.Flush()
 	fmt.Fprintln(w, "(SUGGEST = ceil(P95); OVER = functions strictly above current --max default)")
+
+	if len(r.Outliers) > 0 {
+		fmt.Fprintf(w, "\n%d statistical outlier(s) (value > Q3 + 3·IQR for the metric (Tukey far-out)):\n", len(r.Outliers))
+		otw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(otw, "METRIC\tVALUE\tFENCE\tFILE\tLINE\tFUNC")
+		for _, o := range r.Outliers {
+			fmt.Fprintf(otw, "%s\t%d\t%.1f\t%s\t%d\t%s\n",
+				o.Metric, o.Value, o.Fence, o.File, o.Line, o.Func)
+		}
+		otw.Flush()
+	}
 }

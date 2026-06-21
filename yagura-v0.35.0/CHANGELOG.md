@@ -4,6 +4,60 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.81.0] - 2026-06-21
+
+### Theme — "calibrate deepened: from descriptive to actionable (Tukey outliers)"
+
+A **deepening** release — no new lens, no new tool. v0.80's `calibrate` reported
+distributions but pointed at no specific function ("p95 complexity is 13" — but
+*which* functions?). v0.81 adds **statistical outlier identification** so the
+calibration insight becomes actionable.
+
+#### Outlier detection (`internal/calibrate`)
+
+`calibrate.Report` gains an `Outliers []Outlier` list and `Distribution` gains
+`P25` + `UpperFence`. A function is an outlier on a metric when its value exceeds
+**both**:
+
+1. the **Tukey far-out fence** `Q3 + 3·IQR` — the *outer* fence. The inner
+   1.5·IQR fence floods the upper quartile on a 1280-function corpus (326
+   "outliers"); the outer fence isolates genuinely extreme values.
+2. the metric's **conventional gate** (`CurrentDefault`).
+
+The conjunction is the key design decision. Low-cardinality metrics (`returns`,
+`params` cluster at 0/1/2) have near-zero IQR, so the Tukey fence alone flags
+idiomatic `(T, error)` returns as outliers; requiring the value to also beat the
+community baseline removes that noise. Result: 326 → **41** meaningful outliers.
+Outliers sort deterministically (metric → value desc → file → line → func).
+
+#### Dogfood: 41 outliers, including in the lens code itself
+
+```
+complexity  32   internal/plantracker/plantracker.go:83   Parse
+func_lines  543  cmd/yagura/main.go:347                   run
+func_lines  183  internal/ghaaudit/ghaaudit.go:73         (*Auditor).AuditFile
+params      7    internal/nakedret/nakedret.go:124        analyzeFunc
+params      7    internal/predeclared/predeclared.go:231  emitIfShadow
+params      6    internal/errwrap/errwrap.go:141          emit
+returns     4    cmd/yagura/cli_format.go:546             assessmentCounts
+```
+
+Notably calibrate flagged three param-count outliers **in the recently-added
+lens code** (`nakedret`/`predeclared`/`errwrap` helpers exceed `param-check
+--max 5`) — catalogued for a follow-up signature-struct refactor (the v0.71
+`ReleaseReadinessExt → ReadinessInput` pattern). The 543-line `run` and
+complexity-32 `plantracker.Parse` are the headline targets.
+
+#### Wiring
+- Human output gains an outlier table below the distribution table
+- `docs/quality-lens-spec.md` §13 extended with the outlier sub-section
+- 6 new TDD tests (24 total in `calibrate_test.go`), all green under `-race`
+- No new MCP tool or package — tool/package counts unchanged (84 / 78)
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 76 consecutive
+releases (v0.6 → v0.81). 84 MCP tools, 78 internal packages.
+
 ## [v0.80.0] - 2026-06-21
 
 ### Theme — "calibrate: corpus-derived thresholds (closes spec weakness W3)"

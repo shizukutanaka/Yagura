@@ -54,13 +54,25 @@ type Distribution struct {
 	Max                int     `json:"max"`
 	Mean               float64 `json:"mean"`
 	Median             float64 `json:"median"`
+	P25                float64 `json:"p25"`
 	P75                float64 `json:"p75"`
 	P90                float64 `json:"p90"`
 	P95                float64 `json:"p95"`
 	P99                float64 `json:"p99"`
+	UpperFence         float64 `json:"upper_fence"` // Q3 + 3*IQR (Tukey far-out)
 	CurrentDefault     int     `json:"current_default"`
 	OverCurrentDefault int     `json:"over_current_default"`
 	SuggestedThreshold int     `json:"suggested_threshold"` // ceil(P95)
+}
+
+// Outlier は あるメトリクスで Tukey 外側フェンスを超えた 1 関数(極端値)。
+type Outlier struct {
+	File   string  `json:"file"`
+	Line   int     `json:"line"`
+	Func   string  `json:"func"`
+	Metric string  `json:"metric"`
+	Value  int     `json:"value"`
+	Fence  float64 `json:"fence"` // 超えた外側フェンス Q3+3*IQR
 }
 
 // Report は Scan の集計。
@@ -68,10 +80,14 @@ type Report struct {
 	FilesScanned  int            `json:"files_scanned"`
 	FuncsScanned  int            `json:"funcs_scanned"`
 	Distributions []Distribution `json:"distributions"`
+	Outliers      []Outlier      `json:"outliers"`
 }
 
-// funcMetrics は 1 関数の 4 メトリクス。
+// funcMetrics は 1 関数の 4 メトリクス + 位置。
 type funcMetrics struct {
+	file       string
+	line       int
+	name       string
 	complexity int
 	params     int
 	returns    int
@@ -91,15 +107,53 @@ func Scan(files map[string]string) Report {
 	}
 	r.FuncsScanned = len(all)
 
-	// メトリクス別に値列を抽出し、分布を算出。
+	// メトリクス別に値列を抽出し、分布を算出 + Tukey 上側フェンス超過を outlier に。
 	for _, md := range metricDefaults {
 		vals := make([]int, 0, len(all))
 		for _, fm := range all {
 			vals = append(vals, fm.value(md.Name))
 		}
-		r.Distributions = append(r.Distributions, distribution(md.Name, vals, md.Default))
+		d := distribution(md.Name, vals, md.Default)
+		r.Distributions = append(r.Distributions, d)
+		if d.Count == 0 {
+			continue
+		}
+		// outlier = 統計的極端値(> 外側フェンス)*かつ* 慣習しきい値超過
+		// (> CurrentDefault)。前者だけだと returns/params のような低カーディナリティ
+		// メトリクスで `(T, error)` 等の慣用コードを拾い過ぎるため、両シグナルの
+		// 積を「実際に直すべき極端関数」とする。
+		for _, fm := range all {
+			v := fm.value(md.Name)
+			if float64(v) > d.UpperFence && v > md.Default {
+				r.Outliers = append(r.Outliers, Outlier{
+					File: fm.file, Line: fm.line, Func: fm.name,
+					Metric: md.Name, Value: v, Fence: d.UpperFence,
+				})
+			}
+		}
 	}
+	sortOutliers(r.Outliers)
 	return r
+}
+
+// sortOutliers は決定論的順序: Metric → Value desc → File → Line → Func。
+func sortOutliers(os []Outlier) {
+	sort.Slice(os, func(i, j int) bool {
+		a, b := os[i], os[j]
+		if a.Metric != b.Metric {
+			return a.Metric < b.Metric
+		}
+		if a.Value != b.Value {
+			return a.Value > b.Value
+		}
+		if a.File != b.File {
+			return a.File < b.File
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		return a.Func < b.Func
+	})
 }
 
 func (fm funcMetrics) value(metric string) int {
@@ -139,6 +193,9 @@ func scanFile(path, src string) []funcMetrics {
 		start := fset.Position(fn.Body.Lbrace).Line
 		end := fset.Position(fn.Body.Rbrace).Line
 		out = append(out, funcMetrics{
+			file:       path,
+			line:       fset.Position(fn.Pos()).Line,
+			name:       funcDeclName(fn),
 			complexity: complexityOf(fn.Body),
 			params:     countFields(fn.Type.Params),
 			returns:    countFields(fn.Type.Results),
@@ -211,11 +268,17 @@ func distribution(metric string, vals []int, def int) Distribution {
 	sort.Ints(vals)
 	d.Min = vals[0]
 	d.Max = vals[len(vals)-1]
+	d.P25 = percentile(vals, 25)
 	d.Median = percentile(vals, 50)
 	d.P75 = percentile(vals, 75)
 	d.P90 = percentile(vals, 90)
 	d.P95 = percentile(vals, 95)
 	d.P99 = percentile(vals, 99)
+	// Tukey の外側(far-out)フェンス: Q3 + 3*IQR。1.5*IQR の内側フェンスは
+	// 大規模コーパスで上側 4 分位の大半を拾い過ぎるため、極端値のみを surface する
+	// 外側フェンスを採用(「直すべき monster」の実用シグナル)。
+	iqr := d.P75 - d.P25
+	d.UpperFence = d.P75 + 3*iqr
 	d.SuggestedThreshold = int(math.Ceil(d.P95))
 	return d
 }
@@ -237,4 +300,27 @@ func percentile(sorted []int, p float64) float64 {
 	}
 	frac := rank - float64(lo)
 	return float64(sorted[lo]) + frac*float64(sorted[hi]-sorted[lo])
+}
+
+// funcDeclName は メソッドを `(Recv).Method`、関数を `Func` で表す(他レンズと統一)。
+func funcDeclName(fd *ast.FuncDecl) string {
+	if fd.Recv != nil && len(fd.Recv.List) > 0 {
+		return "(" + recvTypeName(fd.Recv.List[0].Type) + ")." + fd.Name.Name
+	}
+	return fd.Name.Name
+}
+
+func recvTypeName(e ast.Expr) string {
+	switch t := e.(type) {
+	case *ast.StarExpr:
+		return "*" + recvTypeName(t.X)
+	case *ast.Ident:
+		return t.Name
+	case *ast.IndexExpr:
+		return recvTypeName(t.X)
+	case *ast.IndexListExpr:
+		return recvTypeName(t.X)
+	default:
+		return "?"
+	}
 }
