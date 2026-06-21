@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 73 internal packages
+## Map — 74 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 79 tool definitions
+- `internal/mcp` — MCP server + 80 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -171,6 +171,13 @@ cortex flywheel 4 段階すべてを単体で機械化:
   literal `context.Context` selector のみ照合(別名 import は型解決要のため対象外)。型情報
   不要・決定論的。dogfood で `writeSSEPinDrift(w, ctx, …)` を発見し `(ctx, w, …)` に修正。
   CLI `ctx-check --dir . [--strict]`、MCP `yagura_ctx_check`★ v0.75
+- `internal/errwrap` — Go 1.13 エラーラッピング規約違反を go/ast で検査する *error-chain
+  健全性軸* のレンズ(ソクラテス新視点 IX、Qiita/Zenn 調査、go-errorlint 由来)。errpolicy が
+  wrap *率* の meta 指標を測るのに対し、errwrap は「正しくラップできているか」を測る。
+  non-wrapping-verb(%v でなく %w)/ err-value-compare(== でなく errors.Is)/
+  err-type-assert(x.(T) でなく errors.As)。エラー値らしさは命名規約で type-free 判定。
+  dogfood で 14 件の error-chain 切断リスク(13× `err.(scanner.ErrorList)` + 1× io.EOF 比較)を
+  検出し全て errors.As/Is へ修正。CLI `err-wrap --dir . [--strict]`、MCP `yagura_err_wrap`★ v0.76
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

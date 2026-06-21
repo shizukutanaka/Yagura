@@ -21,9 +21,9 @@
 //
 // [error 規約] Go コミュニティ標準(errname 由来; Qiita/Zenn 調査 v0.74):
 //   - sentinel-err-prefix:  errors.New / fmt.Errorf で初期化された var、または
-//                           明示的 error 型の var が Err…/err… 接頭辞を持たない
+//     明示的 error 型の var が Err…/err… 接頭辞を持たない
 //   - error-type-suffix:    Error() string メソッドを持つ型が Error/Errors 接尾辞を
-//                           持たない
+//     持たない
 //
 // 語境界: 接頭辞の次の文字が大文字(または名前の終端)の時のみ接頭辞とみなす。
 // よって "Hash" は "has" 述語ではない。bare な "Get"/"New"(接尾辞なし)は除外。
@@ -38,6 +38,7 @@
 package namecheck
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/scanner"
@@ -111,7 +112,8 @@ func scanFile(path, src string, r *Report) {
 	f, err := parser.ParseFile(fset, path, src, parser.AllErrors)
 	if err != nil {
 		line := 1
-		if el, ok := err.(scanner.ErrorList); ok && len(el) > 0 {
+		var el scanner.ErrorList
+		if errors.As(err, &el) && len(el) > 0 {
 			line = el[0].Pos.Line
 		}
 		r.Findings = append(r.Findings, Finding{

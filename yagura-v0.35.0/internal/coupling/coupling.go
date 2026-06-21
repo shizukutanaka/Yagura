@@ -22,6 +22,7 @@
 package coupling
 
 import (
+	"errors"
 	"go/parser"
 	"go/scanner"
 	"go/token"
@@ -176,7 +177,8 @@ func parseImports(path, src string) ([]string, string) {
 	f, err := parser.ParseFile(fset, path, src, parser.ImportsOnly)
 	perr := ""
 	if err != nil {
-		if el, ok := err.(scanner.ErrorList); ok && len(el) > 0 {
+		var el scanner.ErrorList
+		if errors.As(err, &el) && len(el) > 0 {
 			perr = firstLine(el[0].Error())
 		} else {
 			perr = firstLine(err.Error())

@@ -183,6 +183,7 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_hotspot",
 		"yagura_name_check",
 		"yagura_ctx_check",
+		"yagura_err_wrap",
 		// v0.36 — package import coupling (architecture / SDP)
 		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)

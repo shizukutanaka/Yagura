@@ -41,6 +41,7 @@ Lenses are organized by the **axis** they measure:
 |---|---|
 | Function signature | `paramcheck` (input width), `flagarg` (bool control-coupling), `returncheck` (output width) |
 | Function internals | `complexity` (cyclomatic), `errdiscard` (discarded errors), `errpolicy` (diagnosability) |
+| Error-chain integrity | `errwrap` (`%w` / `errors.Is` / `errors.As`; errorlint-style) |
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
 | Public contract | `apidoc` (exported-symbol docs), `recvcheck` (receiver consistency) |
 | Test trust | `testcoverage` (source↔test mapping), `assertcheck` (assertion density) |
@@ -160,3 +161,36 @@ that contexts should be passed explicitly per-call as the first argument, never
 stashed in a struct, so that cancellation scope is visible at every call site
 rather than hidden in object lifetime. Storing a context in a struct couples the
 context's lifetime to the object's and obscures who can cancel what.
+
+## 9. `errwrap` — specification
+
+**Question:** *When code wraps or inspects an error, does the error chain survive?*
+
+Added v0.76 after a Qiita/Zenn survey of Go 1.13 error-handling conventions
+identified the three checks standardized by `polyfloyd/go-errorlint`. Where
+`errpolicy` measures the *rate* of wrapping (discipline meta-metric), `errwrap`
+measures *correctness*: whether `errors.Is`/`errors.As` will actually traverse
+the wrapped chain. This is the **error-chain integrity** axis.
+
+| Rule | Condition | Severity |
+|---|---|---|
+| `non-wrapping-verb` | `fmt.Errorf` formats an error value with `%v`/`%s` (no `%w` anywhere in the format) | medium |
+| `err-value-compare` | an error is compared with `==`/`!=` against a sentinel (not `nil`) | medium |
+| `err-type-assert` | a type assertion `err.(T)` is performed on an error (not `err.(type)`) | medium |
+
+**Type-free heuristics** (consistent with `errpolicy`): an expression is treated
+as an error if it is the identifier `err`, ends in `Err`/`err` (e.g. `readErr`),
+or is an `.Err` selector. A sentinel is an identifier/selector named `Err…` or
+containing `EOF`. `err == nil`/`err != nil` are idiomatic and exempt; a
+non-literal format string is not analyzed; `%w` already present means the call is
+already wrapping and is not flagged.
+
+Why all three matter: once any layer wraps an error with `%w`, a downstream
+`err == io.EOF` silently becomes false and `err.(*MyError)` silently fails —
+both are latent bugs that surface only after someone *adds* wrapping elsewhere.
+`errors.Is`/`errors.As` are wrap-transparent and never regress this way.
+
+**Dogfood note**: errwrap's first run on Yagura found 14 such latent risks — 13
+`err.(scanner.ErrorList)` assertions in the lens packages' own parse-error
+handlers and 1 `err == io.EOF` — all converted to `errors.As`/`errors.Is`. The
+lens that checks error chains hardened the error chains of every other lens.

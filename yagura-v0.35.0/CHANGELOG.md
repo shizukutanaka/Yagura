@@ -4,6 +4,71 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.76.0] - 2026-06-21
+
+### Theme — "errwrap: error-chain integrity (Socratic blind spot IX)"
+
+#### Why this release
+
+A Qiita/Zenn survey of Go 1.13 error-handling conventions surfaced the three
+checks standardized by `polyfloyd/go-errorlint` — none measured by Yagura.
+`errpolicy` (v0.36) measures the *rate* of wrapping; it never checked whether
+the wrapping is *correct* — whether `errors.Is`/`errors.As` actually traverse
+the chain. That is a distinct axis: **error-chain integrity**.
+
+Sources surveyed (representative):
+- [polyfloyd/go-errorlint](https://github.com/polyfloyd/go-errorlint)
+- [Golangのエラーのあれこれ (Zenn / syo_yamamoto)](https://zenn.dev/syo_yamamoto/scraps/ce354b1d6b903b)
+- [%w でスタックトレースをラップ (Qiita / momotaro98)](https://qiita.com/momotaro98/items/0b7b99a470b4b2230de5)
+- [GoのWebアプリのエラー設計 (Qiita / sonatard)](https://qiita.com/sonatard/items/95c7a68eb1a378734b01)
+- [Google Go Style Japanese — best-practices](https://github.com/toshi0607/Google-Go-Style-Japanese-Edition/blob/main/best-practices.md)
+
+#### New lens: `internal/errwrap` (error-chain axis, 80th MCP tool, 74th package)
+
+Three deterministic, type-free rules:
+
+- **`non-wrapping-verb` (medium)**: `fmt.Errorf` formats an error with `%v`/`%s`
+  and no `%w` → the Unwrap chain is severed.
+- **`err-value-compare` (medium)**: an error compared with `==`/`!=` to a
+  sentinel (not `nil`) → use `errors.Is`. `err == nil`/`!= nil` are exempt.
+- **`err-type-assert` (medium)**: a type assertion `err.(T)` → use `errors.As`.
+  `err.(type)` switches are exempt.
+
+Type-free heuristics mirror `errpolicy`: an error is `err`, an `*Err`/`*err`
+suffix, or an `.Err` selector; a sentinel is an `Err…`/`EOF` name. A non-literal
+format string is not analyzed; a format already containing `%w` is not flagged.
+
+#### Dogfood: found and fixed 14 latent error-chain risks in Yagura itself
+
+```
+# before:
+$ yagura err-wrap --dir .
+err-wrap: 281 files, 14 violation(s)
+  13× err-type-assert    err.(scanner.ErrorList)  (lens parse-error handlers)
+   1× err-value-compare  err == io.EOF            (quotamonitor/persist.go)
+
+# after:
+$ yagura err-wrap --dir .
+err-wrap: 281 files, 0 violation(s)
+```
+
+Every Yagura lens (`complexity`, `paramcheck`, `apidoc`, `ctxcheck`, … and
+`errwrap` itself) used `err.(scanner.ErrorList)` in its parse-error handler —
+a comma-ok assertion that silently returns `ok=false` if the parser error is
+ever wrapped. All 13 converted to `var el scanner.ErrorList; errors.As(err, &el)`.
+The `err == io.EOF` in `quotamonitor.LoadHistory` became `errors.Is(err, io.EOF)`.
+The lens that checks error chains hardened the error chains of every other lens.
+
+#### Wiring
+- CLI `err-wrap --dir . [--strict]`
+- MCP `yagura_err_wrap` (80th tool)
+- `docs/quality-lens-spec.md` §9 added; §3 taxonomy gains an Error-chain row
+- 20 TDD tests (Red→Green), all passing under `-race`
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 71 consecutive
+releases (v0.6 → v0.76). 80 MCP tools, 74 internal packages.
+
 ## [v0.75.0] - 2026-06-21
 
 ### Theme — "ctxcheck: context.Context discipline (Socratic blind spot VIII)"

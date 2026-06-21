@@ -23,6 +23,7 @@
 package deadcode
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/scanner"
@@ -122,7 +123,8 @@ func scanPackage(dir string, pkgPaths []string, files map[string]string, r *Repo
 		f, err := parser.ParseFile(fset, path, files[path], 0)
 		if err != nil {
 			line := 1
-			if el, ok := err.(scanner.ErrorList); ok && len(el) > 0 {
+			var el scanner.ErrorList
+			if errors.As(err, &el) && len(el) > 0 {
 				line = el[0].Pos.Line
 			}
 			r.Findings = append(r.Findings, Finding{

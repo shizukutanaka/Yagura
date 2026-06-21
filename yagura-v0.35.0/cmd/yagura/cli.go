@@ -57,6 +57,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
+	"github.com/shizukutanaka/yagura/internal/errwrap"
 	"github.com/shizukutanaka/yagura/internal/featurelist"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
@@ -141,6 +142,7 @@ var cliHandlers = map[string]cliHandler{
 	"hotspot":     cliHotspot,
 	"name-check":  cliNameCheck,
 	"ctx-check":   cliCtxCheck,
+	"err-wrap":    cliErrWrap,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2760,6 +2762,35 @@ func cliCtxCheck(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ─── err-wrap (v0.76.0) ──────────────────────────────────────
+
+// cliErrWrap は `yagura err-wrap` を処理する。Go 1.13 エラーラッピング規約
+// (%w / errors.Is / errors.As)の違反を検査する error-chain 健全性軸のレンズ。
+// 型情報不要・決定論的。--strict で違反時 exit 1。
+func cliErrWrap(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("err-wrap", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any violation is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := errwrap.Scan(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanErrWrap(stdout, rep)
+	if *strict && rep.Flagged > 0 {
+		return fmt.Errorf("%d error-wrapping violation(s)", rep.Flagged)
+	}
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4619,7 +4650,7 @@ var yaguraVerbs = []string{
 	"alert-fix", "alert-resolve", "alert-snapshot", "api-doc",
 	"assert-check", "ast-check", "cc-security", "claudemd-audit",
 	"code-health", "complexity", "completion", "coupling", "coverage", "ctx-check",
-	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "feature-list", "flag-arg", "flow-risk",
+	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "err-wrap", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
 	"list", "mcp-audit", "name-check", "ops-risk", "parallel-plan", "param-check", "path-policy",
@@ -4719,6 +4750,7 @@ func buildZshVerbLines() string {
 		"diff-scan":            "delta scan of unified diff: secrets in added lines",
 		"err-discard":          "error-discard smell: call sites silently ignoring returned errors",
 		"err-policy":           "error-context discipline: wrap ratio + blank-discard",
+		"err-wrap":             "error-wrapping discipline: %w over %v, errors.Is/As over ==/type-assert",
 		"feature-list":         "convert Plan.md to Anthropic-style feature-list.json",
 		"flag-arg":             "boolean flag-argument smell (Fowler); bool params encoding hidden branches",
 		"flow-risk":            "temporal scan of op sequence: exfiltration / injection",

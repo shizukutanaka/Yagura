@@ -183,6 +183,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildNameCheckTool(d))
 	// [Q] v0.75.0 — context.Context discipline (first-param + no struct-field; containedctx-style)
 	s.Register(buildCtxCheckTool(d))
+	// [Q] v0.76.0 — error-wrapping discipline (%w / errors.Is / errors.As; errorlint-style)
+	s.Register(buildErrWrapTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)
@@ -449,7 +451,6 @@ func buildDedupeStatsTool(s *Server) *Tool {
 	}
 }
 
-
 // version returns the running yagura version. main.go reflects its own
 // version into a package-level var via SetVersion at init.
 var serverVersion = "unknown"
@@ -463,8 +464,6 @@ func SetVersion(v string) {
 func version() string {
 	return serverVersion
 }
-
-
 
 // atomicWriteFile writes via tmp + fsync + rename so partial writes never
 // leave a torn file on disk. Permissions are explicit so callers can request

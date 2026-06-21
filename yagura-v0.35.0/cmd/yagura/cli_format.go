@@ -38,6 +38,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
+	"github.com/shizukutanaka/yagura/internal/errwrap"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/harness"
@@ -1615,6 +1616,21 @@ func humanCtxCheck(w io.Writer, r ctxcheck.Report) {
 	fmt.Fprintf(w, "ctx-check: %d files, %d violation(s)\n", r.FilesScanned, r.Flagged)
 	if len(r.Findings) == 0 {
 		fmt.Fprintln(w, "no context.Context discipline violations — context flows as a first argument")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tRULE\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n",
+			f.Severity, f.Rule, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanErrWrap(w io.Writer, r errwrap.Report) {
+	fmt.Fprintf(w, "err-wrap: %d files, %d violation(s)\n", r.FilesScanned, r.Flagged)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no error-wrapping violations — error chains stay intact (%w / errors.Is / errors.As)")
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)

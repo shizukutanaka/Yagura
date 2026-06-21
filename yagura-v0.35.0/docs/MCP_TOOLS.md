@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **79 tools**.
+Generated from a live yagura — **80 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (32)
+- [Misc](#misc) (33)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -497,6 +497,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 |---|---|---|
 | `files` (object) | ★ |  |
 | `strict` (boolean) |  |  |
+
+---
+
+### `yagura_err_wrap`
+
+[Q] Error-wrapping discipline (Go 1.13): %w not %v, errors.Is over ==, errors.As over type assert (errorlint-style)
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
 
 ---
 

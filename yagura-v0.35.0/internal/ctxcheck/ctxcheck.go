@@ -27,6 +27,7 @@
 package ctxcheck
 
 import (
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/scanner"
@@ -89,7 +90,8 @@ func scanFile(path, src string, r *Report) {
 	f, err := parser.ParseFile(fset, path, src, parser.AllErrors)
 	if err != nil {
 		line := 1
-		if el, ok := err.(scanner.ErrorList); ok && len(el) > 0 {
+		var el scanner.ErrorList
+		if errors.As(err, &el) && len(el) > 0 {
 			line = el[0].Pos.Line
 		}
 		r.Findings = append(r.Findings, Finding{

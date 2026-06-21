@@ -1,15 +1,17 @@
 // persist.go: per-agent history persistence (v0.17.0)
 //
 // 動機:
-//   v0.16 までは Monitor.histories は完全 in-memory で、daemon 再起動で
-//   sparkline data と forecast 履歴が全失。実運用で yagura を毎日再起動
-//   する m のワークフローではほぼ常にデータ空 → forecast/usage_summary が
-//   無意味になる。
+//
+//	v0.16 までは Monitor.histories は完全 in-memory で、daemon 再起動で
+//	sparkline data と forecast 履歴が全失。実運用で yagura を毎日再起動
+//	する m のワークフローではほぼ常にデータ空 → forecast/usage_summary が
+//	無意味になる。
 //
 // 解決:
-//   各 Report 直後に append-only JSONL に 1 行追記。
-//   起動時に LoadHistory(path) で全 line を replay し、agent 毎に直近
-//   ForecastWindowSize 件をメモリ復元。
+//
+//	各 Report 直後に append-only JSONL に 1 行追記。
+//	起動時に LoadHistory(path) で全 line を replay し、agent 毎に直近
+//	ForecastWindowSize 件をメモリ復元。
 //
 // 設計判断:
 //   - JSONL (1 line = 1 ReportEvent + agent name)
@@ -21,6 +23,7 @@ package quotamonitor
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,10 +47,10 @@ type persistEntry struct {
 	S string `json:"s,omitempty"` // source (auto/manual/429)
 
 	// legacy format (v0.17 〜 v0.21 で書込まれた旧 line を読込むため)
-	Agent             Agent  `json:"agent,omitempty"`
-	At                string `json:"at,omitempty"` // RFC3339Nano
-	RemainingPercent  int    `json:"remaining_percent,omitempty"`
-	Source            string `json:"source,omitempty"`
+	Agent            Agent  `json:"agent,omitempty"`
+	At               string `json:"at,omitempty"` // RFC3339Nano
+	RemainingPercent int    `json:"remaining_percent,omitempty"`
+	Source           string `json:"source,omitempty"`
 }
 
 // compactAgent は Agent enum を 2-char compact form に変換する。
@@ -149,7 +152,7 @@ func (m *Monitor) LoadHistory(path string) error {
 				}
 			}
 		}
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

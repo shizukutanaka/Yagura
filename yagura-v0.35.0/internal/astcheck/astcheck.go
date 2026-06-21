@@ -37,6 +37,7 @@
 package astcheck
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -78,7 +79,8 @@ func ScanFile(path, src string) []Finding {
 	var out []Finding
 	if err != nil {
 		line := 1
-		if el, ok := err.(scanner.ErrorList); ok && len(el) > 0 {
+		var el scanner.ErrorList
+		if errors.As(err, &el) && len(el) > 0 {
 			line = el[0].Pos.Line
 		}
 		out = append(out, Finding{

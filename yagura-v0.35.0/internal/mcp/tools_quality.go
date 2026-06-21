@@ -22,6 +22,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/deprank"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
+	"github.com/shizukutanaka/yagura/internal/errwrap"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
@@ -1073,6 +1074,36 @@ func buildCtxCheckTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := ctxcheck.Scan(in.Files)
+			return rep, nil
+		},
+	}
+}
+
+func buildErrWrapTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_err_wrap",
+		Description: "[Q] Error-wrapping discipline (Go 1.13): %w not %v, errors.Is over ==, errors.As over type assert (errorlint-style)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := errwrap.Scan(in.Files)
 			return rep, nil
 		},
 	}
