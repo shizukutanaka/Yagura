@@ -4,6 +4,51 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.83.0] - 2026-06-21
+
+### Theme — "regress: the temporal axis / quality ratchet (Socratic blind spot XIV)"
+
+A new feature found by Socratic questioning. **Q:** what do all ~13 lens axes
+share? **A:** each is `Scan(files) Report` — a single *snapshot*. **Q:** what can
+a snapshot never tell you? **A:** whether a *change* made things worse — the one
+thing CI cares about most. No lens measured the temporal axis. `regress` does.
+
+#### New lens: `internal/regress` (85th MCP tool, 79th package)
+
+`regress.Compare(old, new)` takes two file sets, computes per-function metrics
+(complexity / params / returns / func-lines) for both via `calibrate.FuncMetrics`,
+matches functions by `(file, func)`, and reports every metric that **increased**.
+Each `Regression` carries `Old`, `New`, `Delta`, and `Crossed` (= the new value
+exceeds the metric's conventional gate). This is a **quality ratchet**: absolute
+perfection isn't required, but regressions past a threshold are blocked.
+
+- Matching is conservative `(File, Func)` exact — renames show as remove+add,
+  not a regression (no type info, no false attribution).
+- Methods matched by `(Recv).Method`; same name in different files never
+  cross-matches.
+- New functions and removed functions are not regressions.
+- Deterministic order: Delta desc → File → Func → Metric.
+
+#### `calibrate` refactor (DRY)
+
+Extracted `calibrate.FuncMetric` + `calibrate.FuncMetrics(files)` +
+`MetricNames()` / `MetricDefault()` as the public single-source-of-truth for
+per-function metrics, now shared by `calibrate.Scan` and `regress.Compare`.
+Behaviour identical — all 24 calibrate tests pass untouched.
+
+#### Wiring
+- CLI `regress --old DIR [--new DIR] [--strict] [--json]` — `--strict` exits
+  non-zero if any regression crossed a gate (CI ratchet).
+- MCP `yagura_regress` (`{old, new}` file sets).
+- Dogfood: `regress --old . --new .` → 0 regressions across 1289 functions
+  (self-vs-self sanity). Synthetic before/after correctly flags a function that
+  went params 1→6 (crossed!), func_lines 1→5, complexity 1→3.
+- 18 TDD tests (Red→Green), all `-race` green.
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. Reproducible build: 78 consecutive
+releases (v0.6 → v0.83). 85 MCP tools, 79 internal packages.
+
 ## [v0.82.0] - 2026-06-21
 
 ### Theme — "burning down calibrate's worklist (lens-finds → lens-author-fixes)"

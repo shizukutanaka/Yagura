@@ -367,3 +367,36 @@ is well-calibrated), and `func_lines` p95=65 with a 543-line outlier. This is
 the first **meta** lens whose deliverable is calibration insight rather than
 defects or convergence — completing the spec's W1–W4 weakness review by turning
 W3 from an open caveat into a measurable, tunable quantity.
+
+## 14. `regress` — specification (temporal axis)
+
+**Question:** *did this change make any function worse?*
+
+Every lens in §3 measures a single snapshot. `regress` is the first to measure
+the **delta** between two states — the quality ratchet CI needs.
+
+`regress.Compare(oldFiles, newFiles)` computes per-function metrics for both
+sides (via the shared `calibrate.FuncMetrics`), matches functions by
+`(file, func)`, and emits a `Regression` for every metric whose value increased:
+
+| Field | Meaning |
+|---|---|
+| `Old` / `New` / `Delta` | metric value before, after, and `New-Old` (>0) |
+| `Crossed` | the new value exceeds the metric's conventional gate (complexity 10 / params 5 / returns 3 / func_lines 30) |
+
+Design choices (all deterministic, type-free):
+
+- **Conservative matching.** `(File, Func)` exact match. A rename appears as an
+  old-func removed + a new-func added — neither is a regression of an existing
+  function. No type resolution, so no mis-attribution.
+- **New / removed functions are not regressions.** Only functions present on
+  *both* sides can regress.
+- **`--strict` gates on `Crossed`.** A 2→3 complexity bump is reported but does
+  not fail CI; a function crossing a conventional gate does. This makes the
+  ratchet practical: it blocks meaningful degradation without nagging on noise.
+- **Order:** Delta desc → File → Func → Metric.
+
+This closes the snapshot-only limitation shared by all prior lenses: paired with
+a baseline (e.g. the merge target), `regress --strict` is a deterministic,
+zero-dependency quality gate that prevents backsliding even when the absolute
+metric levels are imperfect.

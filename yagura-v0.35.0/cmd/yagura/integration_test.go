@@ -188,6 +188,7 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_naked_ret",
 		"yagura_predeclared",
 		"yagura_calibrate",
+		"yagura_regress",
 		// v0.36 — package import coupling (architecture / SDP)
 		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)

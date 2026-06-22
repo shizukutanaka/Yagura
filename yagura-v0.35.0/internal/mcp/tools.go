@@ -193,6 +193,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildPredeclaredTool(d))
 	// [Q] v0.80.0 — threshold calibration (percentile distributions for data-driven --max gates)
 	s.Register(buildCalibrateTool(d))
+	// [Q] v0.83.0 — quality ratchet (regression: metrics that got worse old→new)
+	s.Register(buildRegressTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

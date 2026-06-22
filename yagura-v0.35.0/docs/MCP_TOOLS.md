@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **84 tools**.
+Generated from a live yagura — **85 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (37)
+- [Misc](#misc) (38)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -727,6 +727,19 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | `class` (string) | ★ | failure class: timeout/rate_limit/tool_init/bad_args/tool_error/auth/quota/context_overflow/wrong_result/unknown (aliases like 429/403 accepted). |
 | `max_attempts` (integer) |  | recovery budget (default 3). |
 | `severity` (string) |  | 'low' lets an exhausted budget degrade gracefully instead of escalating. |
+
+---
+
+### `yagura_regress`
+
+[Q] Quality ratchet: compare old vs new code and report functions whose complexity/params/returns/lines regressed
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `new` (object) | ★ | current file set (path→content) |
+| `old` (object) | ★ | baseline file set (path→content) |
 
 ---
 

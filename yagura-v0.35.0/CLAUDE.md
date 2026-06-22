@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 78 internal packages
+## Map — 79 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 84 tool definitions
+- `internal/mcp` — MCP server + 85 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -212,6 +212,13 @@ cortex flywheel 4 段階すべてを単体で機械化:
   `(T,error)` 等の慣用ノイズを排除)。dogfood(1280 関数)で 41 outliers(543 行 run、
   complexity-32 plantracker.Parse、レンズ自身の param 過多 3 件)を surface。
   CLI `calibrate --dir . [--json]`、MCP `yagura_calibrate`★ v0.80(outliers v0.81)
+- `internal/regress` — old/new 2 状態を比較し、関数ごとの品質メトリクス
+  (complexity/params/returns/func-lines)が *悪化* した箇所を報告する **時系列/回帰軸**
+  のレンズ(ソクラテス新視点 XIV)。既存 ~13 レンズは全て単一スナップショットだが、CI で
+  最重要なのは「この変更が品質を後退させたか」。(File, Func) で突き合わせ、増加メトリクスを
+  Regression として列挙。Crossed = new 値が慣習しきい値超過。calibrate.FuncMetrics を再利用
+  (単一情報源)。品質ラチェット = `regress --old DIR --new DIR --strict` で Crossed があれば
+  CI fail。CLI `regress`、MCP `yagura_regress`★ v0.83
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

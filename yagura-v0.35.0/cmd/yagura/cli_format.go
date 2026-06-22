@@ -18,14 +18,14 @@ import (
 	"time"
 
 	"github.com/shizukutanaka/yagura/internal/agentevent"
+	"github.com/shizukutanaka/yagura/internal/agentparallel"
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/alertfix"
-	"github.com/shizukutanaka/yagura/internal/featurelist"
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
-	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/audit"
+	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/codehealth"
 	"github.com/shizukutanaka/yagura/internal/complexity"
@@ -33,38 +33,39 @@ import (
 	"github.com/shizukutanaka/yagura/internal/coverage"
 	"github.com/shizukutanaka/yagura/internal/ctxcheck"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
-	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/deprank"
-	"github.com/shizukutanaka/yagura/internal/hotspot"
-	"github.com/shizukutanaka/yagura/internal/namecheck"
+	"github.com/shizukutanaka/yagura/internal/diffscan"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/errwrap"
-	"github.com/shizukutanaka/yagura/internal/nakedret"
-	"github.com/shizukutanaka/yagura/internal/predeclared"
-	"github.com/shizukutanaka/yagura/internal/synccheck"
+	"github.com/shizukutanaka/yagura/internal/featurelist"
+	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/harness"
+	"github.com/shizukutanaka/yagura/internal/hotspot"
+	"github.com/shizukutanaka/yagura/internal/nakedret"
+	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
-	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
-	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
-	"github.com/shizukutanaka/yagura/internal/recovery"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
-	"github.com/shizukutanaka/yagura/internal/riskreason"
+	"github.com/shizukutanaka/yagura/internal/predeclared"
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/projectgraph"
 	"github.com/shizukutanaka/yagura/internal/publicityscan"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
+	"github.com/shizukutanaka/yagura/internal/recovery"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
+	"github.com/shizukutanaka/yagura/internal/regress"
+	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
+	"github.com/shizukutanaka/yagura/internal/riskreason"
 	"github.com/shizukutanaka/yagura/internal/sbom"
-	"github.com/shizukutanaka/yagura/internal/agentparallel"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
 	"github.com/shizukutanaka/yagura/internal/sessionsummary"
+	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 	"github.com/shizukutanaka/yagura/internal/today"
 )
@@ -1717,4 +1718,25 @@ func humanCalibrate(w io.Writer, r calibrate.Report) {
 		}
 		otw.Flush()
 	}
+}
+
+func humanRegress(w io.Writer, r regress.Report) {
+	fmt.Fprintf(w, "regress: %d old funcs, %d new funcs, %d regression(s) (%d crossed a threshold)\n",
+		r.OldFuncs, r.NewFuncs, r.Regressed, r.Crossed)
+	if len(r.Regressions) == 0 {
+		fmt.Fprintln(w, "no metric regressions — quality held or improved")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "CROSSED\tMETRIC\tOLD\tNEW\tDELTA\tFILE\tFUNC")
+	for _, x := range r.Regressions {
+		mark := ""
+		if x.Crossed {
+			mark = "!"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t+%d\t%s\t%s\n",
+			mark, x.Metric, x.Old, x.New, x.Delta, x.File, x.Func)
+	}
+	tw.Flush()
+	fmt.Fprintln(w, "(! = new value crosses the conventional gate; --strict fails CI on any !)")
 }

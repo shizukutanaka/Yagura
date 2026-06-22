@@ -83,35 +83,81 @@ type Report struct {
 	Outliers      []Outlier      `json:"outliers"`
 }
 
-// funcMetrics は 1 関数の 4 メトリクス + 位置。
-type funcMetrics struct {
-	file       string
-	line       int
-	name       string
-	complexity int
-	params     int
-	returns    int
-	lines      int
+// FuncMetric は 1 関数(named FuncDecl)の 4 メトリクス + 位置。
+// regress(時系列回帰検出)など他レンズと共有する公開型。
+type FuncMetric struct {
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Func       string `json:"func"`
+	Complexity int    `json:"complexity"`
+	Params     int    `json:"params"`
+	Returns    int    `json:"returns"`
+	Lines      int    `json:"lines"`
+}
+
+// Value は metric 名(complexity/params/returns/func_lines)に対応する値を返す。
+func (fm FuncMetric) Value(metric string) int {
+	switch metric {
+	case "complexity":
+		return fm.Complexity
+	case "params":
+		return fm.Params
+	case "returns":
+		return fm.Returns
+	case "func_lines":
+		return fm.Lines
+	}
+	return 0
+}
+
+// MetricDefault は metric 名に対応する Yagura レンズの既定しきい値を返す(0=不明)。
+func MetricDefault(metric string) int {
+	for _, md := range metricDefaults {
+		if md.Name == metric {
+			return md.Default
+		}
+	}
+	return 0
+}
+
+// MetricNames は calibrate が扱う 4 メトリクス名を宣言順で返す。
+func MetricNames() []string {
+	out := make([]string, len(metricDefaults))
+	for i, md := range metricDefaults {
+		out[i] = md.Name
+	}
+	return out
+}
+
+// FuncMetrics は files 内の named function ごとの FuncMetric を返す(_test.go と
+// TestXxx 等は除外)。regress 等が old/new 双方に適用して差分を取るための公開 API。
+func FuncMetrics(files map[string]string) []FuncMetric {
+	var all []FuncMetric
+	for path, src := range files {
+		if !strings.HasSuffix(path, ".go") {
+			continue
+		}
+		all = append(all, metricsOfFile(path, src)...)
+	}
+	return all
 }
 
 // Scan は files を解析し、4 メトリクスの分布を返す。出力は決定論的。
 func Scan(files map[string]string) Report {
 	r := Report{}
-	var all []funcMetrics
-	for path, src := range files {
-		if !strings.HasSuffix(path, ".go") {
-			continue
+	for path := range files {
+		if strings.HasSuffix(path, ".go") {
+			r.FilesScanned++
 		}
-		r.FilesScanned++
-		all = append(all, scanFile(path, src)...)
 	}
+	all := FuncMetrics(files)
 	r.FuncsScanned = len(all)
 
 	// メトリクス別に値列を抽出し、分布を算出 + Tukey 上側フェンス超過を outlier に。
 	for _, md := range metricDefaults {
 		vals := make([]int, 0, len(all))
 		for _, fm := range all {
-			vals = append(vals, fm.value(md.Name))
+			vals = append(vals, fm.Value(md.Name))
 		}
 		d := distribution(md.Name, vals, md.Default)
 		r.Distributions = append(r.Distributions, d)
@@ -123,10 +169,10 @@ func Scan(files map[string]string) Report {
 		// メトリクスで `(T, error)` 等の慣用コードを拾い過ぎるため、両シグナルの
 		// 積を「実際に直すべき極端関数」とする。
 		for _, fm := range all {
-			v := fm.value(md.Name)
+			v := fm.Value(md.Name)
 			if float64(v) > d.UpperFence && v > md.Default {
 				r.Outliers = append(r.Outliers, Outlier{
-					File: fm.file, Line: fm.line, Func: fm.name,
+					File: fm.File, Line: fm.Line, Func: fm.Func,
 					Metric: md.Name, Value: v, Fence: d.UpperFence,
 				})
 			}
@@ -156,21 +202,7 @@ func sortOutliers(os []Outlier) {
 	})
 }
 
-func (fm funcMetrics) value(metric string) int {
-	switch metric {
-	case "complexity":
-		return fm.complexity
-	case "params":
-		return fm.params
-	case "returns":
-		return fm.returns
-	case "func_lines":
-		return fm.lines
-	}
-	return 0
-}
-
-func scanFile(path, src string) []funcMetrics {
+func metricsOfFile(path, src string) []FuncMetric {
 	if strings.HasSuffix(path, "_test.go") {
 		return nil
 	}
@@ -179,7 +211,7 @@ func scanFile(path, src string) []funcMetrics {
 	if f == nil {
 		return nil
 	}
-	var out []funcMetrics
+	var out []FuncMetric
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Body == nil || fn.Type == nil {
@@ -192,14 +224,14 @@ func scanFile(path, src string) []funcMetrics {
 		}
 		start := fset.Position(fn.Body.Lbrace).Line
 		end := fset.Position(fn.Body.Rbrace).Line
-		out = append(out, funcMetrics{
-			file:       path,
-			line:       fset.Position(fn.Pos()).Line,
-			name:       funcDeclName(fn),
-			complexity: complexityOf(fn.Body),
-			params:     countFields(fn.Type.Params),
-			returns:    countFields(fn.Type.Results),
-			lines:      end - start + 1,
+		out = append(out, FuncMetric{
+			File:       path,
+			Line:       fset.Position(fn.Pos()).Line,
+			Func:       funcDeclName(fn),
+			Complexity: complexityOf(fn.Body),
+			Params:     countFields(fn.Type.Params),
+			Returns:    countFields(fn.Type.Results),
+			Lines:      end - start + 1,
 		})
 	}
 	return out

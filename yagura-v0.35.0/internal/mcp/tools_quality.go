@@ -26,12 +26,13 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errwrap"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
-	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
+	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/predeclared"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
+	"github.com/shizukutanaka/yagura/internal/regress"
 	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
@@ -1190,8 +1191,8 @@ func buildPredeclaredTool(d Deps) *Tool {
 					"additionalProperties": map[string]any{"type": "string"},
 				},
 				"ignore": map[string]any{
-					"type":  "array",
-					"items": map[string]any{"type": "string"},
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
 					"description": "predeclared identifiers to allow shadowing (e.g. [\"cap\",\"min\",\"max\"])",
 				},
 			},
@@ -1239,6 +1240,43 @@ func buildCalibrateTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := calibrate.Scan(in.Files)
+			return rep, nil
+		},
+	}
+}
+
+func buildRegressTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_regress",
+		Description: "[Q] Quality ratchet: compare old vs new code and report functions whose complexity/params/returns/lines regressed",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"old": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+					"description":          "baseline file set (path→content)",
+				},
+				"new": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+					"description":          "current file set (path→content)",
+				},
+			},
+			"required": []string{"old", "new"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Old map[string]string `json:"old"`
+				New map[string]string `json:"new"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Old) == 0 || len(in.New) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "both 'old' and 'new' file sets are required"}
+			}
+			rep := regress.Compare(in.Old, in.New)
 			return rep, nil
 		},
 	}

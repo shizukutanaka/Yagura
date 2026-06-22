@@ -44,8 +44,8 @@ import (
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
-	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/audit"
+	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/codehealth"
 	"github.com/shizukutanaka/yagura/internal/complexity"
@@ -59,9 +59,6 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/errwrap"
-	"github.com/shizukutanaka/yagura/internal/nakedret"
-	"github.com/shizukutanaka/yagura/internal/predeclared"
-	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/featurelist"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
@@ -73,12 +70,14 @@ import (
 	"github.com/shizukutanaka/yagura/internal/initsh"
 	"github.com/shizukutanaka/yagura/internal/injectscan"
 	"github.com/shizukutanaka/yagura/internal/mcp"
+	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
+	"github.com/shizukutanaka/yagura/internal/predeclared"
 	"github.com/shizukutanaka/yagura/internal/progressfile"
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/projectgraph"
@@ -87,12 +86,14 @@ import (
 	"github.com/shizukutanaka/yagura/internal/recovery"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/registry"
+	"github.com/shizukutanaka/yagura/internal/regress"
 	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/reviewgate"
 	"github.com/shizukutanaka/yagura/internal/riskreason"
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
 	"github.com/shizukutanaka/yagura/internal/sessionsummary"
+	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 	"github.com/shizukutanaka/yagura/internal/today"
 	"github.com/shizukutanaka/yagura/internal/vex"
@@ -151,6 +152,7 @@ var cliHandlers = map[string]cliHandler{
 	"naked-ret":   cliNakedRet,
 	"predeclared": cliPredeclared,
 	"calibrate":   cliCalibrate,
+	"regress":     cliRegress,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2918,6 +2920,42 @@ func cliCalibrate(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// cliRegress は `yagura regress` を処理する。--old と --new の 2 ディレクトリを
+// 比較し、関数ごとの品質メトリクス(complexity/params/returns/func-lines)が
+// 悪化した箇所を報告する(品質ラチェット)。--strict で慣習しきい値を超える
+// 回帰が 1 件でもあれば exit 1(CI gate 想定)。
+func cliRegress(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("regress", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	oldDir := fset.String("old", "", "baseline directory to compare against (required)")
+	newDir := fset.String("new", ".", "current directory")
+	strict := fset.Bool("strict", false, "exit non-zero if any regression crosses a conventional threshold")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	if *oldDir == "" {
+		return fmt.Errorf("regress requires --old <baseline-dir>")
+	}
+	oldSR, err := readGoFiles(*oldDir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *oldDir, err)
+	}
+	newSR, err := readGoFiles(*newDir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *newDir, err)
+	}
+	warnIncompleteScan(stderr, newSR, *newDir)
+	rep := regress.Compare(oldSR.Files, newSR.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanRegress(stdout, rep)
+	if *strict && rep.Crossed > 0 {
+		return fmt.Errorf("%d regression(s) crossed a conventional threshold", rep.Crossed)
+	}
+	return nil
+}
+
 // ─── coupling (v0.36.0) ──────────────────────────────────────
 
 // cliCoupling は `yagura coupling` を処理する。Go の import グラフから package 間の
@@ -4782,7 +4820,7 @@ var yaguraVerbs = []string{
 	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
 	"list", "mcp-audit", "naked-ret", "name-check", "ops-risk", "parallel-plan", "param-check", "path-policy",
 	"pin-drift", "plan-status", "plugin-audit", "predeclared", "progress-file", "publicity-scan",
-	"quality-check", "recv-check", "recovery-decide", "register", "release-radar",
+	"quality-check", "recv-check", "recovery-decide", "register", "regress", "release-radar",
 	"return-check", "review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
 	"self-improve-history", "session-summary", "settings-audit", "skill-audit",
 	"stats", "sync-check", "test-audit", "today", "unregister", "update", "vex-audit",
@@ -4879,6 +4917,7 @@ func buildZshVerbLines() string {
 		"err-policy":           "error-context discipline: wrap ratio + blank-discard",
 		"err-wrap":             "error-wrapping discipline: %w over %v, errors.Is/As over ==/type-assert",
 		"calibrate":            "threshold calibration: percentile distributions for data-driven --max gates",
+		"regress":              "quality ratchet: report functions whose metrics regressed old→new (--old DIR)",
 		"naked-ret":            "naked-return readability: naked return in long named-result functions",
 		"predeclared":          "predeclared-identifier shadowing: vars/params/types/funcs shadowing Go builtins",
 		"sync-check":           "sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex",
