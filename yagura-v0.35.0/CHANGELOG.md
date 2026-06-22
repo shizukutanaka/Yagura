@@ -4,6 +4,54 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.82.0] - 2026-06-21
+
+### Theme — "burning down calibrate's worklist (lens-finds → lens-author-fixes)"
+
+A **refactor** release. v0.81's `calibrate` produced a named worklist; v0.82
+acts on it — the same loop hotspot closed at v0.71 (find a target → refactor it
+→ the lens confirms it's gone). The 3 param-count outliers calibrate flagged
+were all in the *recently-added lens code itself*:
+
+| Function | Before | Pattern |
+|---|---|---|
+| `nakedret.analyzeFunc` | 7 params | `(fset, path, name, ftype, body, threshold, r)` |
+| `predeclared.emitIfShadow` | 7 params | `(fset, path, id, kind, severity, ignored, r)` (threaded through 4 helpers) |
+| `errwrap.emit` | 6 params | `(fset, path, fn, pos, f, r)` |
+
+#### Fix: per-file scanner structs
+
+Each lens threaded the same invariant `(fset, path, r [, threshold/ignored])`
+state through its helpers. v0.82 bundles that state into a small per-file struct
+with methods — the v0.71 `ReadinessInput` parameter-object pattern applied to
+scan state:
+
+- `errwrap`: new `fileScanner{fset, path, r}`; `emit` 6→3 params, `inspect` 5→2.
+- `predeclared`: new `scanner2{fset, path, ignored, r}`; `emit` 7→3, and
+  `funcDecl`/`block`/`genDecl` drop to 1 param each. A shared `emitFieldNames`
+  helper also removes four copies of the params/results name-walk.
+- `nakedret`: new `analyzer{fset, path, threshold, r}`; `analyze` 7→3 params,
+  recursion becomes `a.analyze(...)`.
+
+Public `Scan` APIs are unchanged; all refactors are internal. Behaviour is
+identical — every existing test passes untouched (Scan-level tests never saw
+the helper signatures).
+
+#### Dogfood: calibrate confirms the worklist is clear
+
+```
+# param-check on the three lenses: max 4, 0 over --max 5 (was 6–7, 3 over)
+# calibrate: params OVER 3→0, MAX 7→5; total outliers 41 → 38
+```
+
+The 3 param outliers are gone; the remaining 38 (the complexity/func_lines
+monsters like the 543-line `run` and complexity-32 `plantracker.Parse`) are
+larger refactors catalogued for future releases.
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. No new tool/package (still 84/78).
+Reproducible build: 77 consecutive releases (v0.6 → v0.82).
+
 ## [v0.81.0] - 2026-06-21
 
 ### Theme — "calibrate deepened: from descriptive to actionable (Tukey outliers)"

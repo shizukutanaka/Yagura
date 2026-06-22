@@ -103,19 +103,29 @@ func scanFile(path, src string, r *Report) {
 	if f == nil {
 		return
 	}
+	s := &fileScanner{fset: fset, path: path, r: r}
 	for _, decl := range f.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok {
 			if fn.Body != nil {
-				inspectNode(fset, path, fn.Name.Name, fn.Body, r)
+				s.inspect(fn.Name.Name, fn.Body)
 			}
 			continue
 		}
-		inspectNode(fset, path, "", decl, r)
+		s.inspect("", decl)
 	}
 }
 
-// inspectNode は node 配下を走査し、3 ルールに該当する式を Finding 化する。
-func inspectNode(fset *token.FileSet, path, fn string, node ast.Node, r *Report) {
+// fileScanner は 1 ファイル走査中の不変状態(fset/path/report)を束ねる。
+// これにより inspect/emit の引数を絞る(param-check / calibrate 由来の整理)。
+type fileScanner struct {
+	fset *token.FileSet
+	path string
+	r    *Report
+}
+
+// inspect は node 配下を走査し、3 ルールに該当する式を Finding 化する。
+// fn は最も内側の enclosing 関数名(クロージャは "" を引き継ぐ)。
+func (s *fileScanner) inspect(fn string, node ast.Node) {
 	if node == nil {
 		return
 	}
@@ -123,26 +133,26 @@ func inspectNode(fset *token.FileSet, path, fn string, node ast.Node, r *Report)
 		switch e := n.(type) {
 		case *ast.CallExpr:
 			if find := checkErrorf(e); find != nil {
-				emit(fset, path, fn, e.Pos(), find, r)
+				s.emit(fn, e.Pos(), find)
 			}
 		case *ast.BinaryExpr:
 			if find := checkValueCompare(e); find != nil {
-				emit(fset, path, fn, e.Pos(), find, r)
+				s.emit(fn, e.Pos(), find)
 			}
 		case *ast.TypeAssertExpr:
 			if find := checkTypeAssert(e); find != nil {
-				emit(fset, path, fn, e.Pos(), find, r)
+				s.emit(fn, e.Pos(), find)
 			}
 		}
 		return true
 	})
 }
 
-func emit(fset *token.FileSet, path, fn string, pos token.Pos, f *Finding, r *Report) {
-	f.File = path
-	f.Line = fset.Position(pos).Line
+func (s *fileScanner) emit(fn string, pos token.Pos, f *Finding) {
+	f.File = s.path
+	f.Line = s.fset.Position(pos).Line
 	f.Func = fn
-	r.Findings = append(r.Findings, *f)
+	s.r.Findings = append(s.r.Findings, *f)
 }
 
 // checkErrorf は fmt.Errorf 呼出が %w なしでエラー値を整形していれば Finding を返す。

@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.81.0** — 84 MCP tools, 78 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). `calibrate` deepened (closes the W3 loop): beyond percentile distributions it now flags **statistical outliers** — functions whose metric exceeds the Tukey far-out fence (Q3 + 3·IQR) **and** the conventional gate, turning calibration from descriptive into actionable. Dogfooded on Yagura (1280 functions): 41 outliers surfaced, including the 543-line `run`, the complexity-32 `plantracker.Parse`, and 3 param-count outliers in the lens code itself. Reproducible build verified.
+Status: **v0.82.0** — 84 MCP tools, 78 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). Acted on `calibrate`'s own findings (the lens-finds → lens-author-fixes loop, à la v0.71): the 3 param-count outliers calibrate surfaced in v0.81 — `nakedret.analyzeFunc` (7), `predeclared.emitIfShadow` (7), `errwrap.emit` (6) — were refactored to per-file scanner structs carrying the invariant `(fset, path, …)` state as methods. All three now take ≤4 params; calibrate confirms 0 param outliers (41 → 38). Reproducible build verified.
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-76 consecutive releases (v0.6 → v0.81) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+77 consecutive releases (v0.6 → v0.82) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

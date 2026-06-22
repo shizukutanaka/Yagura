@@ -109,41 +109,51 @@ func scanFile(path, src string, threshold int, r *Report) {
 	if f == nil {
 		return
 	}
+	a := &analyzer{fset: fset, path: path, threshold: threshold, r: r}
 	for _, decl := range f.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok {
 			continue
 		}
-		analyzeFunc(fset, path, funcDeclName(fn), fn.Type, fn.Body, threshold, r)
+		a.analyze(funcDeclName(fn), fn.Type, fn.Body)
 	}
 }
 
-// analyzeFunc は 1 つの関数(またはクロージャ)本体を解析する。
+// analyzer は 1 ファイル走査中の不変状態(fset/path/threshold/report)を束ねる。
+// これにより analyze の引数を絞る(param-check / calibrate 由来の整理)。
+type analyzer struct {
+	fset      *token.FileSet
+	path      string
+	threshold int
+	r         *Report
+}
+
+// analyze は 1 つの関数(またはクロージャ)本体を解析する。
 // この関数本体に直接属する naked return を判定し、ネストした FuncLit は
 // それぞれ独立に再帰解析する(naked return は最も内側の関数に帰属)。
-func analyzeFunc(fset *token.FileSet, path, name string, ftype *ast.FuncType, body *ast.BlockStmt, threshold int, r *Report) {
+func (a *analyzer) analyze(name string, ftype *ast.FuncType, body *ast.BlockStmt) {
 	if body == nil {
 		return
 	}
 	named := hasNamedResults(ftype)
-	start := fset.Position(body.Lbrace).Line
-	end := fset.Position(body.Rbrace).Line
+	start := a.fset.Position(body.Lbrace).Line
+	end := a.fset.Position(body.Rbrace).Line
 	lines := end - start + 1
 
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.FuncLit:
 			// ネストしたクロージャは独立に解析(naked return は内側に帰属)。
-			analyzeFunc(fset, path, name, x.Type, x.Body, threshold, r)
+			a.analyze(name, x.Type, x.Body)
 			return false // この本体としては降りない
 		case *ast.ReturnStmt:
-			if len(x.Results) == 0 && named && lines > threshold {
-				pos := fset.Position(x.Pos())
-				r.Findings = append(r.Findings, Finding{
-					File: path, Line: pos.Line, Func: name, FuncLines: lines,
+			if len(x.Results) == 0 && named && lines > a.threshold {
+				pos := a.fset.Position(x.Pos())
+				a.r.Findings = append(a.r.Findings, Finding{
+					File: a.path, Line: pos.Line, Func: name, FuncLines: lines,
 					Rule: "naked-return-long-func", Severity: "medium",
 					Message: "naked return in a " + strconv.Itoa(lines) + "-line function (threshold " +
-						strconv.Itoa(threshold) + ") — name the returned values explicitly so readers need not scroll to the signature",
+						strconv.Itoa(a.threshold) + ") — name the returned values explicitly so readers need not scroll to the signature",
 				})
 			}
 		}

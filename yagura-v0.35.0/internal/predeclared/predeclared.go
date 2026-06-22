@@ -127,124 +127,114 @@ func scanFile(path, src string, ignored map[string]bool, r *Report) {
 	if f == nil {
 		return
 	}
+	sc := &scanner2{fset: fset, path: path, ignored: ignored, r: r}
 	// Top-level declarations.
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			scanFuncDecl(fset, path, d, ignored, r)
+			sc.funcDecl(d)
 		case *ast.GenDecl:
-			scanGenDecl(fset, path, d, ignored, r)
+			sc.genDecl(d)
 		}
 	}
 }
 
-func scanFuncDecl(fset *token.FileSet, path string, fn *ast.FuncDecl, ignored map[string]bool, r *Report) {
+// scanner2 は 1 ファイル走査中の不変状態(fset/path/ignored/report)を束ねる。
+// これにより各 scan ヘルパと emit の引数を絞る(param-check / calibrate 由来の整理)。
+type scanner2 struct {
+	fset    *token.FileSet
+	path    string
+	ignored map[string]bool
+	r       *Report
+}
+
+func (sc *scanner2) funcDecl(fn *ast.FuncDecl) {
 	// Top-level function name (skip methods — receiver namespaces them).
 	if fn.Recv == nil && fn.Name != nil {
-		emitIfShadow(fset, path, fn.Name, "function", "high", ignored, r)
+		sc.emit(fn.Name, "function", "high")
 	}
 	if fn.Type == nil {
 		return
 	}
 	// Params & named results.
-	if fn.Type.Params != nil {
-		for _, field := range fn.Type.Params.List {
-			for _, n := range field.Names {
-				emitIfShadow(fset, path, n, "parameter", "medium", ignored, r)
-			}
-		}
-	}
-	if fn.Type.Results != nil {
-		for _, field := range fn.Type.Results.List {
-			for _, n := range field.Names {
-				emitIfShadow(fset, path, n, "result", "medium", ignored, r)
-			}
-		}
-	}
+	sc.emitFieldNames(fn.Type.Params, "parameter")
+	sc.emitFieldNames(fn.Type.Results, "result")
 	// Body: scan all assignments, var/const decls, range keys/values.
 	if fn.Body != nil {
-		scanBlock(fset, path, fn.Body, ignored, r)
+		sc.block(fn.Body)
 	}
 }
 
-func scanBlock(fset *token.FileSet, path string, body ast.Node, ignored map[string]bool, r *Report) {
+// emitFieldNames は FieldList の名前付きフィールド名を kind で検査する。
+func (sc *scanner2) emitFieldNames(fl *ast.FieldList, kind string) {
+	if fl == nil {
+		return
+	}
+	for _, field := range fl.List {
+		for _, n := range field.Names {
+			sc.emit(n, kind, "medium")
+		}
+	}
+}
+
+func (sc *scanner2) block(body ast.Node) {
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.AssignStmt:
 			if x.Tok == token.DEFINE {
 				for _, lhs := range x.Lhs {
 					if id, ok := lhs.(*ast.Ident); ok {
-						emitIfShadow(fset, path, id, "variable", "medium", ignored, r)
+						sc.emit(id, "variable", "medium")
 					}
 				}
 			}
 		case *ast.GenDecl:
-			scanGenDecl(fset, path, x, ignored, r)
+			sc.genDecl(x)
 		case *ast.RangeStmt:
 			if id, ok := x.Key.(*ast.Ident); ok {
-				emitIfShadow(fset, path, id, "variable", "medium", ignored, r)
+				sc.emit(id, "variable", "medium")
 			}
 			if id, ok := x.Value.(*ast.Ident); ok {
-				emitIfShadow(fset, path, id, "variable", "medium", ignored, r)
+				sc.emit(id, "variable", "medium")
 			}
 		case *ast.FuncLit:
 			if x.Type != nil {
-				if x.Type.Params != nil {
-					for _, field := range x.Type.Params.List {
-						for _, nm := range field.Names {
-							emitIfShadow(fset, path, nm, "parameter", "medium", ignored, r)
-						}
-					}
-				}
-				if x.Type.Results != nil {
-					for _, field := range x.Type.Results.List {
-						for _, nm := range field.Names {
-							emitIfShadow(fset, path, nm, "result", "medium", ignored, r)
-						}
-					}
-				}
+				sc.emitFieldNames(x.Type.Params, "parameter")
+				sc.emitFieldNames(x.Type.Results, "result")
 			}
 		}
 		return true
 	})
 }
 
-func scanGenDecl(fset *token.FileSet, path string, gd *ast.GenDecl, ignored map[string]bool, r *Report) {
+func (sc *scanner2) genDecl(gd *ast.GenDecl) {
 	for _, spec := range gd.Specs {
 		switch s := spec.(type) {
 		case *ast.ValueSpec:
-			kind := "variable"
-			sev := "medium"
+			kind, sev := "variable", "medium"
 			if gd.Tok == token.CONST {
-				kind = "constant"
-				sev = "high"
+				kind, sev = "constant", "high"
 			}
 			for _, n := range s.Names {
-				emitIfShadow(fset, path, n, kind, sev, ignored, r)
+				sc.emit(n, kind, sev)
 			}
 		case *ast.TypeSpec:
-			emitIfShadow(fset, path, s.Name, "type", "high", ignored, r)
+			sc.emit(s.Name, "type", "high")
 		}
 	}
 }
 
-func emitIfShadow(fset *token.FileSet, path string, id *ast.Ident, kind, severity string, ignored map[string]bool, r *Report) {
+func (sc *scanner2) emit(id *ast.Ident, kind, severity string) {
 	if id == nil {
 		return
 	}
 	name := id.Name
-	if name == "_" {
+	if name == "_" || !predeclaredIdents[name] || sc.ignored[name] {
 		return
 	}
-	if !predeclaredIdents[name] {
-		return
-	}
-	if ignored[name] {
-		return
-	}
-	pos := fset.Position(id.Pos())
-	r.Findings = append(r.Findings, Finding{
-		File: path, Line: pos.Line, Name: name, Kind: kind,
+	pos := sc.fset.Position(id.Pos())
+	sc.r.Findings = append(sc.r.Findings, Finding{
+		File: sc.path, Line: pos.Line, Name: name, Kind: kind,
 		Rule: "shadow-predeclared", Severity: severity,
 		Message: "declaration of " + kind + " \"" + name +
 			"\" shadows a Go predeclared identifier — readers may expect the builtin and the shadowed identifier silently takes precedence",
