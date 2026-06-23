@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 81 internal packages
+## Map — 82 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 87 tool definitions
+- `internal/mcp` — MCP server + 88 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -123,6 +123,14 @@ cortex flywheel 4 段階すべてを単体で機械化:
   型情報なしで断定不能のためスキップ(false positive を出さない)。exported=high/unexported=
   medium。dogfood で 140 中 5(tray の Win32 callback globals 4 + serverVersion の init 注入)。
   CLI `global-check --dir . [--strict]`、MCP `yagura_global_check`★ v0.86
+- `internal/typeassert` — panic しうる単一値の型アサーション `x.(T)` を検出(ソクラテス新視点
+  XVII、暗黙 panic ハザード軸; forcetypeassert 相当)。astcheck は明示的 panic() を見るが、
+  `v := x.(T)` は x が T でなければ *暗黙に* panic する。安全形は `v, ok := x.(T)`。errwrap は
+  *error* 型(errors.As 推奨)を見るが、本レンズは型を問わず panic 安全性のみを見る(comma-ok
+  形は安全なので除外)。2 パス: comma-ok 位置を集める→残りを flag。_test.go / TestXxx 除外。
+  dogfood で 5(dedupe の container/list `Value.(*entry)` 3 + tools.go の map sort comparator 2、
+  いずれも構造上安全だが panic 面を可視化)。CLI `type-assert --dir . [--strict]`、MCP
+  `yagura_type_assert`★ v0.87
 - `internal/paramcheck` — 関数のパラメータ数(Fowler "Long Parameter List" smell)を
   go/ast で計測(ソクラテス新視点、complexity の *水平方向の対*)。complexity だけを
   gate にすると巨大関数をヘルパに割って複雑度を下げつつ 6・7 個と引数を引き回す退行を

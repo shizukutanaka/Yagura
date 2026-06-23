@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.86.0** — 87 MCP tools, 81 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). New `globalcheck` lens (Socratic新視点 XVI — shared-mutable-state axis): `synccheck`/`ctxcheck` covered locks and context, but the largest source of data races and untestable code — package-level **mutable global state** — was unmeasured. `globalcheck` flags package vars *actually mutated* somewhere (const/error-sentinels/read-only tables self-exempt); conservative on local shadows (no false positives without type info). Dogfooded on Yagura: 5 of 140 package vars are mutable — 4 Win32 tray-callback globals (a syscall-callback constraint) and `serverVersion` (init-injection) — both justified, now *visible & measurable*. Previous: new `nestdepth` lens (Socratic新視点 XV): McCabe complexity counts branch *paths* but can't tell 4 flat guard clauses from a 4-deep `if{for{if{if}}}` pyramid — they score the same. `nestdepth` measures the orthogonal axis: **maximum control-flow nesting depth** (the pyramid-of-doom that guard-clause/early-return refactors flatten). `else if` chains stay flat (cognitive-complexity style). Dogfooded on Yagura: 3 functions over depth 4 — `apidoc.scanFile` (6), `deadcode.collectCandidates` (5), `plantracker.Parse` (5, also the complexity-32 outlier). Reproducible build verified.
+Status: **v0.87.0** — 88 MCP tools, 82 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). New `typeassert` lens (Socratic新視点 XVII — implicit-panic axis): `astcheck` flags *explicit* `panic()`, but a single-value type assertion `v := x.(T)` *panics implicitly* on mismatch — the safe form is `v, ok := x.(T)` (recognized `forcetypeassert`). Distinct from `errwrap` (error-chain, errors.As): this is panic-safety, any type, comma-ok-form-exempt. Dogfooded on Yagura: 5 unchecked assertions — 3 idiomatic `container/list` `Value.(*entry)` in `dedupe`, 2 in a `map[string]any` sort comparator — all safe-by-construction, now visible. Previous: `globalcheck` lens (Socratic新視点 XVI — shared-mutable-state axis): `synccheck`/`ctxcheck` covered locks and context, but the largest source of data races and untestable code — package-level **mutable global state** — was unmeasured. `globalcheck` flags package vars *actually mutated* somewhere (const/error-sentinels/read-only tables self-exempt); conservative on local shadows (no false positives without type info). Dogfooded on Yagura: 5 of 140 package vars are mutable — 4 Win32 tray-callback globals (a syscall-callback constraint) and `serverVersion` (init-injection) — both justified, now *visible & measurable*. Previous: new `nestdepth` lens (Socratic新視点 XV): McCabe complexity counts branch *paths* but can't tell 4 flat guard clauses from a 4-deep `if{for{if{if}}}` pyramid — they score the same. `nestdepth` measures the orthogonal axis: **maximum control-flow nesting depth** (the pyramid-of-doom that guard-clause/early-return refactors flatten). `else if` chains stay flat (cognitive-complexity style). Dogfooded on Yagura: 3 functions over depth 4 — `apidoc.scanFile` (6), `deadcode.collectCandidates` (5), `plantracker.Parse` (5, also the complexity-32 outlier). Reproducible build verified.
 
 ---
 
@@ -36,7 +36,7 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
 │        ▼                              │              │
 │  ┌────────────────────────────────────────────────┐  │
 │  │  yagura daemon (single binary, ~9 MB)          │  │
-│  │  - 87 MCP tools                                │  │
+│  │  - 88 MCP tools                                │  │
 │  │  - HTTP hook receiver                          │  │
 │  │  - Prometheus /metrics                         │  │
 │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -69,7 +69,7 @@ icon that opens in its own window, like a native app. On Windows, double-click
 as an app window; on macOS/Linux, run `yagura-tray` for the same one-click
 launch. From the app you can **register your first project with a form** (no
 terminal needed) — it goes through the MCP server and is audited like any other
-call. This adds nothing to the core — the daemon and the 87 MCP tools are
+call. This adds nothing to the core — the daemon and the 88 MCP tools are
 unchanged; the desktop app is just the dashboard made installable via web
 standards. See [docs/desktop.md](docs/desktop.md).
 
@@ -181,7 +181,7 @@ Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has bee
 
 ### Other agents (Gemini CLI, Codex, custom)
 
-Yagura is agent-agnostic. Its 87 MCP tools work with **any** MCP client, and the
+Yagura is agent-agnostic. Its 88 MCP tools work with **any** MCP client, and the
 daemon's hook ingestion is agent-neutral too: **point any agent's lifecycle
 hooks at `/hooks/agent`** (Gemini CLI, Codex, raw OpenTelemetry, or a generic
 shape) and the receiver normalizes them via `internal/agentevent` — aligned to
@@ -193,7 +193,7 @@ normalization for programmatic use, and `/metrics` exports per-project, per-tool
 agent activity (`yagura_hook_tool_calls_total{project,tool}`, aligned to the
 OTel `gen_ai.tool.name` convention) for Prometheus/Grafana.
 
-## MCP tools (87 total)
+## MCP tools (88 total)
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-81 consecutive releases (v0.6 → v0.86) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+82 consecutive releases (v0.6 → v0.87) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
@@ -267,7 +267,7 @@ sha256sum -c SHA256SUMS
 ```
 .
 ├── cmd/yagura/              # Entry point (single binary)
-├── internal/                # 81 packages, none exported
+├── internal/                # 82 packages, none exported
 │   ├── mcp/                 # MCP server, tool registration
 │   ├── registry/            # Project registry (JSON file per project)
 │   ├── scanner/             # Background sensor loop (24 h)

@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **87 tools**.
+Generated from a live yagura — **88 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (40)
+- [Misc](#misc) (41)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -896,6 +896,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 |---|---|---|
 | `name` (string) |  |  |
 | `query` (string) |  |  |
+
+---
+
+### `yagura_type_assert`
+
+[Q] Panic-safety: single-value type assertions x.(T) that panic on mismatch (use comma-ok; forcetypeassert-style)
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
 
 ---
 

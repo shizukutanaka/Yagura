@@ -199,6 +199,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildNestDepthTool(d))
 	// [Q] v0.86.0 — mutable global state (package vars actually mutated; concurrency/test hazard)
 	s.Register(buildGlobalCheckTool(d))
+	// [Q] v0.87.0 — panic-safety: single-value type assertions (forcetypeassert-style)
+	s.Register(buildTypeAssertTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

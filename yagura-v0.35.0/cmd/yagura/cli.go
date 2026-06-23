@@ -101,6 +101,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 	"github.com/shizukutanaka/yagura/internal/today"
+	"github.com/shizukutanaka/yagura/internal/typeassert"
 	"github.com/shizukutanaka/yagura/internal/vex"
 )
 
@@ -160,6 +161,7 @@ var cliHandlers = map[string]cliHandler{
 	"regress":      cliRegress,
 	"nest-depth":   cliNestDepth,
 	"global-check": cliGlobalCheck,
+	"type-assert":  cliTypeAssert,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -3032,6 +3034,33 @@ func cliGlobalCheck(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// cliTypeAssert は `yagura type-assert` を処理する。panic しうる単一値の型
+// アサーション(comma-ok でないもの)を検出する panic 安全性軸のレンズ。
+// --strict で 1 件でもあれば exit 1。
+func cliTypeAssert(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("type-assert", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any unchecked assertion is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := typeassert.Scan(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanTypeAssert(stdout, rep)
+	if *strict && rep.Flagged > 0 {
+		return fmt.Errorf("%d unchecked type assertion(s) found", rep.Flagged)
+	}
+	return nil
+}
+
 // readGoFilesAtRev reads the .go files of dir's git tree at revision rev,
 // keyed by dir-relative path (matching readGoFiles). Uses `git archive` (one
 // process) + stdlib archive/tar — no Go module dependency (ADR-0001).
@@ -4941,7 +4970,7 @@ var yaguraVerbs = []string{
 	"quality-check", "recv-check", "recovery-decide", "register", "regress", "release-radar",
 	"return-check", "review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
 	"self-improve-history", "session-summary", "settings-audit", "skill-audit",
-	"stats", "sync-check", "test-audit", "today", "unregister", "update", "vex-audit",
+	"stats", "sync-check", "test-audit", "today", "type-assert", "unregister", "update", "vex-audit",
 	"verify", "version", "workflow-audit",
 }
 
@@ -5038,6 +5067,7 @@ func buildZshVerbLines() string {
 		"regress":              "quality ratchet: report functions whose metrics regressed (--base GIT-REV or --old DIR)",
 		"nest-depth":           "max control-flow nesting depth per function (pyramid-of-doom; complexity's orthogonal pair)",
 		"global-check":         "mutable global state: package-level vars actually mutated (testability + data-race hazard)",
+		"type-assert":          "panic-safety: single-value type assertions that panic on mismatch (use comma-ok)",
 		"naked-ret":            "naked-return readability: naked return in long named-result functions",
 		"predeclared":          "predeclared-identifier shadowing: vars/params/types/funcs shadowing Go builtins",
 		"sync-check":           "sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex",

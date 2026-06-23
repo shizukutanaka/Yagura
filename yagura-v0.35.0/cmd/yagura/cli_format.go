@@ -70,6 +70,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 	"github.com/shizukutanaka/yagura/internal/today"
+	"github.com/shizukutanaka/yagura/internal/typeassert"
 )
 
 // emitJSON は v を indent 付き JSON + 改行で書く。
@@ -1769,6 +1770,20 @@ func humanGlobalCheck(w io.Writer, r globalcheck.Report) {
 	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tNAME")
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", f.Severity, f.File, f.Line, f.Name)
+	}
+	tw.Flush()
+}
+
+func humanTypeAssert(w io.Writer, r typeassert.Report) {
+	fmt.Fprintf(w, "type-assert: %d files, %d unchecked assertion(s)\n", r.FilesScanned, r.Flagged)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no panic-prone type assertions — all use comma-ok or type switches")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", f.Severity, f.File, f.Line, f.Func)
 	}
 	tw.Flush()
 }

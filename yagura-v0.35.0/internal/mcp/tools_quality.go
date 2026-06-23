@@ -38,6 +38,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
+	"github.com/shizukutanaka/yagura/internal/typeassert"
 )
 
 // ─── yagura_quality_check (v0.19.0) ───────────────────────────
@@ -1344,6 +1345,36 @@ func buildGlobalCheckTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := globalcheck.Scan(in.Files)
+			return rep, nil
+		},
+	}
+}
+
+func buildTypeAssertTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_type_assert",
+		Description: "[Q] Panic-safety: single-value type assertions x.(T) that panic on mismatch (use comma-ok; forcetypeassert-style)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := typeassert.Scan(in.Files)
 			return rep, nil
 		},
 	}

@@ -4,6 +4,57 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.87.0] - 2026-06-21
+
+### Theme — "typeassert: implicit-panic safety (Socratic 新視点 XVII)"
+
+**Q:** `astcheck` flags the literal `panic` keyword in libraries — but what
+about code that panics *implicitly*? **A:** `v := x.(T)` — a single-value type
+assertion panics at runtime if `x` isn't a `T`. The safe form is `v, ok :=
+x.(T)`. No lens covered implicit-panic hazards. This is the recognized
+`forcetypeassert` linter.
+
+#### New lens: `internal/typeassert` (88th MCP tool, 82nd package)
+
+`typeassert.Scan(files)` runs two passes per file: pass 1 records comma-ok
+assertion positions (RHS of a 2-LHS `AssignStmt` / 2-name `ValueSpec`); pass 2
+walks each `FuncDecl` body and flags every `TypeAssertExpr` with a non-nil
+`Type` (excludes `x.(type)` switches) not in the safe set, attributed to the
+enclosing function. Severity medium (panic risk).
+
+Distinct from `errwrap`'s `err-type-assert`: that is error-specific (recommends
+`errors.As`, error-chain correctness); this is type-agnostic *panic safety*
+(only the single-value form — comma-ok is safe). They overlap only on
+single-value error assertions, of which Yagura has none (all converted to
+`errors.As` in v0.76).
+
+#### Dogfood: 5 unchecked assertions — all safe-by-construction, surfaced not forced
+
+```
+$ yagura type-assert --dir .          # 298 files
+medium  internal/dedupe/dedupe.go  (*Cache).Get / (*Cache).insertMemLocked  (×3)
+medium  internal/mcp/tools.go      buildToolsCatalogTool                    (×2)
+```
+
+The dedupe three are `elem.Value.(*entry)` — the idiomatic `container/list`
+pattern where the list is type-homogeneous; the tools.go two are
+`matches[i]["name"].(string)` in a sort comparator over a locally-built
+`map[string]any`. Like the globalcheck findings, these are **surfaced** (making
+the panic surface visible) rather than force-refactored — converting idiomatic
+`container/list` assertions to comma-ok is over-defensive and the comparator is
+safe by construction. The lens's value is the audit, not a mandate.
+
+#### Wiring
+- CLI `type-assert --dir . [--strict]`
+- MCP `yagura_type_assert` (`{files}`)
+- `docs/quality-lens-spec.md` §17 + new "Panic safety" taxonomy row
+- 19 TDD tests (Red→Green), all `-race` green — comma-ok / type-switch / return /
+  arg / blank / var-spec / closure-attribution cases
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. 88 MCP tools, 82 internal packages.
+Reproducible build: 82 consecutive releases (v0.6 → v0.87).
+
 ## [v0.86.0] - 2026-06-21
 
 ### Theme — "globalcheck: shared mutable global state (Socratic 新視点 XVI)"

@@ -42,6 +42,7 @@ Lenses are organized by the **axis** they measure:
 | Function signature | `paramcheck` (input width), `flagarg` (bool control-coupling), `returncheck` (output width) |
 | Function-body readability | `nakedret` (naked return in long named-result functions) |
 | Correctness / shadowing | `predeclared` (declarations shadowing Go builtins) |
+| Panic safety | `typeassert` (single-value type assertions that panic on mismatch) |
 | Function internals | `complexity` (cyclomatic / breadth), `nestdepth` (max nesting / depth), `errdiscard` (discarded errors), `errpolicy` (diagnosability) |
 | Error-chain integrity | `errwrap` (`%w` / `errors.Is` / `errors.As`; errorlint-style) |
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
@@ -475,3 +476,32 @@ syscall-callback signature which cannot capture a closure) and `mcp.serverVersio
 Both are justified constrained patterns; the lens's value is making them
 *visible and measurable* (à la the calibrate outliers) rather than implying every
 one must be removed.
+
+## 17. `typeassert` — specification (implicit-panic / panic safety)
+
+**Question:** *`astcheck` flags the literal `panic` keyword in libraries — but
+what about code that panics implicitly?* The classic is `v := x.(T)`: a
+single-value type assertion **panics at runtime** if `x` is not a `T`. The safe
+form is the comma-ok `v, ok := x.(T)`. This is the recognized `forcetypeassert`
+linter, and no Yagura lens covered implicit-panic hazards.
+
+`typeassert.Scan(files)` runs two passes per file: pass 1 records every
+comma-ok assertion position (RHS of a 2-LHS `AssignStmt` or 2-name `ValueSpec`);
+pass 2 walks each `FuncDecl` body and flags every `TypeAssertExpr` with a
+non-nil `Type` (so `x.(type)` switches are excluded) whose position is not in
+the safe set. Findings are attributed to the enclosing function.
+
+Distinct from `errwrap`'s `err-type-assert`: that rule is error-specific and
+recommends `errors.As` (error-chain correctness); `typeassert` is type-agnostic
+and about *panic safety* (only the single-value form; comma-ok is safe). The two
+give complementary advice and only overlap on single-value error assertions —
+of which Yagura has none (all converted to `errors.As` in v0.76).
+
+**Dogfood note**: 5 unchecked single-value assertions, all safe-by-construction —
+three `elem.Value.(*entry)` in `internal/dedupe` (the idiomatic `container/list`
+pattern, where the list is type-homogeneous) and two `matches[i]["name"].(string)`
+in a sort comparator over a locally-built `map[string]any`. Like the globalcheck
+findings, these are surfaced (making the panic surface *visible*) rather than
+force-refactored: converting idiomatic `container/list` assertions to comma-ok is
+over-defensive, and the map comparator is safe by construction. The lens's value
+is the audit, not a mandate.
