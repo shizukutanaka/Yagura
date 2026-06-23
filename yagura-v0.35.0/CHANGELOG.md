@@ -4,6 +4,53 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.84.0] - 2026-06-21
+
+### Theme — "regress ratchet, made CI-usable (git baseline)"
+
+A deepening release. v0.83's `regress` had a clean two-file-map primitive but a
+clumsy CLI: you had to materialize **two directories** to compare. The actual CI
+use case is "compare the working tree against the merge base," so the ratchet
+was effectively unusable as a one-liner. **長所短所改善点** of the regress
+feature itself surfaced this, and v0.84 fixes it.
+
+#### `regress --base <git-rev>`
+
+The CLI now reads the *old* tree directly from a git revision:
+
+```
+yagura regress --base origin/main --strict   # one-line CI gate
+```
+
+- Implemented with `git archive --format=tar <rev>[:<subtree>]` (a single git
+  process) parsed by the stdlib `archive/tar` — **no Go module dependency**,
+  ADR-0001 intact (shelling to an external tool is not a `go.mod` entry).
+- `git rev-parse --show-prefix` keeps the archived paths relative to `--new`
+  when it is a subdirectory, so the `(file, func)` match against the working
+  tree stays exact.
+- `--base` and `--old` are mutually exclusive; exactly one is required.
+- `--strict` still exits non-zero only when a regression **crosses** a
+  conventional gate, so trivial 2→3 bumps don't fail the build.
+
+#### Dogfood (temp git repo, end-to-end)
+
+```
+$ git commit (func F(a int))      # baseline
+$ # degrade working tree to F(a,b,c,d,e,f int) + 2 ifs
+$ yagura regress --base HEAD --strict
+!  params      1  6  +5  x.go  F     ← crosses gate → exit 1
+   func_lines  1  5  +4  x.go  F
+   complexity  1  3  +2  x.go  F
+$ git commit; yagura regress --base HEAD   # HEAD == worktree → 0 regressions
+```
+
+3 new TDD tests (`readGoFilesAtRev` round-trip / non-repo error /
+`cliRegress --base` end-to-end), all skipping cleanly when `git` is absent.
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. No new tool/package (still 85/79).
+Reproducible build: 79 consecutive releases (v0.6 → v0.84).
+
 ## [v0.83.0] - 2026-06-21
 
 ### Theme — "regress: the temporal axis / quality ratchet (Socratic blind spot XIV)"

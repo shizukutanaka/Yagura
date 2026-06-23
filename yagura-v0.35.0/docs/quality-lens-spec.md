@@ -400,3 +400,19 @@ This closes the snapshot-only limitation shared by all prior lenses: paired with
 a baseline (e.g. the merge target), `regress --strict` is a deterministic,
 zero-dependency quality gate that prevents backsliding even when the absolute
 metric levels are imperfect.
+
+### Git baseline (v0.84)
+
+To make the ratchet a one-line CI gate, the CLI reads the *old* tree directly
+from a git revision: `regress --base <rev> [--new DIR]`. The baseline is
+obtained with `git archive --format=tar <rev>[:<subtree>]` (one process) parsed
+by the stdlib `archive/tar` — no Go module dependency, ADR-0001 intact.
+`rev-parse --show-prefix` keeps paths relative to `--new` when it is a
+subdirectory, so the `(file, func)` match with the working tree is exact. Typical
+usage:
+
+```
+yagura regress --base origin/main --strict   # fail PR if any function degraded
+```
+
+`--base` and `--old` are mutually exclusive; exactly one is required.

@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.83.0** — 85 MCP tools, 79 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). New `regress` lens (Socratic blind spot XIV — the **temporal axis**): every prior lens measures a single snapshot; `regress` compares two code states (`--old` vs `--new`) and reports functions whose complexity/params/returns/length got *worse*, marking those that cross a conventional gate. A **quality ratchet** for CI — `regress --strict` fails the build if any function degrades past threshold. Reuses `calibrate`'s per-function metrics (now exported). Reproducible build verified.
+Status: **v0.84.0** — 85 MCP tools, 79 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). `regress` quality-ratchet made CI-usable: it now reads the baseline directly from a git revision — `yagura regress --base origin/main --strict` is a one-line CI gate that fails if any function's complexity/params/returns/length degrades past threshold (previously you had to materialize two directories by hand). Old tree is read via `git archive` + stdlib `archive/tar` — zero Go deps. Reproducible build verified.
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-78 consecutive releases (v0.6 → v0.83) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+79 consecutive releases (v0.6 → v0.84) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

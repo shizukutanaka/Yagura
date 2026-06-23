@@ -218,7 +218,9 @@ cortex flywheel 4 段階すべてを単体で機械化:
   最重要なのは「この変更が品質を後退させたか」。(File, Func) で突き合わせ、増加メトリクスを
   Regression として列挙。Crossed = new 値が慣習しきい値超過。calibrate.FuncMetrics を再利用
   (単一情報源)。品質ラチェット = `regress --old DIR --new DIR --strict` で Crossed があれば
-  CI fail。CLI `regress`、MCP `yagura_regress`★ v0.83
+  CI fail。CLI `regress --base <git-rev> --strict`(v0.84: old 側を `git archive`+stdlib
+  archive/tar で git revision から直接読む。`yagura regress --base origin/main --strict` が
+  CI 一行ゲートに)/ `--old DIR`、MCP `yagura_regress`★ v0.83
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に

@@ -22,7 +22,9 @@
 package main
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,6 +33,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -2927,25 +2930,39 @@ func cliCalibrate(args []string, stdout, stderr io.Writer) error {
 func cliRegress(args []string, stdout, stderr io.Writer) error {
 	fset := newFlagSet("regress", stderr)
 	jsonOut := fset.Bool("json", false, "JSON output")
-	oldDir := fset.String("old", "", "baseline directory to compare against (required)")
+	base := fset.String("base", "", "git revision to compare against (e.g. HEAD~1, origin/main) — reads the old tree via git")
+	oldDir := fset.String("old", "", "baseline directory to compare against (alternative to --base)")
 	newDir := fset.String("new", ".", "current directory")
 	strict := fset.Bool("strict", false, "exit non-zero if any regression crosses a conventional threshold")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
-	if *oldDir == "" {
-		return fmt.Errorf("regress requires --old <baseline-dir>")
+	if (*base == "") == (*oldDir == "") {
+		return fmt.Errorf("regress requires exactly one of --base <git-rev> or --old <dir>")
 	}
-	oldSR, err := readGoFiles(*oldDir)
-	if err != nil {
-		return fmt.Errorf("scanning %s: %w", *oldDir, err)
+
+	// old file set: from a git revision (--base) or a directory (--old).
+	var oldFiles map[string]string
+	if *base != "" {
+		var err error
+		oldFiles, err = readGoFilesAtRev(*newDir, *base)
+		if err != nil {
+			return fmt.Errorf("reading %s at %s: %w", *newDir, *base, err)
+		}
+	} else {
+		oldSR, err := readGoFiles(*oldDir)
+		if err != nil {
+			return fmt.Errorf("scanning %s: %w", *oldDir, err)
+		}
+		oldFiles = oldSR.Files
 	}
+
 	newSR, err := readGoFiles(*newDir)
 	if err != nil {
 		return fmt.Errorf("scanning %s: %w", *newDir, err)
 	}
 	warnIncompleteScan(stderr, newSR, *newDir)
-	rep := regress.Compare(oldSR.Files, newSR.Files)
+	rep := regress.Compare(oldFiles, newSR.Files)
 	if *jsonOut {
 		return emitJSON(stdout, rep)
 	}
@@ -2954,6 +2971,48 @@ func cliRegress(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("%d regression(s) crossed a conventional threshold", rep.Crossed)
 	}
 	return nil
+}
+
+// readGoFilesAtRev reads the .go files of dir's git tree at revision rev,
+// keyed by dir-relative path (matching readGoFiles). Uses `git archive` (one
+// process) + stdlib archive/tar — no Go module dependency (ADR-0001).
+//
+// dir may be a subdirectory of the repo: `rev-parse --show-prefix` yields the
+// repo-root→dir prefix so we archive only that subtree, keeping paths
+// dir-relative.
+func readGoFilesAtRev(dir, rev string) (map[string]string, error) {
+	prefix, err := exec.Command("git", "-C", dir, "rev-parse", "--show-prefix").Output()
+	if err != nil {
+		return nil, fmt.Errorf("git rev-parse (is %s in a git repo?): %w", dir, err)
+	}
+	treeish := rev
+	if p := strings.TrimSpace(string(prefix)); p != "" {
+		treeish = rev + ":" + strings.TrimSuffix(p, "/")
+	}
+	out, err := exec.Command("git", "-C", dir, "archive", "--format=tar", treeish).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git archive %s: %w", rev, err)
+	}
+	files := map[string]string{}
+	tr := tar.NewReader(bytes.NewReader(out))
+	for {
+		hdr, terr := tr.Next()
+		if terr == io.EOF {
+			break
+		}
+		if terr != nil {
+			return nil, terr
+		}
+		if hdr.Typeflag != tar.TypeReg || !strings.HasSuffix(hdr.Name, ".go") {
+			continue
+		}
+		content, rerr := io.ReadAll(tr)
+		if rerr != nil {
+			return nil, rerr
+		}
+		files[hdr.Name] = string(content)
+	}
+	return files, nil
 }
 
 // ─── coupling (v0.36.0) ──────────────────────────────────────
@@ -4917,7 +4976,7 @@ func buildZshVerbLines() string {
 		"err-policy":           "error-context discipline: wrap ratio + blank-discard",
 		"err-wrap":             "error-wrapping discipline: %w over %v, errors.Is/As over ==/type-assert",
 		"calibrate":            "threshold calibration: percentile distributions for data-driven --max gates",
-		"regress":              "quality ratchet: report functions whose metrics regressed old→new (--old DIR)",
+		"regress":              "quality ratchet: report functions whose metrics regressed (--base GIT-REV or --old DIR)",
 		"naked-ret":            "naked-return readability: naked return in long named-result functions",
 		"predeclared":          "predeclared-identifier shadowing: vars/params/types/funcs shadowing Go builtins",
 		"sync-check":           "sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex",
