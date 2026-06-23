@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **85 tools**.
+Generated from a live yagura — **86 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (38)
+- [Misc](#misc) (39)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -608,6 +608,19 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `files` (object) | ★ |  |
+
+---
+
+### `yagura_nest_depth`
+
+[Q] Max control-flow nesting depth per function (the pyramid-of-doom signal complexity misses; guard-clause discipline)
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
+| `max_depth` (integer) |  | nesting-depth threshold above which a function is flagged (default 4) |
 
 ---
 

@@ -46,6 +46,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/hotspot"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
+	"github.com/shizukutanaka/yagura/internal/nestdepth"
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
@@ -1739,4 +1740,19 @@ func humanRegress(w io.Writer, r regress.Report) {
 	}
 	tw.Flush()
 	fmt.Fprintln(w, "(! = new value crosses the conventional gate; --strict fails CI on any !)")
+}
+
+func humanNestDepth(w io.Writer, r nestdepth.Report) {
+	fmt.Fprintf(w, "nest-depth: %d files, %d funcs, %d over threshold %d (max depth %d)\n",
+		r.FilesScanned, r.FuncsScanned, r.OverThreshold, r.Threshold, r.MaxDepth)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no deeply-nested functions — control flow stays flat")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tDEPTH\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Depth, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
 }

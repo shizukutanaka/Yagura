@@ -195,6 +195,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildCalibrateTool(d))
 	// [Q] v0.83.0 — quality ratchet (regression: metrics that got worse old→new)
 	s.Register(buildRegressTool(d))
+	// [Q] v0.85.0 — max control-flow nesting depth (pyramid-of-doom; orthogonal to complexity)
+	s.Register(buildNestDepthTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

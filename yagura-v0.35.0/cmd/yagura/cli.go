@@ -75,6 +75,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/mcp"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
+	"github.com/shizukutanaka/yagura/internal/nestdepth"
 	"github.com/shizukutanaka/yagura/internal/opsrisk"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
@@ -156,6 +157,7 @@ var cliHandlers = map[string]cliHandler{
 	"predeclared": cliPredeclared,
 	"calibrate":   cliCalibrate,
 	"regress":     cliRegress,
+	"nest-depth":  cliNestDepth,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -2973,6 +2975,34 @@ func cliRegress(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// cliNestDepth は `yagura nest-depth` を処理する。関数の最大制御構文ネスト深度を
+// 計測し、しきい値(--max、既定 4)を超える pyramid-of-doom 関数を flag する。
+// complexity が分岐数を測るのに対し、こちらは入れ子の深さ(直交軸)を測る。
+func cliNestDepth(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("nest-depth", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	max := fset.Int("max", 4, "nesting-depth threshold; functions deeper than this are flagged")
+	strict := fset.Bool("strict", false, "exit non-zero if any function exceeds --max")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := nestdepth.Scan(sr.Files, *max)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanNestDepth(stdout, rep)
+	if *strict && rep.OverThreshold > 0 {
+		return fmt.Errorf("%d function(s) exceed nesting depth %d (max observed %d)", rep.OverThreshold, rep.Threshold, rep.MaxDepth)
+	}
+	return nil
+}
+
 // readGoFilesAtRev reads the .go files of dir's git tree at revision rev,
 // keyed by dir-relative path (matching readGoFiles). Uses `git archive` (one
 // process) + stdlib archive/tar — no Go module dependency (ADR-0001).
@@ -4877,7 +4907,7 @@ var yaguraVerbs = []string{
 	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "err-wrap", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
-	"list", "mcp-audit", "naked-ret", "name-check", "ops-risk", "parallel-plan", "param-check", "path-policy",
+	"list", "mcp-audit", "naked-ret", "name-check", "nest-depth", "ops-risk", "parallel-plan", "param-check", "path-policy",
 	"pin-drift", "plan-status", "plugin-audit", "predeclared", "progress-file", "publicity-scan",
 	"quality-check", "recv-check", "recovery-decide", "register", "regress", "release-radar",
 	"return-check", "review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
@@ -4977,6 +5007,7 @@ func buildZshVerbLines() string {
 		"err-wrap":             "error-wrapping discipline: %w over %v, errors.Is/As over ==/type-assert",
 		"calibrate":            "threshold calibration: percentile distributions for data-driven --max gates",
 		"regress":              "quality ratchet: report functions whose metrics regressed (--base GIT-REV or --old DIR)",
+		"nest-depth":           "max control-flow nesting depth per function (pyramid-of-doom; complexity's orthogonal pair)",
 		"naked-ret":            "naked-return readability: naked return in long named-result functions",
 		"predeclared":          "predeclared-identifier shadowing: vars/params/types/funcs shadowing Go builtins",
 		"sync-check":           "sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex",

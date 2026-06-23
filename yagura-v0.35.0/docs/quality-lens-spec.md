@@ -42,7 +42,7 @@ Lenses are organized by the **axis** they measure:
 | Function signature | `paramcheck` (input width), `flagarg` (bool control-coupling), `returncheck` (output width) |
 | Function-body readability | `nakedret` (naked return in long named-result functions) |
 | Correctness / shadowing | `predeclared` (declarations shadowing Go builtins) |
-| Function internals | `complexity` (cyclomatic), `errdiscard` (discarded errors), `errpolicy` (diagnosability) |
+| Function internals | `complexity` (cyclomatic / breadth), `nestdepth` (max nesting / depth), `errdiscard` (discarded errors), `errpolicy` (diagnosability) |
 | Error-chain integrity | `errwrap` (`%w` / `errors.Is` / `errors.As`; errorlint-style) |
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
 | Public contract | `apidoc` (exported-symbol docs), `recvcheck` (receiver consistency) |
@@ -416,3 +416,34 @@ yagura regress --base origin/main --strict   # fail PR if any function degraded
 ```
 
 `--base` and `--old` are mutually exclusive; exactly one is required.
+
+## 15. `nestdepth` — specification (the depth complement to complexity)
+
+**Question:** *complexity says "4" for two functions — four flat guard clauses
+and a four-deep `if{for{if{if}}}` pyramid. Which is harder to read?*
+
+McCabe cyclomatic complexity counts the *number* of branch paths (breadth) but
+is blind to how deeply those branches nest. `nestdepth` measures the orthogonal
+quantity — the **maximum control-flow nesting depth** — so the two functions
+above score 1 (flat) vs 5 (pyramid). The whole point of guard-clause /
+early-return refactoring is to cut depth while preserving complexity; that win
+is invisible to complexity alone.
+
+Rules (deterministic, type-free):
+
+- Depth = number of control-flow blocks one must enter to reach the deepest
+  statement; the function body is depth 0.
+- `if` / `for` / `range` / `switch` / `type-switch` / `select` bodies each add 1.
+- **`else if` chains stay at the same depth** (a continuation, not a nest) —
+  matching SonarSource cognitive-complexity intent.
+- Bare blocks `{}` and `FuncLit` closures do not add depth; a closure's internal
+  nesting is *not* charged to the enclosing function (separate scope).
+- Default threshold 4 (flag depth > 4); severity medium (5) / high (6+).
+  `_test.go` and `TestXxx`/`BenchmarkXxx`/`ExampleXxx`/`FuzzXxx` excluded.
+
+**Dogfood note**: on Yagura (1303 functions) only 3 exceed depth 4 —
+`apidoc.scanFile` (6), `deadcode.collectCandidates` (5), and `plantracker.Parse`
+(5). The last is *also* the complexity-32 calibrate outlier, confirming it is
+both wide and deep; the other two are deep but not complexity outliers, which is
+exactly the slice complexity alone misses. `nest-depth --strict` is a CI gate
+against the pyramid-of-doom.

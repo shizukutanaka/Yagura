@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 79 internal packages
+## Map — 80 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 85 tool definitions
+- `internal/mcp` — MCP server + 86 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -108,6 +108,13 @@ cortex flywheel 4 段階すべてを単体で機械化:
   (ソクラテス新視点)。「そもそも完全にテストできるか」という testability の前提
   条件 = 全パス網羅に要するテスト数の下限。関数別スコア + しきい値超過 flag。
   CLI `complexity --dir . [--max N] [--strict]`、MCP `yagura_complexity`★ v0.36
+- `internal/nestdepth` — 関数の最大制御構文ネスト深度を計測(ソクラテス新視点 XV)。
+  complexity が分岐パスの *数* を測るのに対し、こちらは最深経路の *深さ* を測る直交軸。
+  complexity 同値でも flat な guard 4 個と 4 段入れ子では可読性が違う——その差を捉える。
+  if/for/range/switch/select の本体で +1、`else if` 連鎖は同一深度、FuncLit は非算入。
+  guard-clause/early-return 規律の機械化。default threshold 4(超過で flag、5=medium/6+=high)。
+  dogfood で 3 件(apidoc.scanFile=6, deadcode.collectCandidates=5, plantracker.Parse=5)。
+  CLI `nest-depth --dir . [--max N] [--strict]`、MCP `yagura_nest_depth`★ v0.85
 - `internal/paramcheck` — 関数のパラメータ数(Fowler "Long Parameter List" smell)を
   go/ast で計測(ソクラテス新視点、complexity の *水平方向の対*)。complexity だけを
   gate にすると巨大関数をヘルパに割って複雑度を下げつつ 6・7 個と引数を引き回す退行を

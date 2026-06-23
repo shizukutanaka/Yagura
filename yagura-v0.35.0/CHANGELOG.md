@@ -4,6 +4,57 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.85.0] - 2026-06-21
+
+### Theme — "nestdepth: the depth complement to complexity (Socratic新視点 XV)"
+
+A new perspective found by Socratic questioning. **Q:** McCabe complexity scores
+two functions "4" — four flat guard clauses, and a four-deep `if{for{if{if}}}`
+pyramid. Which is harder to read? **A:** the pyramid — yet complexity can't tell
+them apart. **Q:** is there a lens for nesting *depth*? **A:** no. complexity
+measures branch *breadth*; nothing measured the orthogonal *depth* axis that
+guard-clause / early-return refactors target.
+
+#### New lens: `internal/nestdepth` (86th MCP tool, 80th package)
+
+`nestdepth.Scan(files, threshold)` computes each function's **maximum
+control-flow nesting depth**:
+
+- `if`/`for`/`range`/`switch`/`type-switch`/`select` bodies each add one level.
+- **`else if` chains stay flat** (a continuation, not a nest) — SonarSource
+  cognitive-complexity intent.
+- Bare blocks and `FuncLit` closures don't add depth; a closure's internal
+  nesting is not charged to the enclosing function.
+- Default threshold 4 (flag depth > 4); severity medium (5) / high (6+).
+
+Orthogonal to `complexity` by construction: a high-complexity function of flat
+guard clauses scores depth 1 (clean), while a low-complexity deep pyramid scores
+high — exactly the signal complexity alone misses.
+
+#### Dogfood: 3 deeply-nested functions, one shared with calibrate
+
+```
+$ yagura nest-depth --dir .          # 1303 funcs, threshold 4
+high    6  internal/apidoc/apidoc.go            scanFile
+medium  5  internal/deadcode/deadcode.go        collectCandidates
+medium  5  internal/plantracker/plantracker.go  Parse
+```
+
+`plantracker.Parse` is *also* the complexity-32 calibrate outlier — confirming
+it is both wide and deep — while the other two are deep but not complexity
+outliers, which is precisely the slice complexity alone cannot see. `nest-depth
+--strict` is a CI gate against the pyramid-of-doom.
+
+#### Wiring
+- CLI `nest-depth --dir . [--max N] [--strict]`
+- MCP `yagura_nest_depth` (`{files, max_depth}`)
+- `docs/quality-lens-spec.md` §15 + Function-internals taxonomy row updated
+- 18 TDD tests (Red→Green), all `-race` green
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. 86 MCP tools, 80 internal packages.
+Reproducible build: 80 consecutive releases (v0.6 → v0.85).
+
 ## [v0.84.0] - 2026-06-21
 
 ### Theme — "regress ratchet, made CI-usable (git baseline)"

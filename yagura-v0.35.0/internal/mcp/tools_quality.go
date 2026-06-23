@@ -28,6 +28,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/hotspot"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
+	"github.com/shizukutanaka/yagura/internal/nestdepth"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/predeclared"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
@@ -1277,6 +1278,41 @@ func buildRegressTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "both 'old' and 'new' file sets are required"}
 			}
 			rep := regress.Compare(in.Old, in.New)
+			return rep, nil
+		},
+	}
+}
+
+func buildNestDepthTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_nest_depth",
+		Description: "[Q] Max control-flow nesting depth per function (the pyramid-of-doom signal complexity misses; guard-clause discipline)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+				"max_depth": map[string]any{
+					"type":        "integer",
+					"description": "nesting-depth threshold above which a function is flagged (default 4)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files    map[string]string `json:"files"`
+				MaxDepth int               `json:"max_depth"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := nestdepth.Scan(in.Files, in.MaxDepth)
 			return rep, nil
 		},
 	}
