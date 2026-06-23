@@ -67,6 +67,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
 	"github.com/shizukutanaka/yagura/internal/github"
+	"github.com/shizukutanaka/yagura/internal/globalcheck"
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
 	"github.com/shizukutanaka/yagura/internal/initps1"
@@ -146,18 +147,19 @@ var cliHandlers = map[string]cliHandler{
 	"coupling": cliCoupling, "api-doc": cliAPIDoc, "dead-code": cliDeadCode,
 	"recv-check": cliRecvCheck, "code-health": cliCodeHealth, "param-check": cliParamCheck,
 	"flag-arg": cliFlagArg, "return-check": cliReturnCheck,
-	"err-discard": cliErrDiscard,
-	"dep-rank":    cliDepRank,
-	"hotspot":     cliHotspot,
-	"name-check":  cliNameCheck,
-	"ctx-check":   cliCtxCheck,
-	"err-wrap":    cliErrWrap,
-	"sync-check":  cliSyncCheck,
-	"naked-ret":   cliNakedRet,
-	"predeclared": cliPredeclared,
-	"calibrate":   cliCalibrate,
-	"regress":     cliRegress,
-	"nest-depth":  cliNestDepth,
+	"err-discard":  cliErrDiscard,
+	"dep-rank":     cliDepRank,
+	"hotspot":      cliHotspot,
+	"name-check":   cliNameCheck,
+	"ctx-check":    cliCtxCheck,
+	"err-wrap":     cliErrWrap,
+	"sync-check":   cliSyncCheck,
+	"naked-ret":    cliNakedRet,
+	"predeclared":  cliPredeclared,
+	"calibrate":    cliCalibrate,
+	"regress":      cliRegress,
+	"nest-depth":   cliNestDepth,
+	"global-check": cliGlobalCheck,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -3003,6 +3005,33 @@ func cliNestDepth(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// cliGlobalCheck は `yagura global-check` を処理する。package-level の可変グローバル
+// 変数(実際に mutate されるもの)を検出する。共有可変状態 = テスト不能性 + データ競合の
+// 源。--strict で 1 件でもあれば exit 1。
+func cliGlobalCheck(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("global-check", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any mutable global is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := globalcheck.Scan(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanGlobalCheck(stdout, rep)
+	if *strict && rep.Flagged > 0 {
+		return fmt.Errorf("%d mutable global(s) found", rep.Flagged)
+	}
+	return nil
+}
+
 // readGoFilesAtRev reads the .go files of dir's git tree at revision rev,
 // keyed by dir-relative path (matching readGoFiles). Uses `git archive` (one
 // process) + stdlib archive/tar — no Go module dependency (ADR-0001).
@@ -4905,7 +4934,7 @@ var yaguraVerbs = []string{
 	"assert-check", "ast-check", "calibrate", "cc-security", "claudemd-audit",
 	"code-health", "complexity", "completion", "coupling", "coverage", "ctx-check",
 	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "err-wrap", "feature-list", "flag-arg", "flow-risk",
-	"gha-audit", "get", "graph", "graph-impact", "graph-neighbors", "graph-stats",
+	"gha-audit", "get", "global-check", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
 	"list", "mcp-audit", "naked-ret", "name-check", "nest-depth", "ops-risk", "parallel-plan", "param-check", "path-policy",
 	"pin-drift", "plan-status", "plugin-audit", "predeclared", "progress-file", "publicity-scan",
@@ -5008,6 +5037,7 @@ func buildZshVerbLines() string {
 		"calibrate":            "threshold calibration: percentile distributions for data-driven --max gates",
 		"regress":              "quality ratchet: report functions whose metrics regressed (--base GIT-REV or --old DIR)",
 		"nest-depth":           "max control-flow nesting depth per function (pyramid-of-doom; complexity's orthogonal pair)",
+		"global-check":         "mutable global state: package-level vars actually mutated (testability + data-race hazard)",
 		"naked-ret":            "naked-return readability: naked return in long named-result functions",
 		"predeclared":          "predeclared-identifier shadowing: vars/params/types/funcs shadowing Go builtins",
 		"sync-check":           "sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex",

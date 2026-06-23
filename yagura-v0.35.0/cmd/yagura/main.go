@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.85.0"
+	version     = "0.86.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second

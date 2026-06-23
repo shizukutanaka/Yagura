@@ -42,6 +42,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/flowrisk"
 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+	"github.com/shizukutanaka/yagura/internal/globalcheck"
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
@@ -1753,6 +1754,21 @@ func humanNestDepth(w io.Writer, r nestdepth.Report) {
 	fmt.Fprintln(tw, "SEVERITY\tDEPTH\tFILE\tLINE\tFUNC")
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Depth, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanGlobalCheck(w io.Writer, r globalcheck.Report) {
+	fmt.Fprintf(w, "global-check: %d files, %d package vars, %d mutable\n",
+		r.FilesScanned, r.Globals, r.Flagged)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no mutable global state — package vars are read-only / const / sentinels")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tNAME")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", f.Severity, f.File, f.Line, f.Name)
 	}
 	tw.Flush()
 }

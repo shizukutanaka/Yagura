@@ -197,6 +197,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildRegressTool(d))
 	// [Q] v0.85.0 — max control-flow nesting depth (pyramid-of-doom; orthogonal to complexity)
 	s.Register(buildNestDepthTool(d))
+	// [Q] v0.86.0 — mutable global state (package vars actually mutated; concurrency/test hazard)
+	s.Register(buildGlobalCheckTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

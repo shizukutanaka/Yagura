@@ -4,6 +4,54 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.86.0] - 2026-06-21
+
+### Theme — "globalcheck: shared mutable global state (Socratic 新視点 XVI)"
+
+**Q:** `synccheck` checks mutex copies, `ctxcheck` checks context propagation —
+but what is the single largest source of data races and untestable code? **A:**
+shared mutable global state. No lens looked at it. **Q:** is every package-level
+`var` dangerous? **A:** no — read-only lookup tables, `const`, and error
+sentinels are effectively immutable; only a var *actually mutated* is the hazard.
+
+#### New lens: `internal/globalcheck` (87th MCP tool, 81st package)
+
+`globalcheck.Scan(files)` buckets files by directory (= package) and runs three
+passes per package: collect top-level `var` names; collect locally-declared
+names (`:=`/`var`/params/range); collect mutation targets (`=`/`+=`/`++`,
+`m[k]=`, `g.f=`). A global is flagged `mutable-global` when it is mutated **and**
+its name is not shadowed by a local — the conservative carve-out that keeps the
+lens false-positive-free without type info. Severity: exported `high` (any
+package can mutate), unexported `medium`. `const` and error sentinels never
+reach the mutation set, so they self-exempt.
+
+#### Dogfood: 5 of 140 package vars mutable — both justified, now measurable
+
+```
+$ yagura global-check --dir .          # 296 files, 140 package vars
+medium  cmd/yagura-tray/tray_windows.go  currentDaemon / currentAddr / hwnd / nid
+medium  internal/mcp/tools.go            serverVersion
+```
+
+The four tray globals are forced by the Win32 syscall-callback signature (a
+callback cannot capture a closure → it must read package globals); `serverVersion`
+is set once via `SetVersion` to inject the build version without a circular
+import. Both are justified constrained patterns — like the calibrate outliers,
+the lens's value is making the hazard **visible and measurable**, not implying
+every one must be removed. (Refactoring them was deliberately *not* done: the
+Win32 constraint is real and the version-injection is intentional.)
+
+#### Wiring
+- CLI `global-check --dir . [--strict]`
+- MCP `yagura_global_check` (`{files}`)
+- `docs/quality-lens-spec.md` §16 + Concurrency taxonomy row updated
+- 21 TDD tests (Red→Green), all `-race` green — incl. local-shadow conservatism
+  and cross-package isolation
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. 87 MCP tools, 81 internal packages.
+Reproducible build: 81 consecutive releases (v0.6 → v0.86).
+
 ## [v0.85.0] - 2026-06-21
 
 ### Theme — "nestdepth: the depth complement to complexity (Socratic新視点 XV)"

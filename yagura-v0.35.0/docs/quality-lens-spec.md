@@ -47,7 +47,7 @@ Lenses are organized by the **axis** they measure:
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
 | Public contract | `apidoc` (exported-symbol docs), `recvcheck` (receiver consistency) |
 | Test trust | `testcoverage` (source↔test mapping), `assertcheck` (assertion density) |
-| Concurrency | `ctxcheck` (`context.Context` first-param + no struct field), `synccheck` (sync-lock copy discipline) |
+| Concurrency | `ctxcheck` (`context.Context` first-param + no struct field), `synccheck` (sync-lock copy discipline), `globalcheck` (mutable global state) |
 | Meta | `coverage` (scan blind spots), `hotspot` (multi-lens convergence), `calibrate` (corpus-derived thresholds) |
 
 ## 4. Strengths (長所)
@@ -447,3 +447,31 @@ Rules (deterministic, type-free):
 both wide and deep; the other two are deep but not complexity outliers, which is
 exactly the slice complexity alone misses. `nest-depth --strict` is a CI gate
 against the pyramid-of-doom.
+
+## 16. `globalcheck` — specification (shared mutable global state)
+
+**Question:** *`synccheck` checks mutex copies and `ctxcheck` checks context
+propagation — but what is the single largest source of data races and
+untestable code?* Shared mutable global state. No lens looked at it.
+
+Not every package-level `var` is dangerous: a read-only lookup table or config
+is effectively immutable. `const` and error sentinels (`var ErrX =
+errors.New(...)`, never reassigned) self-exempt. Only a var that is *actually
+mutated* is the hazard.
+
+`globalcheck.Scan(files)` buckets files by directory (= package) and runs three
+passes per package: collect top-level `var` names; collect every locally-declared
+name (`:=`, `var`, params, range vars); collect every mutation target
+(`=`/`+=`/`++`, `m[k]=`, `g.f=`). A global is flagged `mutable-global` when it is
+mutated **and** its name is not shadowed by any local declaration in the package
+— the conservative carve-out that keeps the lens false-positive-free without type
+info (if the name is ever a local, the mutation is ambiguous, so skip).
+Severity: exported `high` (any package can mutate), unexported `medium`.
+
+**Dogfood note**: on Yagura, 5 of 140 package vars are mutable — four in the
+Windows tray (`currentDaemon`/`currentAddr`/`hwnd`/`nid`, forced by the Win32
+syscall-callback signature which cannot capture a closure) and `mcp.serverVersion`
+(set once via `SetVersion` to inject the build version without a circular import).
+Both are justified constrained patterns; the lens's value is making them
+*visible and measurable* (à la the calibrate outliers) rather than implying every
+one must be removed.

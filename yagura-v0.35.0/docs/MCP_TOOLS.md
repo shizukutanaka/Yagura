@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **86 tools**.
+Generated from a live yagura — **87 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (39)
+- [Misc](#misc) (40)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -534,6 +534,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 |---|---|---|
 | `files` (object) | ★ | map of filename → content for .go files to analyse |
 | `threshold` (integer) |  | minimum number of bool params to flag (default 1; set 2 to skip single-bool cases) |
+
+---
+
+### `yagura_global_check`
+
+[Q] Mutable global state: package-level vars actually mutated somewhere (testability + data-race hazard; gochecknoglobals-style)
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
 
 ---
 

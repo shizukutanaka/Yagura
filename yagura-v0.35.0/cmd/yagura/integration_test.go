@@ -190,6 +190,7 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_calibrate",
 		"yagura_regress",
 		"yagura_nest_depth",
+		"yagura_global_check",
 		// v0.36 — package import coupling (architecture / SDP)
 		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)

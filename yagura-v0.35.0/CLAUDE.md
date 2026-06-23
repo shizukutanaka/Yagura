@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 80 internal packages
+## Map — 81 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 86 tool definitions
+- `internal/mcp` — MCP server + 87 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -115,6 +115,14 @@ cortex flywheel 4 段階すべてを単体で機械化:
   guard-clause/early-return 規律の機械化。default threshold 4(超過で flag、5=medium/6+=high)。
   dogfood で 3 件(apidoc.scanFile=6, deadcode.collectCandidates=5, plantracker.Parse=5)。
   CLI `nest-depth --dir . [--max N] [--strict]`、MCP `yagura_nest_depth`★ v0.85
+- `internal/globalcheck` — package-level の *可変* グローバル変数を検出(ソクラテス新視点 XVI、
+  共有可変状態の軸)。synccheck=ロックコピー、ctxcheck=context 伝播 を見るが、データ競合と
+  テスト不能性の最大の源=可変グローバルは未計測だった。const / error sentinel / 読取専用
+  table は自動的に対象外(再代入されないため)。*実際に mutate される* var のみ flag。
+  ファイルは dir(=package)単位で束ねる。保守的: 名前がローカル宣言で shadow される場合は
+  型情報なしで断定不能のためスキップ(false positive を出さない)。exported=high/unexported=
+  medium。dogfood で 140 中 5(tray の Win32 callback globals 4 + serverVersion の init 注入)。
+  CLI `global-check --dir . [--strict]`、MCP `yagura_global_check`★ v0.86
 - `internal/paramcheck` — 関数のパラメータ数(Fowler "Long Parameter List" smell)を
   go/ast で計測(ソクラテス新視点、complexity の *水平方向の対*)。complexity だけを
   gate にすると巨大関数をヘルパに割って複雑度を下げつつ 6・7 個と引数を引き回す退行を
