@@ -4,6 +4,61 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.88.0] - 2026-06-23
+
+### Theme — "convergence → refactor: the lenses earn their keep"
+
+**Q:** Seventeen lenses now *measure* quality — but a measurement nobody acts
+on is theatre. When do the lenses stop describing and start *paying off*? **A:**
+When several independent axes point at the **same** function, that convergence
+is the highest-confidence refactor signal the suite can produce — far stronger
+than any single threshold. `internal/plantracker/Parse` was flagged by **three**
+lenses at once: `calibrate` (cyclomatic complexity 32 vs gate 10; 117 lines vs
+30), `nest-depth` (depth 5 vs threshold 4), and `hotspot` (multi-lens
+convergence). That triple agreement — not a number we picked — is the mandate.
+This release acts on it.
+
+#### Refactor: `plantracker.Parse` decomposed (no behavior change)
+
+The 117-line monolith is split into six focused functions, each a single
+responsibility lifted verbatim from the original control flow:
+
+- `extractPhases(lines, *state) []Phase` — the line-walk "pass 1"
+- `detectSections(name, *state)` — required-section flag detection; an early
+  `continue` on no-match collapses the original `for→if→switch` (the depth-5
+  hot spot) to depth 2
+- `recordCheckbox(done, *state, *phase)` — task counting for whole-plan + phase
+- `finalizePhases([]Phase)` — per-phase progress %
+- `currentPhaseName([]Phase) string` — first unfinished phase
+- `collectIssues(state) []string` — missing-section reporting
+
+`Parse` itself is now a 24-line orchestrator reading top-to-bottom.
+
+#### Result — all three lenses cleared, zero behavior drift
+
+```
+before:  complexity 32 | func_lines 117 | nest-depth 5   (3 lenses flag Parse)
+after:   complexity ≤10 | nest-depth max 3 (pkg)          (0 lenses flag Parse)
+```
+
+The 11 existing `TestParse_*` cases (empty / multi-phase / all-sections /
+English / missing-sections / capital-X / nested / current-phase / no-tasks …)
+are the behavioral spec; **none were edited** — they passed unchanged before and
+after, which is the proof the refactor is behavior-preserving. Full suite green
+under `-race`.
+
+This is the **v0.71 pattern** repeated deliberately: build measurement → let
+convergence surface the target → do the real refactor → confirm the signal
+clears. The Socratic loop on *new* lenses is near saturation (remaining
+well-known linters need `go/types`, which conflicts with ADR-0001); the higher-
+value move now is converting accumulated signal into shipped improvement.
+
+#### Zero new dependencies / zero new surface
+ADR-0001 maintained. `go.mod` unchanged. No new MCP tool, package, CLI verb, or
+doc count change — **88 MCP tools, 82 internal packages** unchanged; this is a
+pure internal refactor. Reproducible build: 83 consecutive releases (v0.6 →
+v0.88).
+
 ## [v0.87.0] - 2026-06-21
 
 ### Theme — "typeassert: implicit-panic safety (Socratic 新視点 XVII)"

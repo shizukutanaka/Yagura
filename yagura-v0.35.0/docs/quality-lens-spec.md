@@ -449,6 +449,15 @@ both wide and deep; the other two are deep but not complexity outliers, which is
 exactly the slice complexity alone misses. `nest-depth --strict` is a CI gate
 against the pyramid-of-doom.
 
+> **v0.88 follow-through.** Because `plantracker.Parse` was flagged by three
+> independent axes at once (`calibrate` complexity/lines, `nest-depth` depth,
+> `hotspot` convergence), it was the highest-confidence refactor target the
+> suite could name. v0.88 decomposed it into six single-responsibility helpers;
+> all three lenses now clear it (complexity ≤10, package nest-depth max 3) with
+> the 11 `TestParse_*` cases unchanged. This is the suite's purpose realized:
+> convergence is not just an audit, it is a refactor backlog ordered by
+> confidence.
+
 ## 16. `globalcheck` — specification (shared mutable global state)
 
 **Question:** *`synccheck` checks mutex copies and `ctxcheck` checks context
