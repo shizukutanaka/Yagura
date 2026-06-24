@@ -54,6 +54,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
+	"github.com/shizukutanaka/yagura/internal/prealloc"
 	"github.com/shizukutanaka/yagura/internal/predeclared"
 	"github.com/shizukutanaka/yagura/internal/project"
 	"github.com/shizukutanaka/yagura/internal/projectgraph"
@@ -1771,6 +1772,20 @@ func humanCognit(w io.Writer, r cognit.Report) {
 	fmt.Fprintln(tw, "SEVERITY\tCOGNIT\tFILE\tLINE\tFUNC")
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Cognit, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanPrealloc(w io.Writer, r prealloc.Report) {
+	fmt.Fprintf(w, "prealloc: %d files, %d candidate(s)\n", r.FilesScanned, r.Flagged)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no prealloc candidates — range-loop appends are preallocated")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tFUNC\tSLICE")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.Severity, f.File, f.Line, f.Func, f.Name)
 	}
 	tw.Flush()
 }

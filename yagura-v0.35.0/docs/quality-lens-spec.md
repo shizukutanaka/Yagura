@@ -45,6 +45,7 @@ Lenses are organized by the **axis** they measure:
 | Panic safety | `typeassert` (single-value type assertions that panic on mismatch) |
 | Function internals | `complexity` (cyclomatic / breadth), `nestdepth` (max nesting / depth), `errdiscard` (discarded errors), `errpolicy` (diagnosability) |
 | Cognitive load | `cognit` (cognitive complexity — nesting-weighted human reading cost; synthesis of breadth × depth) |
+| Performance | `prealloc` (slices grown by append in a range loop without preallocation) |
 | Error-chain integrity | `errwrap` (`%w` / `errors.Is` / `errors.As`; errorlint-style) |
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
 | Public contract | `apidoc` (exported-symbol docs), `recvcheck` (receiver consistency) |
@@ -557,3 +558,42 @@ that the lens's own sibling lens code tops the list — is the lens working as
 intended. Findings are surfaced, not force-fixed: cognit + McCabe + nestdepth
 convergence defines the refactor backlog (cf. the v0.88–v0.90 sweep), not a
 mass-rewrite mandate.
+
+## 19. `prealloc` — specification (performance / slice preallocation)
+
+**Question:** *Every lens so far measures correctness, readability, safety, or
+architecture — but is the code wasteful?* The performance axis was entirely
+unmeasured. The most widely-recognized Go performance anti-pattern (a Qiita/Zenn
+staple) is growing an empty slice by `append` inside a loop over a known-length
+collection: each time capacity is exceeded the runtime allocates a new backing
+array, copies the old contents, and frees the old one — repeatedly, with GC
+pressure. When the final size is known up front, `make([]T, 0, len(coll))` does
+it in one allocation. This is the recognized `prealloc` (alexkohler/prealloc)
+check, and no Yagura lens covered it.
+
+`prealloc.Scan(files)` walks each `FuncDecl`: pass 1 collects "empty" slice
+declarations (`var s []T`, `s := []T{}`, `s := make([]T, 0)` — `make([]T, 0, n)`
+and `make([]T, n)` are already allocated and exempt); pass 2 finds `range` loops
+and, for each, inspects the **top-level** statements of the loop body for
+`s = append(s, …)` where `s` is one of the empty slices declared *before* the
+loop. Such a slice is flagged with a `make([]T, 0, len(<range>))` suggestion.
+
+Deliberately conservative — the canonical `prealloc` defaults, chosen to keep
+false positives near zero:
+
+- **`range` loops only.** A plain `for` has a statically-unknown iteration count,
+  so no capacity can be suggested. (`range` over slice/array/map/string has a
+  known length; `range` over a channel is the residual caveat the reader judges.)
+- **Top-level appends only.** An `append` guarded by an `if` inside the loop runs
+  a data-dependent number of times — preallocating to the range length would
+  merely be an upper bound, and flagging it risks noise, so it is skipped.
+- **Empty declarations only**, declared before the loop in the same function.
+
+**Dogfood note**: 52 candidates across 303 files. Three textbook single-append
+cases were fixed in the same release — `coupling.parseImports`
+(`make([]string, 0, len(f.Imports))`) and the `uniqueSorted` helpers in `initsh`
+and `initps1` (`make([]string, 0, len(in))`) — each covered by existing tests
+that passed unchanged, demonstrating the lens drives real, verifiable
+optimization. The remaining ~49 are surfaced as the performance backlog: like the
+other lenses, `prealloc`'s value is the audit, and the highest-traffic loops
+(scanners, formatters) are the first to address.

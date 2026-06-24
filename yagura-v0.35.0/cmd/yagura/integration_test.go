@@ -193,6 +193,7 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_global_check",
 		"yagura_type_assert",
 		"yagura_cognit",
+		"yagura_prealloc",
 		// v0.36 — package import coupling (architecture / SDP)
 		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)

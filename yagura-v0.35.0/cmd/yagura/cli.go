@@ -83,6 +83,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
 	"github.com/shizukutanaka/yagura/internal/pindrift"
 	"github.com/shizukutanaka/yagura/internal/plantracker"
+	"github.com/shizukutanaka/yagura/internal/prealloc"
 	"github.com/shizukutanaka/yagura/internal/predeclared"
 	"github.com/shizukutanaka/yagura/internal/progressfile"
 	"github.com/shizukutanaka/yagura/internal/project"
@@ -157,6 +158,7 @@ var cliHandlers = map[string]cliHandler{
 	"err-wrap":     cliErrWrap,
 	"sync-check":   cliSyncCheck,
 	"naked-ret":    cliNakedRet,
+	"prealloc":     cliPrealloc,
 	"predeclared":  cliPredeclared,
 	"calibrate":    cliCalibrate,
 	"regress":      cliRegress,
@@ -3037,6 +3039,33 @@ func cliCognit(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// cliPrealloc は `yagura prealloc` を処理する。長さの分かっている range ループで
+// 事前確保なしに append され続けるスライス(make([]T,0,len) で再確保を消せる機会)を
+// flag する。あらゆる既存レンズが correctness/readability を測る中、唯一の性能軸。
+func cliPrealloc(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("prealloc", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any prealloc candidate is found")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := prealloc.Scan(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanPrealloc(stdout, rep)
+	if *strict && rep.Flagged > 0 {
+		return fmt.Errorf("%d prealloc candidate(s) found", rep.Flagged)
+	}
+	return nil
+}
+
 // cliGlobalCheck は `yagura global-check` を処理する。package-level の可変グローバル
 // 変数(実際に mutate されるもの)を検出する。共有可変状態 = テスト不能性 + データ競合の
 // 源。--strict で 1 件でもあれば exit 1。
@@ -4996,7 +5025,7 @@ var yaguraVerbs = []string{
 	"gha-audit", "get", "global-check", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
 	"list", "mcp-audit", "naked-ret", "name-check", "nest-depth", "ops-risk", "parallel-plan", "param-check", "path-policy",
-	"pin-drift", "plan-status", "plugin-audit", "predeclared", "progress-file", "publicity-scan",
+	"pin-drift", "plan-status", "plugin-audit", "prealloc", "predeclared", "progress-file", "publicity-scan",
 	"quality-check", "recv-check", "recovery-decide", "register", "regress", "release-radar",
 	"return-check", "review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
 	"self-improve-history", "session-summary", "settings-audit", "skill-audit",
@@ -5100,6 +5129,7 @@ func buildZshVerbLines() string {
 		"global-check":         "mutable global state: package-level vars actually mutated (testability + data-race hazard)",
 		"type-assert":          "panic-safety: single-value type assertions that panic on mismatch (use comma-ok)",
 		"naked-ret":            "naked-return readability: naked return in long named-result functions",
+		"prealloc":             "performance: slices grown by append in a range loop without preallocation",
 		"predeclared":          "predeclared-identifier shadowing: vars/params/types/funcs shadowing Go builtins",
 		"sync-check":           "sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex",
 		"feature-list":         "convert Plan.md to Anthropic-style feature-list.json",

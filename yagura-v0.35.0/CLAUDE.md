@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 83 internal packages
+## Map — 84 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 89 tool definitions
+- `internal/mcp` — MCP server + 90 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -142,6 +142,15 @@ cortex flywheel 4 段階すべてを単体で機械化:
   決定的差)。else if は構造増分のみ、クロージャはネスト +1、直接再帰は +1。既定 gate 15
   (golangci-lint 推奨 10-20)。型情報不要・決定論的。CLI `cognit --dir . [--max N] [--strict]`、
   MCP `yagura_cognit`★ v0.91
+- `internal/prealloc` — range ループ内で事前確保なしに append され続けるスライスを go/ast で
+  検出する *パフォーマンス軸* のレンズ(ソクラテス新視点 XIX、Qiita/Zenn 調査、
+  alexkohler/prealloc 由来)。既存 ~19 レンズは全て correctness/readability/safety/architecture
+  を測るが、「無駄に遅くないか」を問うレンズは皆無だった——その盲点を塞ぐ最初の性能軸。
+  `var s []T` / `[]T{}` / `make([]T,0)` を range ループのトップレベル `append` で伸ばす形を
+  flag(`make([]T,0,len(coll))` で再確保を消せる)。偽陽性を避け保守的: range のみ(回数既知)、
+  トップレベル append のみ(条件分岐内は除外)、確保済み形は除外。型情報不要・決定論的。
+  dogfood で 52 候補、うち textbook 3 件(coupling.parseImports / initsh・initps1.uniqueSorted)を
+  修正しテスト不変、残りは perf backlog。CLI `prealloc --dir . [--strict]`、MCP `yagura_prealloc`★ v0.92
 - `internal/paramcheck` — 関数のパラメータ数(Fowler "Long Parameter List" smell)を
   go/ast で計測(ソクラテス新視点、complexity の *水平方向の対*)。complexity だけを
   gate にすると巨大関数をヘルパに割って複雑度を下げつつ 6・7 個と引数を引き回す退行を

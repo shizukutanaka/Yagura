@@ -4,6 +4,68 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.92.0] - 2026-06-24
+
+### Theme — "prealloc: the performance axis (Socratic 新視点 XIX)"
+
+**Q:** Yagura has ~19 lenses — for correctness, readability, panic-safety,
+concurrency, architecture, naming, cognitive load. Every one asks "is this code
+*right*, *clear*, *safe*?" None asks: **is it wasteful?** The performance axis was
+entirely unmeasured. **A:** Start with the single most widely-recognized Go
+performance anti-pattern — a Qiita/Zenn staple and the `alexkohler/prealloc`
+linter: growing an empty slice by `append` inside a loop over a known-length
+collection. Each capacity overflow reallocates the backing array, copies it, and
+frees the old one — repeatedly, with GC churn. When the size is known,
+`make([]T, 0, len(coll))` does it in one allocation.
+
+#### New lens: `internal/prealloc` (90th MCP tool, 84th package)
+
+`prealloc.Scan(files)` runs two passes per function: pass 1 collects "empty"
+slice declarations (`var s []T` / `s := []T{}` / `s := make([]T, 0)` — the
+already-allocated `make([]T, 0, n)` and `make([]T, n)` are exempt); pass 2 finds
+`range` loops and flags any `s = append(s, …)` at the **top level** of the loop
+body where `s` was declared empty before the loop. The suggested fix is
+`make([]T, 0, len(<range>))`.
+
+Deliberately conservative — the canonical `prealloc` defaults, tuned for
+near-zero false positives:
+- **`range` loops only** (iteration count statically known; plain `for` is not).
+- **top-level appends only** (an `append` guarded by an `if` runs a
+  data-dependent number of times — skipped to avoid noise).
+- **empty declarations only**, declared before the loop in the same function.
+
+Type-free, deterministic, standard test-exclusion. 17 TDD tests (Red→Green), all
+`-race` green: var-decl / empty-composite / make-zero-cap detection,
+preallocated-exempt, plain-for-exempt, conditional-append-exempt, range-over-map,
+multiple slices, method naming, parse-error.
+
+#### Dogfood: 52 candidates surfaced — *and* 3 fixed to prove the lens pays off
+
+```
+$ yagura prealloc --dir .          # 303 files, 52 candidates
+medium  internal/coupling/coupling.go   parseImports  [out]
+medium  internal/initsh/initsh.go       uniqueSorted  [out]
+medium  internal/calibrate/calibrate.go FuncMetrics   [all]
+…
+```
+
+Three textbook single-append cases were **fixed in this release** —
+`coupling.parseImports` → `make([]string, 0, len(f.Imports))`, and the
+`uniqueSorted` helpers in `initsh` / `initps1` → `make([]string, 0, len(in))` —
+each covered by existing tests that passed **unchanged**, demonstrating the lens
+drives real, verifiable optimization (not just an audit). The remaining ~49 are
+the performance backlog; the highest-traffic loops (scanners, formatters) come
+first, on the same surface-then-refactor discipline as the v0.88–v0.91 lenses.
+
+#### Wiring
+- CLI `prealloc --dir . [--strict]`
+- MCP `yagura_prealloc` (`{files}`)
+- `docs/quality-lens-spec.md` §19 + new "Performance" taxonomy row
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. 90 MCP tools, 84 internal packages.
+Reproducible build: 87 consecutive releases (v0.6 → v0.92).
+
 ## [v0.91.0] - 2026-06-24
 
 ### Theme — "cognit: cognitive complexity, the human-reading-cost axis (Socratic 新視点 XVIII)"

@@ -187,7 +187,7 @@ func parseImports(path, src string) ([]string, string) {
 	if f == nil {
 		return nil, perr
 	}
-	var out []string
+	out := make([]string, 0, len(f.Imports))
 	for _, imp := range f.Imports {
 		if imp.Path == nil {
 			continue

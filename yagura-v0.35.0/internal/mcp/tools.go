@@ -203,6 +203,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildTypeAssertTool(d))
 	// [Q] v0.91.0 — cognitive complexity (human reading cost; nesting-weighted; gocognit-style)
 	s.Register(buildCognitTool(d))
+	// [Q] v0.92.0 — performance: un-preallocated append-in-range-loop (prealloc-style)
+	s.Register(buildPreallocTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)
