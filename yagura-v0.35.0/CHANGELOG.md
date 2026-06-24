@@ -4,6 +4,48 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.89.0] - 2026-06-24
+
+### Theme — "nest-depth reaches zero: the pyramid is flattened repo-wide"
+
+**Q:** v0.88 resolved the one *converged* target (`plantracker.Parse`). But
+`nest-depth` still flagged two functions on its own axis — `apidoc.scanFile`
+(depth 6, **high**) and `deadcode.collectCandidates` (depth 5). A gate nobody
+drives to green is just a warning light left on. Can the suite take its own
+deepest-nesting metric to **zero**? **A:** Yes — and the two offenders share the
+*same* AST shape (`for decls → switch → for specs → switch → for names → if`),
+so one refactor pattern flattens both.
+
+#### Refactor: both remaining `nest-depth` offenders decomposed (no behavior change)
+
+`apidoc.scanFile` (depth 6 → 2) split into `parseErrorFinding` / `recordSymbol`
+/ `recordFuncDecl` / `recordGenDecl` / `recordTypeSpec` / `recordValueSpec`,
+with a `recordFunc` callback type threading the symbol recorder through. The
+declaration walk is now a flat `for → switch → dispatch`.
+
+`deadcode.collectCandidates` (depth 5 → 3) split into `collectGenDecl` /
+`collectValueSpec` with an `addFunc` callback type. Identical pattern, applied
+to the unexported-side dual of apidoc.
+
+#### Result — `nest-depth --dir .` reports zero over threshold
+
+```
+before:  2 funcs over depth 4 (apidoc.scanFile=6, deadcode.collectCandidates=5)
+after:   0 funcs over depth 4 across all 1337 functions (max depth 4)
+```
+
+`nest-depth --strict` is now a CI gate Yagura itself **passes clean** — the
+pyramid-of-doom axis is fully retired. Both packages' existing tests
+(apidoc ×11, deadcode) pass **unchanged** under `-race` before and after — the
+proof the refactors are behavior-preserving. This is the same discipline as
+v0.88, applied to a whole-axis sweep rather than a single convergence target:
+once a lens exists, the next move is to drive Yagura's own score to clean.
+
+#### Zero new dependencies / zero new surface
+ADR-0001 maintained. `go.mod` unchanged. No new MCP tool, package, CLI verb, or
+doc count change — **88 MCP tools, 82 internal packages** unchanged; pure
+internal refactor. Reproducible build: 84 consecutive releases (v0.6 → v0.89).
+
 ## [v0.88.0] - 2026-06-23
 
 ### Theme — "convergence → refactor: the lenses earn their keep"

@@ -218,21 +218,34 @@ func collectCandidates(f *ast.File, fset *token.FileSet, dir string, cands map[s
 			}
 			add("func", d.Name)
 		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					add("type", s.Name)
-				case *ast.ValueSpec:
-					kind := "var"
-					if d.Tok == token.CONST {
-						kind = "const"
-					}
-					for _, nm := range s.Names {
-						add(kind, nm)
-					}
-				}
-			}
+			collectGenDecl(d, add)
 		}
+	}
+}
+
+// addFunc は collectCandidates が候補識別子を登録するコールバック。
+type addFunc func(kind string, ident *ast.Ident)
+
+// collectGenDecl は type/const/var 宣言群の各 spec を候補に登録する。
+func collectGenDecl(d *ast.GenDecl, add addFunc) {
+	for _, spec := range d.Specs {
+		switch s := spec.(type) {
+		case *ast.TypeSpec:
+			add("type", s.Name)
+		case *ast.ValueSpec:
+			collectValueSpec(s, d.Tok, add)
+		}
+	}
+}
+
+// collectValueSpec は 1 つの const/var spec の各名前を候補に登録する。
+func collectValueSpec(s *ast.ValueSpec, tok token.Token, add addFunc) {
+	kind := "var"
+	if tok == token.CONST {
+		kind = "const"
+	}
+	for _, nm := range s.Names {
+		add(kind, nm)
 	}
 }
 

@@ -113,7 +113,9 @@ cortex flywheel 4 段階すべてを単体で機械化:
   complexity 同値でも flat な guard 4 個と 4 段入れ子では可読性が違う——その差を捉える。
   if/for/range/switch/select の本体で +1、`else if` 連鎖は同一深度、FuncLit は非算入。
   guard-clause/early-return 規律の機械化。default threshold 4(超過で flag、5=medium/6+=high)。
-  dogfood で 3 件(apidoc.scanFile=6, deadcode.collectCandidates=5, plantracker.Parse=5)。
+  dogfood で 3 件(apidoc.scanFile=6, deadcode.collectCandidates=5, plantracker.Parse=5)を
+  検出 → v0.88–v0.89 で 3 件すべてヘルパ分解し、`nest-depth --dir .` は repo 全体で 0 件
+  (全 1337 関数が深さ ≤4)。pyramid-of-doom 軸を自リポジトリで clean 化済み。
   CLI `nest-depth --dir . [--max N] [--strict]`、MCP `yagura_nest_depth`★ v0.85
 - `internal/globalcheck` — package-level の *可変* グローバル変数を検出(ソクラテス新視点 XVI、
   共有可変状態の軸)。synccheck=ロックコピー、ctxcheck=context 伝播 を見るが、データ競合と

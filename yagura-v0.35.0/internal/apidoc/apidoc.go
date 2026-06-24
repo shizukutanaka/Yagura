@@ -101,84 +101,118 @@ func scanFile(path, src string, r *Report) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
 	if err != nil {
-		line := 1
-		var el scanner.ErrorList
-		if errors.As(err, &el) && len(el) > 0 {
-			line = el[0].Pos.Line
-		}
-		r.Findings = append(r.Findings, Finding{
-			File: path, Line: line, Rule: "parse-error", Severity: "low",
-			Message: "Go source did not parse: " + firstLine(err.Error()),
-		})
+		r.Findings = append(r.Findings, parseErrorFinding(path, err))
 	}
 	if f == nil {
 		return
 	}
 
 	record := func(kind, name string, pos token.Pos, doc *ast.CommentGroup) {
-		documented := doc != nil && len(doc.List) > 0
-		p := fset.Position(pos)
-		r.Symbols = append(r.Symbols, Symbol{
-			File: path, Line: p.Line, Name: name, Kind: kind, Documented: documented,
-		})
-		r.ExportedTotal++
-		r.ByKind[kind]++
-		if documented {
-			r.Documented++
-			return
-		}
-		r.Findings = append(r.Findings, Finding{
-			File: path, Line: p.Line, Name: name, Kind: kind,
-			Rule: "exported-undocumented", Severity: "low",
-			Message: "exported " + kind + " " + name + " has no doc comment — undocumented public contract",
-		})
+		recordSymbol(r, fset, path, kind, name, pos, doc)
 	}
 
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			if d.Recv != nil && len(d.Recv.List) > 0 {
-				// method: 受け手の型が exported かつ method 名が exported のときだけ公開 API。
-				recv := typeName(d.Recv.List[0].Type)
-				if isExported(recv) && isExported(d.Name.Name) {
-					record("method", recv+"."+d.Name.Name, d.Pos(), d.Doc)
-				}
-				continue
-			}
-			if isExported(d.Name.Name) {
-				record("func", d.Name.Name, d.Pos(), d.Doc)
-			}
+			recordFuncDecl(d, record)
 		case *ast.GenDecl:
-			single := len(d.Specs) == 1
-			for _, spec := range d.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					if !isExported(s.Name.Name) {
-						continue
-					}
-					doc := s.Doc
-					if doc == nil && single {
-						doc = d.Doc
-					}
-					record("type", s.Name.Name, s.Pos(), doc)
-				case *ast.ValueSpec:
-					kind := "var"
-					if d.Tok == token.CONST {
-						kind = "const"
-					}
-					for _, nm := range s.Names {
-						if !isExported(nm.Name) {
-							continue
-						}
-						doc := s.Doc
-						if doc == nil && single {
-							doc = d.Doc
-						}
-						record(kind, nm.Name, nm.Pos(), doc)
-					}
-				}
-			}
+			recordGenDecl(d, record)
 		}
+	}
+}
+
+// recordFunc は 1 つの exported シンボルを Report に記録するコールバック。
+type recordFunc func(kind, name string, pos token.Pos, doc *ast.CommentGroup)
+
+// parseErrorFinding は parse 失敗を low severity の finding に変換する。
+func parseErrorFinding(path string, err error) Finding {
+	line := 1
+	var el scanner.ErrorList
+	if errors.As(err, &el) && len(el) > 0 {
+		line = el[0].Pos.Line
+	}
+	return Finding{
+		File: path, Line: line, Rule: "parse-error", Severity: "low",
+		Message: "Go source did not parse: " + firstLine(err.Error()),
+	}
+}
+
+// recordSymbol は exported シンボルを Symbols に追加し、未文書化なら finding を出す。
+func recordSymbol(r *Report, fset *token.FileSet, path, kind, name string, pos token.Pos, doc *ast.CommentGroup) {
+	documented := doc != nil && len(doc.List) > 0
+	p := fset.Position(pos)
+	r.Symbols = append(r.Symbols, Symbol{
+		File: path, Line: p.Line, Name: name, Kind: kind, Documented: documented,
+	})
+	r.ExportedTotal++
+	r.ByKind[kind]++
+	if documented {
+		r.Documented++
+		return
+	}
+	r.Findings = append(r.Findings, Finding{
+		File: path, Line: p.Line, Name: name, Kind: kind,
+		Rule: "exported-undocumented", Severity: "low",
+		Message: "exported " + kind + " " + name + " has no doc comment — undocumented public contract",
+	})
+}
+
+// recordFuncDecl は func/method 宣言を、公開 API のときだけ record する。
+// method は受け手の型が exported かつ method 名が exported のときだけ公開契約。
+func recordFuncDecl(d *ast.FuncDecl, record recordFunc) {
+	if d.Recv != nil && len(d.Recv.List) > 0 {
+		recv := typeName(d.Recv.List[0].Type)
+		if isExported(recv) && isExported(d.Name.Name) {
+			record("method", recv+"."+d.Name.Name, d.Pos(), d.Doc)
+		}
+		return
+	}
+	if isExported(d.Name.Name) {
+		record("func", d.Name.Name, d.Pos(), d.Doc)
+	}
+}
+
+// recordGenDecl は type/const/var 宣言群を走査し、公開シンボルを record する。
+func recordGenDecl(d *ast.GenDecl, record recordFunc) {
+	single := len(d.Specs) == 1
+	for _, spec := range d.Specs {
+		switch s := spec.(type) {
+		case *ast.TypeSpec:
+			recordTypeSpec(s, d, single, record)
+		case *ast.ValueSpec:
+			recordValueSpec(s, d, single, record)
+		}
+	}
+}
+
+// recordTypeSpec は exported 型宣言を record する。
+// doc が無く単一 spec のときは親 GenDecl の doc を継承する。
+func recordTypeSpec(s *ast.TypeSpec, parent *ast.GenDecl, single bool, record recordFunc) {
+	if !isExported(s.Name.Name) {
+		return
+	}
+	doc := s.Doc
+	if doc == nil && single {
+		doc = parent.Doc
+	}
+	record("type", s.Name.Name, s.Pos(), doc)
+}
+
+// recordValueSpec は exported な const/var 名を record する (1 spec に複数名がありうる)。
+func recordValueSpec(s *ast.ValueSpec, parent *ast.GenDecl, single bool, record recordFunc) {
+	kind := "var"
+	if parent.Tok == token.CONST {
+		kind = "const"
+	}
+	for _, nm := range s.Names {
+		if !isExported(nm.Name) {
+			continue
+		}
+		doc := s.Doc
+		if doc == nil && single {
+			doc = parent.Doc
+		}
+		record(kind, nm.Name, nm.Pos(), doc)
 	}
 }
 
