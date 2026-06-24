@@ -87,18 +87,7 @@ func eligible(a Agent, t Task) bool {
 func PlanDataParallel(tasks []Task, agents []Agent, globalConcurrency int) Plan {
 	p := Plan{Strategy: "data", Barrier: true}
 
-	// capacity を持つ agent だけを名前昇順で(tie-break 安定化)。
-	live := make([]Agent, 0, len(agents))
-	for _, a := range agents {
-		if a.CapacityPct > 0 {
-			if a.MaxConcurrency <= 0 {
-				a.MaxConcurrency = 1
-			}
-			live = append(live, a)
-		}
-	}
-	sort.Slice(live, func(i, j int) bool { return live[i].Name < live[j].Name })
-
+	live := liveAgents(agents)
 	if len(live) == 0 {
 		// 全 agent 枯渇 → 何も割り当てられない。
 		for _, t := range tasks {
@@ -111,8 +100,45 @@ func PlanDataParallel(tasks []Task, agents []Agent, globalConcurrency int) Plan 
 		return p
 	}
 
-	// LPT: task を (weight 降順, min_tier 降順, id 昇順) で並べる。
-	// 大きい/制約の強い task を先に置くほど makespan が縮む。
+	order := orderTasksLPT(tasks)
+	res := assignTasks(order, live)
+	p.Unassigned = res.unassigned
+
+	summarizePlan(&p, live, res, globalConcurrency)
+
+	if res.usedTier {
+		p.Notes = append(p.Notes,
+			"tier constraints applied: tasks were routed only to agents meeting their min_tier (classify-and-act / per-agent model)")
+	}
+	sort.Strings(p.Unassigned)
+	if len(p.Unassigned) > 0 {
+		p.Notes = append(p.Notes,
+			"some tasks had no agent meeting their min_tier; raise an agent's tier or lower the task's min_tier")
+	}
+	return p
+}
+
+// liveAgents は capacity の残る agent だけを抽出し、名前昇順に並べる(tie-break 安定化)。
+// MaxConcurrency 未設定(<=0)の agent は 1 に正規化する。
+func liveAgents(agents []Agent) []Agent {
+	live := make([]Agent, 0, len(agents))
+	for _, a := range agents {
+		if a.CapacityPct <= 0 {
+			continue
+		}
+		if a.MaxConcurrency <= 0 {
+			a.MaxConcurrency = 1
+		}
+		live = append(live, a)
+	}
+	sort.Slice(live, func(i, j int) bool { return live[i].Name < live[j].Name })
+	return live
+}
+
+// orderTasksLPT は LPT 用に task を (weight 降順, min_tier 降順, id 昇順) で安定ソートする。
+// 大きい/制約の強い task を先に置くほど makespan が縮む。weight 未設定(<=0)は 1 に正規化し、
+// 元 slice は変更しない。
+func orderTasksLPT(tasks []Task) []Task {
 	order := make([]Task, len(tasks))
 	copy(order, tasks)
 	for i := range order {
@@ -129,44 +155,65 @@ func PlanDataParallel(tasks []Task, agents []Agent, globalConcurrency int) Plan 
 		}
 		return order[i].ID < order[j].ID
 	})
+	return order
+}
 
-	// load[name] = 現在の割り当て総 weight。割り当て task list も保持。
-	load := make(map[string]float64, len(live))
-	picked := make(map[string][]string, len(live))
-	usedTier := false
+// assignResult は greedy 割当の中間状態を束ねる。
+type assignResult struct {
+	load       map[string]float64  // agent名 → 現在の割当総 weight
+	picked     map[string][]string // agent名 → 割当 task ID list
+	usedTier   bool                // 1 つでも min_tier 制約付き task を割り当てたか
+	unassigned []string            // どの agent にも載らなかった task ID
+}
 
+// assignTasks は order 順に各 task を最適 agent へ greedy 割当する。
+func assignTasks(order []Task, live []Agent) assignResult {
+	res := assignResult{
+		load:   make(map[string]float64, len(live)),
+		picked: make(map[string][]string, len(live)),
+	}
 	for _, t := range order {
-		best := -1
-		bestScore := math.Inf(1)
-		for i, a := range live {
-			if !eligible(a, t) {
-				continue
-			}
-			// projected finish = (現 load + weight) / capacity。小さいほど良い。
-			score := (load[a.Name] + t.Weight) / float64(a.CapacityPct)
-			if score < bestScore {
-				bestScore = score
-				best = i
-			}
-			// tie は live が名前昇順なので最初に当たった(=辞書順最小)を保持。
-		}
+		best := pickAgent(live, res.load, t)
 		if best < 0 {
-			p.Unassigned = append(p.Unassigned, t.ID)
+			res.unassigned = append(res.unassigned, t.ID)
 			continue
 		}
 		a := live[best]
-		load[a.Name] += t.Weight
-		picked[a.Name] = append(picked[a.Name], t.ID)
+		res.load[a.Name] += t.Weight
+		res.picked[a.Name] = append(res.picked[a.Name], t.ID)
 		if t.MinTier > TierAny {
-			usedTier = true
+			res.usedTier = true
 		}
 	}
+	return res
+}
 
-	// Assignment を agent 名昇順で組み立て。
+// pickAgent は task t に最も適した live agent の index を返す(該当無しは -1)。
+// projected finish =(現 load + weight)/ capacity を最小化。tie は live が名前昇順なので
+// 最初に当たった辞書順最小 agent を保持する。
+func pickAgent(live []Agent, load map[string]float64, t Task) int {
+	best := -1
+	bestScore := math.Inf(1)
+	for i, a := range live {
+		if !eligible(a, t) {
+			continue
+		}
+		score := (load[a.Name] + t.Weight) / float64(a.CapacityPct)
+		if score < bestScore {
+			bestScore = score
+			best = i
+		}
+	}
+	return best
+}
+
+// summarizePlan は割当結果から Assignment 群・FanOutWidth・EstWaves を p に書き込む。
+// global concurrency が fan-out 幅より小さい場合は makespan 上限 note も付す。
+func summarizePlan(p *Plan, live []Agent, res assignResult, globalConcurrency int) {
 	totalAssigned := 0
 	maxAgentWaves := 0
 	for _, a := range live {
-		ids := picked[a.Name]
+		ids := res.picked[a.Name]
 		if len(ids) == 0 {
 			continue
 		}
@@ -176,42 +223,37 @@ func PlanDataParallel(tasks []Task, agents []Agent, globalConcurrency int) Plan 
 		}
 		totalAssigned += len(ids)
 		p.Assignments = append(p.Assignments, Assignment{
-			Agent:      a.Name,
-			Tasks:      ids,
-			Waves:      waves,
-			LoadWeight: load[a.Name],
+			Agent: a.Name, Tasks: ids, Waves: waves, LoadWeight: res.load[a.Name],
 		})
 	}
 	p.FanOutWidth = len(p.Assignments)
 
-	// makespan(wave)推定: agent 内 wave の最大。global concurrency が fan-out 幅
-	// より小さいと同時稼働 agent が絞られるので、その制約も加味する。
+	// makespan(wave)推定: agent 内 wave の最大。global concurrency が fan-out 幅より
+	// 小さいと同時稼働 agent が絞られるので、その制約も加味する。
 	p.EstWaves = maxAgentWaves
-	if globalConcurrency > 0 {
-		slots := 0
-		for _, a := range live {
-			if len(picked[a.Name]) > 0 {
-				slots += a.MaxConcurrency
-			}
+	if gw := globalConcurrencyWaves(live, res.picked, totalAssigned, globalConcurrency); gw > 0 {
+		if gw > p.EstWaves {
+			p.EstWaves = gw
 		}
-		if globalConcurrency < slots && totalAssigned > 0 {
-			gw := int(math.Ceil(float64(totalAssigned) / float64(globalConcurrency)))
-			if gw > p.EstWaves {
-				p.EstWaves = gw
-			}
-			p.Notes = append(p.Notes,
-				"global_concurrency caps simultaneous tasks below the fan-out's natural width; makespan is bounded by the global cap")
-		}
+		p.Notes = append(p.Notes,
+			"global_concurrency caps simultaneous tasks below the fan-out's natural width; makespan is bounded by the global cap")
 	}
+}
 
-	if usedTier {
-		p.Notes = append(p.Notes,
-			"tier constraints applied: tasks were routed only to agents meeting their min_tier (classify-and-act / per-agent model)")
+// globalConcurrencyWaves は global concurrency が稼働 agent の総 slot より小さいときの
+// makespan 下限 wave 数を返す。制約が効かない(未設定/タスク無し/slot 以上)なら 0。
+func globalConcurrencyWaves(live []Agent, picked map[string][]string, totalAssigned, globalConcurrency int) int {
+	if globalConcurrency <= 0 || totalAssigned <= 0 {
+		return 0
 	}
-	sort.Strings(p.Unassigned)
-	if len(p.Unassigned) > 0 {
-		p.Notes = append(p.Notes,
-			"some tasks had no agent meeting their min_tier; raise an agent's tier or lower the task's min_tier")
+	slots := 0
+	for _, a := range live {
+		if len(picked[a.Name]) > 0 {
+			slots += a.MaxConcurrency
+		}
 	}
-	return p
+	if globalConcurrency >= slots {
+		return 0
+	}
+	return int(math.Ceil(float64(totalAssigned) / float64(globalConcurrency)))
 }

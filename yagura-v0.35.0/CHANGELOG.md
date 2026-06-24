@@ -4,6 +4,54 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.90.0] - 2026-06-24
+
+### Theme — "complexity sweep: the worst outlier, decomposed"
+
+**Q:** v0.88–v0.89 retired the `nest-depth` axis entirely. The next-most-actionable
+size signal is `calibrate`'s **complexity** outlier list — and with
+`plantracker.Parse` gone, the new #1 is `agentparallel.PlanDataParallel`
+(cyclomatic complexity 26 vs gate 10, 131 lines). It is a *pure* function (the
+LPT data-parallel planner) with 10 existing tests — exactly the safe, high-value
+target. **A:** Decompose it; the worst outlier is the right place to spend the
+refactor budget.
+
+#### Refactor: `agentparallel.PlanDataParallel` decomposed (no behavior change)
+
+The monolithic planner is split into six single-responsibility helpers, each a
+phase lifted verbatim from the original control flow:
+
+- `liveAgents(agents) []Agent` — filter to agents with capacity, normalize
+  `MaxConcurrency`, sort by name (stable tie-break)
+- `orderTasksLPT(tasks) []Task` — LPT ordering (weight↓, min_tier↓, id↑), pure
+- `assignTasks(order, live) assignResult` — greedy assignment loop, returning a
+  bundled `assignResult{load, picked, usedTier, unassigned}` (one struct, not 4
+  bare returns — respecting the suite's own `return-check` axis)
+- `pickAgent(live, load, t) int` — projected-finish minimization for one task
+- `summarizePlan(*p, live, res, gc)` — Assignment build + `EstWaves`/`FanOutWidth`
+- `globalConcurrencyWaves(live, picked, total, gc) int` — global-cap wave bound
+
+Two `if cond {…}` blocks were flipped to early-`continue`/early-`return` guards
+(`liveAgents`, `globalConcurrencyWaves`) — keeping the new helpers flat, in line
+with the nest-depth discipline from v0.89.
+
+#### Result — complexity 26 → max 6 in the package
+
+```
+before:  PlanDataParallel complexity 26 (calibrate Tukey far-out outlier)
+after:   package max complexity 6, 0 functions over the gate-10 threshold
+```
+
+The 10 existing `agentparallel` tests pass **unchanged** under `-race` before and
+after — the proof the refactor is behavior-preserving. Subtlety preserved: the
+`global_concurrency` note fires under exactly the original condition
+(`gc>0 && total>0 && gc<slots`), now expressed as `globalConcurrencyWaves(...) > 0`.
+
+#### Zero new dependencies / zero new surface
+ADR-0001 maintained. `go.mod` unchanged. No new MCP tool, package, CLI verb, or
+doc count change — **88 MCP tools, 82 internal packages** unchanged; pure
+internal refactor. Reproducible build: 85 consecutive releases (v0.6 → v0.90).
+
 ## [v0.89.0] - 2026-06-24
 
 ### Theme — "nest-depth reaches zero: the pyramid is flattened repo-wide"
