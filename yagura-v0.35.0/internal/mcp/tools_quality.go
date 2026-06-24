@@ -40,6 +40,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/returncheck"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
+	"github.com/shizukutanaka/yagura/internal/thelper"
 	"github.com/shizukutanaka/yagura/internal/typeassert"
 )
 
@@ -1442,6 +1443,36 @@ func buildPreallocTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := prealloc.Scan(in.Files)
+			return rep, nil
+		},
+	}
+}
+
+func buildThelperTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_thelper",
+		Description: "[Q] Test quality: test helpers (take *testing.T/B/TB) that never call t.Helper() (failures point at the helper; thelper-style)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := thelper.Scan(in.Files)
 			return rep, nil
 		},
 	}

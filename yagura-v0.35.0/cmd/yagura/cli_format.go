@@ -71,6 +71,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/sessionsummary"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
+	"github.com/shizukutanaka/yagura/internal/thelper"
 	"github.com/shizukutanaka/yagura/internal/today"
 	"github.com/shizukutanaka/yagura/internal/typeassert"
 )
@@ -1772,6 +1773,21 @@ func humanCognit(w io.Writer, r cognit.Report) {
 	fmt.Fprintln(tw, "SEVERITY\tCOGNIT\tFILE\tLINE\tFUNC")
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Cognit, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanThelper(w io.Writer, r thelper.Report) {
+	fmt.Fprintf(w, "thelper: %d files, %d helper(s), %d missing t.Helper()\n",
+		r.FilesScanned, r.FuncsScanned, r.Flagged)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no test-helper hygiene issues — every helper marks itself with t.Helper()")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tFUNC\tPARAM")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.Severity, f.File, f.Line, f.Func, f.Name)
 	}
 	tw.Flush()
 }

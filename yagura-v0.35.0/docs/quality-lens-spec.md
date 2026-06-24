@@ -49,7 +49,7 @@ Lenses are organized by the **axis** they measure:
 | Error-chain integrity | `errwrap` (`%w` / `errors.Is` / `errors.As`; errorlint-style) |
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
 | Public contract | `apidoc` (exported-symbol docs), `recvcheck` (receiver consistency) |
-| Test trust | `testcoverage` (source↔test mapping), `assertcheck` (assertion density) |
+| Test trust | `testcoverage` (source↔test mapping), `assertcheck` (assertion density), `thelper` (test-helper `t.Helper()` hygiene) |
 | Concurrency | `ctxcheck` (`context.Context` first-param + no struct field), `synccheck` (sync-lock copy discipline), `globalcheck` (mutable global state) |
 | Meta | `coverage` (scan blind spots), `hotspot` (multi-lens convergence), `calibrate` (corpus-derived thresholds) |
 
@@ -597,3 +597,43 @@ that passed unchanged, demonstrating the lens drives real, verifiable
 optimization. The remaining ~49 are surfaced as the performance backlog: like the
 other lenses, `prealloc`'s value is the audit, and the highest-traffic loops
 (scanners, formatters) are the first to address.
+
+## 20. `thelper` — specification (test-helper `t.Helper()` hygiene)
+
+**Question:** *`assertcheck` measures whether tests assert anything — but is the
+test scaffolding itself trustworthy?* A test helper that takes `*testing.T` and
+calls `t.Fatal`/`t.Error` but never calls `t.Helper()` reports its failures
+against its *own* line numbers, so a failing assertion points inside the helper
+rather than at the test that called it — actively misleading during debugging.
+`t.Helper()` fixes this, and the recognized `thelper` (kulti/thelper) linter
+enforces it. No Yagura lens covered test-helper hygiene.
+
+`thelper.Scan(files)` walks every `FuncDecl`. A function is a *helper* if it
+takes a parameter whose type (pointer stripped) is the literal selector
+`testing.T` / `testing.B` / `testing.TB` / `testing.F`. It is flagged
+(`missing-t-helper`, medium) when **no** `<param>.Helper()` call appears anywhere
+in its body.
+
+Conservative scoping keeps false positives near zero:
+
+- **Entry points are excluded.** Names matching Go's test-runner convention
+  (`Test`/`Benchmark`/`Fuzz`/`Example` followed by an uppercase letter, digit,
+  `_`, or end — so `TestMain` and `TestFoo` are out, but `testHelper` is in) are
+  run *by* the framework and need no `Helper()`.
+- **Literal `testing.X` only.** Aliased imports would need type resolution
+  (same constraint as `ctxcheck`); skipped.
+- **Blank / unnamed `testing` params are skipped** — `Helper()` can't be called
+  on them, so flagging would be noise.
+- **Absence only.** A helper that calls `Helper()` anywhere (even not first) is
+  accepted; the lens does not enforce *position*, avoiding style churn.
+- **FuncLit closures are not scanned** (named `FuncDecl` only), sidestepping the
+  `t.Run` subtest-closure debate.
+
+Unlike production-code lenses (L4), `thelper`'s subject *is* tests, so it scans
+`_test.go` files too (and `testutil`-style helpers in regular files).
+
+**Dogfood note**: of 68 helper candidates across Yagura, exactly **one**
+(`internal/mcp/tools_pindrift_test.go:depsWithPinDrift`) lacked `t.Helper()`. It
+was fixed in the same release (one line), so `thelper --dir .` now reports zero —
+a high-discipline result that doubles as a regression gate (`thelper --strict` in
+CI keeps it at zero).

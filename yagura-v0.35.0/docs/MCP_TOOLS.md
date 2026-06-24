@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **90 tools**.
+Generated from a live yagura — **91 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (43)
+- [Misc](#misc) (44)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -896,6 +896,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 ### `yagura_sync_check`
 
 [Q] sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex/RWMutex/etc (copylocks-style)
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
+
+---
+
+### `yagura_thelper`
+
+[Q] Test quality: test helpers (take *testing.T/B/TB) that never call t.Helper() (failures point at the helper; thelper-style)
 
 **Arguments:**
 

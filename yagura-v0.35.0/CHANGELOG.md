@@ -4,6 +4,61 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.93.0] - 2026-06-24
+
+### Theme — "thelper: test-helper hygiene, the test-quality axis deepened (Socratic 新視点 XX)"
+
+**Q:** `assertcheck` measures whether tests *assert* anything (density) — but is
+the test *scaffolding* itself trustworthy? A test helper that takes `*testing.T`
+and calls `t.Fatal`/`t.Error` but never calls `t.Helper()` reports failures
+against its *own* line numbers, so a failing assertion points inside the helper
+instead of the test that called it — actively misleading mid-debug. **A:**
+`t.Helper()` fixes it, and the recognized `thelper` (kulti/thelper) linter — a
+Qiita/Zenn staple ("Goのテストでヘルパー関数に t.Helper() を忘れない") — enforces
+it. Test-helper hygiene was unmeasured by any Yagura lens.
+
+#### New lens: `internal/thelper` (91st MCP tool, 85th package)
+
+`thelper.Scan(files)` walks every `FuncDecl`. A function is a *helper* if a
+parameter's type (pointer stripped) is the literal selector `testing.T` /
+`testing.B` / `testing.TB` / `testing.F`. It is flagged (`missing-t-helper`,
+medium) when **no** `<param>.Helper()` call appears anywhere in its body.
+
+Conservative scoping for near-zero false positives:
+- **entry points excluded** — Go's test-runner names (`Test`/`Benchmark`/`Fuzz`/
+  `Example` + uppercase/digit/`_`/end, so `TestMain`/`TestFoo` are out but
+  `testHelper` is in) are run *by* the framework.
+- **literal `testing.X` only** (aliased imports need type resolution; skipped).
+- **blank / unnamed `testing` params skipped** (can't call `Helper()` on them).
+- **absence only** — a helper that calls `Helper()` anywhere (even not first) is
+  accepted; position is not enforced, avoiding style churn.
+- **`FuncLit` closures not scanned** — sidesteps the `t.Run` subtest debate.
+
+Unlike production-code lenses (contract L4), `thelper`'s subject *is* tests, so
+it scans `_test.go` too. 17 TDD tests (Red→Green), all `-race` green.
+
+#### Dogfood: 68 helpers, exactly 1 miss — *fixed*, lens now at zero
+
+```
+$ yagura thelper --dir .          # 305 files, 68 helpers
+medium  internal/mcp/tools_pindrift_test.go:43  depsWithPinDrift
+```
+
+Of 68 helper candidates across Yagura, **exactly one** (`depsWithPinDrift`)
+lacked `t.Helper()` — a one-line fix applied in this release, so `thelper --dir .`
+now reports **0**. A high-discipline result that doubles as a regression gate:
+`thelper --strict` in CI keeps it there. Like the v0.92 `prealloc` fixes, the lens
+both measures *and* drove a concrete, verified correction.
+
+#### Wiring
+- CLI `thelper --dir . [--strict]`
+- MCP `yagura_thelper` (`{files}`)
+- `docs/quality-lens-spec.md` §20 + extended "Test trust" taxonomy row
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. 91 MCP tools, 85 internal packages.
+Reproducible build: 88 consecutive releases (v0.6 → v0.93).
+
 ## [v0.92.0] - 2026-06-24
 
 ### Theme — "prealloc: the performance axis (Socratic 新視点 XIX)"

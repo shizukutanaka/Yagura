@@ -102,6 +102,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/sessionsummary"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
+	"github.com/shizukutanaka/yagura/internal/thelper"
 	"github.com/shizukutanaka/yagura/internal/today"
 	"github.com/shizukutanaka/yagura/internal/typeassert"
 	"github.com/shizukutanaka/yagura/internal/vex"
@@ -143,7 +144,7 @@ var cliHandlers = map[string]cliHandler{
 	"path-policy": cliPathPolicy, "inject-scan": cliInjectScan, "cc-security": cliCCSecurity,
 	"claudemd-audit": cliClaudeMdAudit,
 	// ② Review code-quality gates
-	"ai-verify": cliAIVerify, "quality-check": cliQualityCheck, "test-audit": cliTestAudit,
+	"ai-verify": cliAIVerify, "quality-check": cliQualityCheck, "test-audit": cliTestAudit, "thelper": cliThelper,
 	"alert-fix": cliAlertFix, "alert-resolve": cliAlertResolve, "alert-snapshot": cliAlertSnapshot, "ast-check": cliASTCheck, "review-gate": cliReviewGate,
 	"diff-scan": cliDiffScan, "flow-risk": cliFlowRisk, "coverage": cliCoverage,
 	"assert-check": cliAssertCheck, "err-policy": cliErrPolicy, "complexity": cliComplexity, "cognit": cliCognit,
@@ -3066,6 +3067,33 @@ func cliPrealloc(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// cliThelper は `yagura thelper` を処理する。*testing.T/B/TB を受け取りながら
+// t.Helper() を呼ばないテストヘルパー(失敗行がヘルパー内部を指してしまう欠陥)を
+// flag する。assertcheck(assertion 密度)を補完するテスト品質軸。
+func cliThelper(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("thelper", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	strict := fset.Bool("strict", false, "exit non-zero if any helper is missing t.Helper()")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir) // includes *_test.go; thelper's subject is tests
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := thelper.Scan(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanThelper(stdout, rep)
+	if *strict && rep.Flagged > 0 {
+		return fmt.Errorf("%d test helper(s) missing t.Helper()", rep.Flagged)
+	}
+	return nil
+}
+
 // cliGlobalCheck は `yagura global-check` を処理する。package-level の可変グローバル
 // 変数(実際に mutate されるもの)を検出する。共有可変状態 = テスト不能性 + データ競合の
 // 源。--strict で 1 件でもあれば exit 1。
@@ -5029,7 +5057,7 @@ var yaguraVerbs = []string{
 	"quality-check", "recv-check", "recovery-decide", "register", "regress", "release-radar",
 	"return-check", "review-gate", "risk-triage", "sbom", "search", "secret", "secretscan",
 	"self-improve-history", "session-summary", "settings-audit", "skill-audit",
-	"stats", "sync-check", "test-audit", "today", "type-assert", "unregister", "update", "vex-audit",
+	"stats", "sync-check", "test-audit", "thelper", "today", "type-assert", "unregister", "update", "vex-audit",
 	"verify", "version", "workflow-audit",
 }
 
@@ -5178,6 +5206,7 @@ func buildZshVerbLines() string {
 		"skill-audit":          "audit .claude/skills (score + retire recommendations)",
 		"stats":                "registry statistics",
 		"test-audit":           "source-test coverage detection (Go/TS/JS/Python/Rust)",
+		"thelper":              "test helpers (take *testing.T/B/TB) missing a t.Helper() call",
 		"today":                "top portfolio projects to focus on now",
 		"unregister":           "unregister a project from the registry",
 		"update":               "update a project in the registry",
