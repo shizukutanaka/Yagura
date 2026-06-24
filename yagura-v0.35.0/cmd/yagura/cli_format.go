@@ -28,6 +28,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/codehealth"
+	"github.com/shizukutanaka/yagura/internal/cognit"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/coverage"
@@ -1755,6 +1756,21 @@ func humanNestDepth(w io.Writer, r nestdepth.Report) {
 	fmt.Fprintln(tw, "SEVERITY\tDEPTH\tFILE\tLINE\tFUNC")
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Depth, f.File, f.Line, f.Func)
+	}
+	tw.Flush()
+}
+
+func humanCognit(w io.Writer, r cognit.Report) {
+	fmt.Fprintf(w, "cognit: %d files, %d funcs, %d over threshold %d (max %d, avg %.1f)\n",
+		r.FilesScanned, r.FuncsScanned, r.OverThreshold, r.Threshold, r.MaxCognit, r.AvgCognit)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no cognitively-complex functions — code reads top-to-bottom")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tCOGNIT\tFILE\tLINE\tFUNC")
+	for _, f := range r.Findings {
+		fmt.Fprintf(tw, "%s\t%d\t%s\t%d\t%s\n", f.Severity, f.Cognit, f.File, f.Line, f.Func)
 	}
 	tw.Flush()
 }

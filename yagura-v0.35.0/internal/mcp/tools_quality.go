@@ -16,6 +16,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/codehealth"
+	"github.com/shizukutanaka/yagura/internal/cognit"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/ctxcheck"
@@ -1375,6 +1376,41 @@ func buildTypeAssertTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := typeassert.Scan(in.Files)
+			return rep, nil
+		},
+	}
+}
+
+func buildCognitTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_cognit",
+		Description: "[Q] Cognitive complexity per function (human reading cost; nesting-weighted, switch=1; gocognit-style — complements McCabe)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+				"max": map[string]any{
+					"type":        "integer",
+					"description": "cognitive-complexity threshold above which a function is flagged (default 15)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+				Max   int               `json:"max"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := cognit.Scan(in.Files, in.Max)
 			return rep, nil
 		},
 	}

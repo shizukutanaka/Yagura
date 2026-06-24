@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 82 internal packages
+## Map — 83 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 88 tool definitions
+- `internal/mcp` — MCP server + 89 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -133,6 +133,15 @@ cortex flywheel 4 段階すべてを単体で機械化:
   dogfood で 5(dedupe の container/list `Value.(*entry)` 3 + tools.go の map sort comparator 2、
   いずれも構造上安全だが panic 面を可視化)。CLI `type-assert --dir . [--strict]`、MCP
   `yagura_type_assert`★ v0.87
+- `internal/cognit` — 関数の認知的複雑度(Cognitive Complexity, Sonar/gocognit 互換)を
+  go/ast で計測(ソクラテス新視点 XVIII、Qiita/Zenn 調査、Go Conference 2022 の go/ast 実装
+  発表が題材)。complexity=分岐パス数、nestdepth=最深ネスト深度——どちらも単独では「人間が
+  読んでどれだけ理解しづらいか」を捉えない。cognit は両軸を直感に合わせ統合: フロー破壊構造
+  (if/for/switch/select/論理演算子列/ラベル付き分岐)に基本 +1、ただし *ネスト段で重み付け*
+  (3 段の if は +4)。switch は case 数に依らず +1(flat 多分岐は人間に優しい — McCabe との
+  決定的差)。else if は構造増分のみ、クロージャはネスト +1、直接再帰は +1。既定 gate 15
+  (golangci-lint 推奨 10-20)。型情報不要・決定論的。CLI `cognit --dir . [--max N] [--strict]`、
+  MCP `yagura_cognit`★ v0.91
 - `internal/paramcheck` — 関数のパラメータ数(Fowler "Long Parameter List" smell)を
   go/ast で計測(ソクラテス新視点、complexity の *水平方向の対*)。complexity だけを
   gate にすると巨大関数をヘルパに割って複雑度を下げつつ 6・7 個と引数を引き回す退行を

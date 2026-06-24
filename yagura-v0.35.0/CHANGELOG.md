@@ -4,6 +4,74 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.91.0] - 2026-06-24
+
+### Theme — "cognit: cognitive complexity, the human-reading-cost axis (Socratic 新視点 XVIII)"
+
+**Q:** Yagura measures branch *paths* (`complexity` / McCabe) and the deepest
+*nesting* (`nestdepth`) as separate axes. But a developer doesn't read a function
+as "paths" or "depth" — they read it as *effort to understand*. Which functions
+are genuinely **hard to follow**, not merely large or branchy? **A:** Cognitive
+Complexity — the Sonar metric, implemented in Go as `gocognit` (and the subject of
+a Go Conference 2022 Spring talk on building it *with go/ast*). It is the
+recognized synthesis of exactly the two axes Yagura already has — and it was
+unmeasured. Qiita/Zenn research surfaced it as a Go-community standard distinct
+from `gocyclo`.
+
+#### New lens: `internal/cognit` (89th MCP tool, 83rd package)
+
+`cognit.Scan(files, threshold)` walks each function with a nesting counter and
+applies the Sonar rules faithfully:
+
+- **base +1** for each flow-breaking structure: `if` / `for` / `range` /
+  `switch` / `select` / labeled `break`·`continue`·`goto` / each sequence of
+  `&&` or `||`.
+- **nesting increment**: `if`/`for`/`switch`/`select` additionally cost `+nesting`
+  — an `if` three levels deep costs **+4**, not +1. Deep pyramids grow linearly,
+  not for free.
+- **`switch` costs +1 regardless of case count** — flat multi-way branching is
+  easy for a human. This is the *decisive divergence from McCabe*, which charges
+  +1 per case.
+- `else if` is structural-only (+1, no nesting penalty); function literals add a
+  nesting level but no base increment (folded into the enclosing function, unlike
+  McCabe which counts closures separately); direct self-recursion +1 per function.
+
+Default gate **15** (golangci-lint's recommended 10–20 band; distinct from
+McCabe's 10). Type-free, deterministic, `_test.go` + `TestXxx`/`BenchmarkXxx`/
+`ExampleXxx`/`FuzzXxx` excluded — the standard lens contract. 29 TDD tests
+(Red→Green), all `-race` green: nesting increments, else-if, switch-vs-case,
+logical-operator sequences, labeled jumps, closure nesting, recursion-once,
+type-switch/select, severity boundaries.
+
+#### Dogfood: the lens disagrees with both McCabe *and* line count — as designed
+
+```
+$ yagura cognit --dir .          # 1364 functions, 88 over gate 15
+high  88  internal/globalcheck/globalcheck.go  collectLocalsAndMutations
+high  84  cmd/yagura/main.go                   run        (543 lines!)
+high  45  internal/synccheck/synccheck.go      collectLockyTypes
+high  42  internal/deprank/deprank.go          Scan
+```
+
+The headline result: `globalcheck.collectLocalsAndMutations` (~80 lines, cognit
+**88**) scores *higher* than `main.go:run` (**543 lines**, cognit 84). McCabe and
+raw line-count both rank `run` as the worst function in the repo; cognit says a
+nesting-heavy 80-line analyzer is **harder to actually read** than a long-but-flat
+wiring function. That inversion is the entire point — and, honestly, the lens's
+own sibling lens code (`globalcheck`, `synccheck`) tops the list. Findings are
+**surfaced, not force-fixed**: like the v0.88–v0.90 sweep, the convergence of
+cognit + McCabe + nestdepth on a function is the highest-confidence refactor
+signal, and those targets become the backlog for subsequent releases.
+
+#### Wiring
+- CLI `cognit --dir . [--max N] [--strict]`
+- MCP `yagura_cognit` (`{files, max}`)
+- `docs/quality-lens-spec.md` §18 + new "Cognitive load" taxonomy row
+
+#### Zero new dependencies
+ADR-0001 maintained. `go.mod` unchanged. 89 MCP tools, 83 internal packages.
+Reproducible build: 86 consecutive releases (v0.6 → v0.91).
+
 ## [v0.90.0] - 2026-06-24
 
 ### Theme — "complexity sweep: the worst outlier, decomposed"

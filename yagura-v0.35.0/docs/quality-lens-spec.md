@@ -44,6 +44,7 @@ Lenses are organized by the **axis** they measure:
 | Correctness / shadowing | `predeclared` (declarations shadowing Go builtins) |
 | Panic safety | `typeassert` (single-value type assertions that panic on mismatch) |
 | Function internals | `complexity` (cyclomatic / breadth), `nestdepth` (max nesting / depth), `errdiscard` (discarded errors), `errpolicy` (diagnosability) |
+| Cognitive load | `cognit` (cognitive complexity — nesting-weighted human reading cost; synthesis of breadth × depth) |
 | Error-chain integrity | `errwrap` (`%w` / `errors.Is` / `errors.As`; errorlint-style) |
 | Package structure | `coupling`, `deprank` (in-degree rank), `deadcode` (unreachable unexported) |
 | Public contract | `apidoc` (exported-symbol docs), `recvcheck` (receiver consistency) |
@@ -514,3 +515,45 @@ findings, these are surfaced (making the panic surface *visible*) rather than
 force-refactored: converting idiomatic `container/list` assertions to comma-ok is
 over-defensive, and the map comparator is safe by construction. The lens's value
 is the audit, not a mandate.
+
+## 18. `cognit` — specification (cognitive complexity / human reading cost)
+
+**Question:** *`complexity` (McCabe) measures branch paths; `nestdepth` measures
+the deepest nesting. But which functions are actually hard for a human to
+read?* Neither single axis answers that: McCabe charges +1 per `switch` case
+(over-penalizing a flat 10-way `switch` that a human scans easily) yet is blind to
+nesting; `nestdepth` sees only the single deepest path. **Cognitive Complexity**
+(Sonar; implemented in Go as `gocognit`, and the subject of a Go Conference 2022
+Spring talk on a go/ast implementation) is the recognized metric that synthesizes
+both — the breadth × depth product weighted to human intuition. Surfaced via
+Qiita/Zenn as a Go-community standard distinct from `gocyclo`.
+
+`cognit.Scan(files, threshold)` walks each `FuncDecl` body with a `nesting`
+counter:
+
+- **base +1** for `if` / `for` / `range` / `switch` / `select`, each sequence of
+  `&&` or `||` (operator change starts a new sequence; parens do not break a
+  same-operator run), and labeled `break`/`continue`/`goto`.
+- **nesting increment**: `if`/`for`/`switch`/`select` additionally add `+nesting`
+  (depth at which they appear). An `if` nested 3 deep contributes `1 + 3 = 4`.
+- **`switch` = +1 regardless of case count** — the decisive divergence from
+  McCabe.
+- `else if` adds +1 structural only (no nesting penalty); `else` likewise. A
+  function literal raises the nesting level by one but adds no base increment and
+  is folded into the enclosing function (McCabe counts closures as separate
+  functions — `cognit` does not). Direct self-recursion adds +1 once per function.
+
+Default threshold **15** (golangci-lint's recommended 10–20 band). Type-free,
+deterministic, standard test-exclusion. This is the breadth-and-depth pair to
+`complexity` and `nestdepth`: a function flagged by **all three** is the
+highest-confidence refactor target the suite can name.
+
+**Dogfood note**: 88 of 1364 functions exceed 15. The instructive result is the
+*ordering*: `globalcheck.collectLocalsAndMutations` (~80 lines, cognit **88**)
+outranks `cmd/yagura/main.go:run` (**543 lines**, cognit 84). McCabe and raw line
+count both call `run` the worst function in the repo; `cognit` says the
+nesting-heavy 80-line analyzer is harder to *read*. That inversion — and the fact
+that the lens's own sibling lens code tops the list — is the lens working as
+intended. Findings are surfaced, not force-fixed: cognit + McCabe + nestdepth
+convergence defines the refactor backlog (cf. the v0.88–v0.90 sweep), not a
+mass-rewrite mandate.

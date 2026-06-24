@@ -51,6 +51,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/ccsecurity"
 	"github.com/shizukutanaka/yagura/internal/codehealth"
+	"github.com/shizukutanaka/yagura/internal/cognit"
 	"github.com/shizukutanaka/yagura/internal/complexity"
 	"github.com/shizukutanaka/yagura/internal/config"
 	"github.com/shizukutanaka/yagura/internal/coupling"
@@ -144,7 +145,7 @@ var cliHandlers = map[string]cliHandler{
 	"ai-verify": cliAIVerify, "quality-check": cliQualityCheck, "test-audit": cliTestAudit,
 	"alert-fix": cliAlertFix, "alert-resolve": cliAlertResolve, "alert-snapshot": cliAlertSnapshot, "ast-check": cliASTCheck, "review-gate": cliReviewGate,
 	"diff-scan": cliDiffScan, "flow-risk": cliFlowRisk, "coverage": cliCoverage,
-	"assert-check": cliAssertCheck, "err-policy": cliErrPolicy, "complexity": cliComplexity,
+	"assert-check": cliAssertCheck, "err-policy": cliErrPolicy, "complexity": cliComplexity, "cognit": cliCognit,
 	"coupling": cliCoupling, "api-doc": cliAPIDoc, "dead-code": cliDeadCode,
 	"recv-check": cliRecvCheck, "code-health": cliCodeHealth, "param-check": cliParamCheck,
 	"flag-arg": cliFlagArg, "return-check": cliReturnCheck,
@@ -3007,6 +3008,35 @@ func cliNestDepth(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// cliCognit は `yagura cognit` を処理する。関数の認知的複雑度(Cognitive
+// Complexity, gocognit 互換)を計測し、しきい値(--max、既定 15)を超える関数を
+// flag する。McCabe complexity が分岐パス数を、nestdepth が深さを測るのに対し、
+// cognit はネスト重み付けで「人間の読みづらさ」を測る統合軸(switch は case 数に依らず +1)。
+func cliCognit(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("cognit", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	max := fset.Int("max", 15, "cognitive-complexity threshold; functions above this are flagged")
+	strict := fset.Bool("strict", false, "exit non-zero if any function exceeds --max")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := cognit.Scan(sr.Files, *max)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanCognit(stdout, rep)
+	if *strict && rep.OverThreshold > 0 {
+		return fmt.Errorf("%d function(s) exceed cognitive complexity %d (max observed %d)", rep.OverThreshold, rep.Threshold, rep.MaxCognit)
+	}
+	return nil
+}
+
 // cliGlobalCheck は `yagura global-check` を処理する。package-level の可変グローバル
 // 変数(実際に mutate されるもの)を検出する。共有可変状態 = テスト不能性 + データ競合の
 // 源。--strict で 1 件でもあれば exit 1。
@@ -4961,7 +4991,7 @@ var yaguraVerbs = []string{
 	"agent-config-audit", "agent-event", "agents-md", "ai-verify",
 	"alert-fix", "alert-resolve", "alert-snapshot", "api-doc",
 	"assert-check", "ast-check", "calibrate", "cc-security", "claudemd-audit",
-	"code-health", "complexity", "completion", "coupling", "coverage", "ctx-check",
+	"code-health", "cognit", "complexity", "completion", "coupling", "coverage", "ctx-check",
 	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "err-wrap", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "global-check", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
@@ -5053,6 +5083,7 @@ func buildZshVerbLines() string {
 		"cc-security":          "audit a project's Claude Code security posture",
 		"claudemd-audit":       "audit CLAUDE.md structure (4 sections, instruction budget)",
 		"code-health":          "composite maintainability grade (A-F) per package",
+		"cognit":               "cognitive complexity (human reading cost; nesting-weighted, gocognit-style)",
 		"complexity":           "cyclomatic complexity (McCabe, gocyclo-compatible)",
 		"completion":           "generate shell completion script (bash|zsh|fish)",
 		"coupling":             "package import coupling: fan-in/out + instability",
