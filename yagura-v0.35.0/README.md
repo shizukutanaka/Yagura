@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.93.0** — 91 MCP tools, 85 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **New `thelper` lens (Socratic新視点 XX — test-quality axis, Qiita/Zenn調査):** `assertcheck` measures whether tests *assert* anything (density), but test-helper hygiene was unmeasured. A helper that takes `*testing.T`/`*testing.B`/`testing.TB` but never calls `t.Helper()` makes a failure's line number point *inside the helper* instead of the failing test — a recognized debugging defect the `thelper` linter catches. `thelper` flags such helpers, conservatively: literal `testing.X` params only, test-runner entry points (`Test`/`Benchmark`/`Fuzz`/`Example`) and blank/unnamed params excluded, and it flags only the *complete absence* of a `Helper()` call (no style noise). Dogfooded: of **68 helpers across Yagura, exactly 1** was missing it (`depsWithPinDrift`) — **fixed in this release**, so `thelper --dir .` now reports 0. Previous (**`prealloc` lens** — performance axis: un-preallocated `append` in a range loop; 52 candidates surfaced, 3 fixed). Previous (**`cognit` lens** — Cognitive Complexity, nesting-weighted human reading cost; gocognit-style). Previous (**Complexity sweep**): `agentparallel.PlanDataParallel` (McCabe 26) decomposed into six helpers → package max complexity 6, 0 over gate, 10 tests unchanged. Previous (**nest-depth → zero**): `apidoc.scanFile` (depth 6) and `deadcode.collectCandidates` (depth 5), sharing the same `for→switch→for→switch→for` AST shape, were decomposed so `nest-depth --dir .` reports 0 over threshold across all 1337 functions — the pyramid-of-doom axis fully retired. Previous (**Convergence → refactor**): `plantracker.Parse` was flagged simultaneously by `calibrate` (complexity 32 vs gate 10; 117 lines), `nest-depth` (depth 5), and `hotspot` (multi-lens convergence) — decomposed into six single-responsibility helpers; all three lenses cleared, 11 `TestParse_*` cases unchanged (v0.71 pattern: measure → converge → refactor → confirm). Previous: `typeassert` lens (Socratic新視点 XVII — implicit-panic axis): `astcheck` flags *explicit* `panic()`, but a single-value type assertion `v := x.(T)` *panics implicitly* on mismatch — the safe form is `v, ok := x.(T)` (recognized `forcetypeassert`). Distinct from `errwrap` (error-chain, errors.As): this is panic-safety, any type, comma-ok-form-exempt. Dogfooded on Yagura: 5 unchecked assertions — 3 idiomatic `container/list` `Value.(*entry)` in `dedupe`, 2 in a `map[string]any` sort comparator — all safe-by-construction, now visible. Previous: `globalcheck` lens (Socratic新視点 XVI — shared-mutable-state axis): `synccheck`/`ctxcheck` covered locks and context, but the largest source of data races and untestable code — package-level **mutable global state** — was unmeasured. `globalcheck` flags package vars *actually mutated* somewhere (const/error-sentinels/read-only tables self-exempt); conservative on local shadows (no false positives without type info). Dogfooded on Yagura: 5 of 140 package vars are mutable — 4 Win32 tray-callback globals (a syscall-callback constraint) and `serverVersion` (init-injection) — both justified, now *visible & measurable*. Previous: new `nestdepth` lens (Socratic新視点 XV): McCabe complexity counts branch *paths* but can't tell 4 flat guard clauses from a 4-deep `if{for{if{if}}}` pyramid — they score the same. `nestdepth` measures the orthogonal axis: **maximum control-flow nesting depth** (the pyramid-of-doom that guard-clause/early-return refactors flatten). `else if` chains stay flat (cognitive-complexity style). Dogfooded on Yagura: 3 functions over depth 4 — `apidoc.scanFile` (6), `deadcode.collectCandidates` (5), `plantracker.Parse` (5) — **all three refactored to ≤ depth 4 across v0.88–v0.89, so `nest-depth --dir .` now reports zero repo-wide**. Reproducible build verified.
+Status: **v0.94.0** — 92 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **New `ifacebloat` lens (Socratic新視点 XXI — interface-design axis, Qiita/Zenn調査):** Rob Pike's proverb "the bigger the interface, the weaker the abstraction" is a recognized Go design principle enforced by `sashamelentyev/interfacebloat`. This lens counts named interface methods with `go/ast` (method = 1 per name, embedded interface = 1, type-union term = 1) and flags any over a threshold (default 10). _test.go skipped (mock interfaces are intentionally large). Severity: medium if > threshold, high if > 2×. Dogfooded: found 1 real violation — `mcp.QuotaMonitor` had 12 methods; `IsStale`/`AnyStale` were never called through the interface (ISP violation) and were removed; now 10 methods, 0 findings. Previous (**`thelper` lens** — test-quality axis, Qiita/Zenn調査):** `assertcheck` measures whether tests *assert* anything (density), but test-helper hygiene was unmeasured. A helper that takes `*testing.T`/`*testing.B`/`testing.TB` but never calls `t.Helper()` makes a failure's line number point *inside the helper* instead of the failing test — a recognized debugging defect the `thelper` linter catches. `thelper` flags such helpers, conservatively: literal `testing.X` params only, test-runner entry points (`Test`/`Benchmark`/`Fuzz`/`Example`) and blank/unnamed params excluded, and it flags only the *complete absence* of a `Helper()` call (no style noise). Dogfooded: of **68 helpers across Yagura, exactly 1** was missing it (`depsWithPinDrift`) — **fixed in this release**, so `thelper --dir .` now reports 0. Previous (**`prealloc` lens** — performance axis: un-preallocated `append` in a range loop; 52 candidates surfaced, 3 fixed). Previous (**`cognit` lens** — Cognitive Complexity, nesting-weighted human reading cost; gocognit-style). Previous (**Complexity sweep**): `agentparallel.PlanDataParallel` (McCabe 26) decomposed into six helpers → package max complexity 6, 0 over gate, 10 tests unchanged. Previous (**nest-depth → zero**): `apidoc.scanFile` (depth 6) and `deadcode.collectCandidates` (depth 5), sharing the same `for→switch→for→switch→for` AST shape, were decomposed so `nest-depth --dir .` reports 0 over threshold across all 1337 functions — the pyramid-of-doom axis fully retired. Previous (**Convergence → refactor**): `plantracker.Parse` was flagged simultaneously by `calibrate` (complexity 32 vs gate 10; 117 lines), `nest-depth` (depth 5), and `hotspot` (multi-lens convergence) — decomposed into six single-responsibility helpers; all three lenses cleared, 11 `TestParse_*` cases unchanged (v0.71 pattern: measure → converge → refactor → confirm). Previous: `typeassert` lens (Socratic新視点 XVII — implicit-panic axis): `astcheck` flags *explicit* `panic()`, but a single-value type assertion `v := x.(T)` *panics implicitly* on mismatch — the safe form is `v, ok := x.(T)` (recognized `forcetypeassert`). Distinct from `errwrap` (error-chain, errors.As): this is panic-safety, any type, comma-ok-form-exempt. Dogfooded on Yagura: 5 unchecked assertions — 3 idiomatic `container/list` `Value.(*entry)` in `dedupe`, 2 in a `map[string]any` sort comparator — all safe-by-construction, now visible. Previous: `globalcheck` lens (Socratic新視点 XVI — shared-mutable-state axis): `synccheck`/`ctxcheck` covered locks and context, but the largest source of data races and untestable code — package-level **mutable global state** — was unmeasured. `globalcheck` flags package vars *actually mutated* somewhere (const/error-sentinels/read-only tables self-exempt); conservative on local shadows (no false positives without type info). Dogfooded on Yagura: 5 of 140 package vars are mutable — 4 Win32 tray-callback globals (a syscall-callback constraint) and `serverVersion` (init-injection) — both justified, now *visible & measurable*. Previous: new `nestdepth` lens (Socratic新視点 XV): McCabe complexity counts branch *paths* but can't tell 4 flat guard clauses from a 4-deep `if{for{if{if}}}` pyramid — they score the same. `nestdepth` measures the orthogonal axis: **maximum control-flow nesting depth** (the pyramid-of-doom that guard-clause/early-return refactors flatten). `else if` chains stay flat (cognitive-complexity style). Dogfooded on Yagura: 3 functions over depth 4 — `apidoc.scanFile` (6), `deadcode.collectCandidates` (5), `plantracker.Parse` (5) — **all three refactored to ≤ depth 4 across v0.88–v0.89, so `nest-depth --dir .` now reports zero repo-wide**. Reproducible build verified.
 
 ---
 
@@ -36,7 +36,7 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
 │        ▼                              │              │
 │  ┌────────────────────────────────────────────────┐  │
 │  │  yagura daemon (single binary, ~9 MB)          │  │
-│  │  - 91 MCP tools                                │  │
+│  │  - 92 MCP tools                                │  │
 │  │  - HTTP hook receiver                          │  │
 │  │  - Prometheus /metrics                         │  │
 │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -69,7 +69,7 @@ icon that opens in its own window, like a native app. On Windows, double-click
 as an app window; on macOS/Linux, run `yagura-tray` for the same one-click
 launch. From the app you can **register your first project with a form** (no
 terminal needed) — it goes through the MCP server and is audited like any other
-call. This adds nothing to the core — the daemon and the 91 MCP tools are
+call. This adds nothing to the core — the daemon and the 92 MCP tools are
 unchanged; the desktop app is just the dashboard made installable via web
 standards. See [docs/desktop.md](docs/desktop.md).
 
@@ -181,7 +181,7 @@ Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has bee
 
 ### Other agents (Gemini CLI, Codex, custom)
 
-Yagura is agent-agnostic. Its 91 MCP tools work with **any** MCP client, and the
+Yagura is agent-agnostic. Its 92 MCP tools work with **any** MCP client, and the
 daemon's hook ingestion is agent-neutral too: **point any agent's lifecycle
 hooks at `/hooks/agent`** (Gemini CLI, Codex, raw OpenTelemetry, or a generic
 shape) and the receiver normalizes them via `internal/agentevent` — aligned to
@@ -193,7 +193,7 @@ normalization for programmatic use, and `/metrics` exports per-project, per-tool
 agent activity (`yagura_hook_tool_calls_total{project,tool}`, aligned to the
 OTel `gen_ai.tool.name` convention) for Prometheus/Grafana.
 
-## MCP tools (91 total)
+## MCP tools (92 total)
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-88 consecutive releases (v0.6 → v0.93) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+89 consecutive releases (v0.6 → v0.94) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
@@ -267,7 +267,7 @@ sha256sum -c SHA256SUMS
 ```
 .
 ├── cmd/yagura/              # Entry point (single binary)
-├── internal/                # 85 packages, none exported
+├── internal/                # 86 packages, none exported
 │   ├── mcp/                 # MCP server, tool registration
 │   ├── registry/            # Project registry (JSON file per project)
 │   ├── scanner/             # Background sensor loop (24 h)

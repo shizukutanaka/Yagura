@@ -51,6 +51,7 @@ Lenses are organized by the **axis** they measure:
 | Public contract | `apidoc` (exported-symbol docs), `recvcheck` (receiver consistency) |
 | Test trust | `testcoverage` (source↔test mapping), `assertcheck` (assertion density), `thelper` (test-helper `t.Helper()` hygiene) |
 | Concurrency | `ctxcheck` (`context.Context` first-param + no struct field), `synccheck` (sync-lock copy discipline), `globalcheck` (mutable global state) |
+| Interface design | `ifacebloat` (named interfaces with too many methods; interfacebloat-style) |
 | Meta | `coverage` (scan blind spots), `hotspot` (multi-lens convergence), `calibrate` (corpus-derived thresholds) |
 
 ## 4. Strengths (長所)
@@ -637,3 +638,62 @@ Unlike production-code lenses (L4), `thelper`'s subject *is* tests, so it scans
 was fixed in the same release (one line), so `thelper --dir .` now reports zero —
 a high-discipline result that doubles as a regression gate (`thelper --strict` in
 CI keeps it at zero).
+
+## 21. `ifacebloat` — specification (interface design / Interface Segregation)
+
+### Motivation (Socratic新視点 XXI — Qiita/Zenn 調査)
+
+Rob Pike's proverb — **"The bigger the interface, the weaker the abstraction"** —
+is one of Go's most-cited design aphorisms (Qiita/Zenn 上で繰り返し言及される
+「インターフェースは小さく保て」). The dedicated linter `sashamelentyev/interfacebloat`
+enforces a method-count gate; prior Yagura lenses measured function internals,
+signatures, and package structure, but the *interface granularity* axis was
+untouched. Large interfaces:
+
+1. Make mocking difficult (many unused stubs to write).
+2. Force callers to depend on methods they don't need (Interface Segregation
+   Principle violation).
+3. Signal vague responsibility boundaries.
+
+### Counting rules (go/ast, type-info-free)
+
+- Named method declaration → **+1 per name** (`A, B func()` = 2).
+- Embedded interface (`io.Reader`) → **+1** (type resolution not available without
+  `go/types`; counted as one element in the interface body).
+- Type-union term (`~int | ~string`) → **+1** (the whole constraint term, not per
+  constituent).
+
+These rules match `interfacebloat`'s conservative behaviour and require no
+external packages (ADR-0001).
+
+### Thresholds and severity
+
+| Condition | Severity |
+|---|---|
+| count ≤ threshold | OK (no finding) |
+| count > threshold | `medium` |
+| count > 2 × threshold | `high` |
+
+Default threshold: **10** (interfacebloat default).
+
+### Exclusions
+
+- `_test.go` files — test mocks intentionally implement large interfaces.
+- Non-`.go` files.
+- Anonymous / unnamed `interface{...}` that are not `TypeSpec` (inline type
+  constraints in generics are not named interfaces and are not counted).
+
+### Output (deterministic)
+
+`Report.Interfaces` sorted `File → Line → Name`. Findings same order. Ties in
+name are broken alphabetically. `MaxMethods` is the largest method count observed
+(including non-flagged interfaces).
+
+**Dogfood note**: `iface-bloat --dir .` on Yagura found **1 violation** on first
+run — `mcp.QuotaMonitor` (12 methods). Inspection confirmed that `IsStale` and
+`AnyStale` were included in the interface but never called through it (only used
+internally within `internal/quotamonitor`): a textbook ISP violation. Both methods
+were removed from the interface in the same release; `QuotaMonitor` is now exactly
+10 methods (at threshold, not flagged). `iface-bloat --dir .` now reports 0, and
+the fix shrank the public contract without changing any behaviour — the lens
+immediately paid for itself.

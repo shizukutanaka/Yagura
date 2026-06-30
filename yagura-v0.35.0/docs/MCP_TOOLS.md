@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **91 tools**.
+Generated from a live yagura — **92 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (44)
+- [Misc](#misc) (45)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -584,6 +584,19 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 |---|---|---|
 | `files` (object) | ★ |  |
 | `min_lenses` (integer) |  | Minimum number of lenses that must converge to report a hotspot (default 2) |
+
+---
+
+### `yagura_ifacebloat`
+
+[Q] Interface design: named interfaces with too many methods (Rob Pike "bigger interface = weaker abstraction"; interfacebloat-style)
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `files` (object) | ★ |  |
+| `threshold` (integer) |  | method-count threshold above which an interface is flagged (default 10) |
 
 ---
 

@@ -56,8 +56,6 @@ type QuotaMonitor interface {
 	MarkSwitched(agent quotamonitor.Agent) error
 	// v0.14.0: heartbeat protocol
 	RecordHeartbeat(agent quotamonitor.Agent) error
-	IsStale(agent quotamonitor.Agent, idleTimeout time.Duration) (bool, time.Duration)
-	AnyStale(idleTimeout time.Duration) []quotamonitor.Agent
 	// v0.15.0: quota forecasting
 	Forecast(agent quotamonitor.Agent) quotamonitor.ForecastResult
 	// v0.16.0: usage summaries(per-agent + both)
@@ -207,6 +205,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildPreallocTool(d))
 	// [Q] v0.93.0 — test quality: test helpers missing t.Helper() (thelper-style)
 	s.Register(buildThelperTool(d))
+	// [Q] v0.94.0 — interface design: too many methods (Rob Pike proverb; interfacebloat-style)
+	s.Register(buildIfaceBloatTool(d))
 	// [Q] v0.36.0 — package import coupling (architecture / SDP)
 	s.Register(buildCouplingTool(d))
 	// [Q] v0.36.0 — exported-API doc discipline (public contract)

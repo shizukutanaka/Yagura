@@ -71,6 +71,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/sessionsummary"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
+	"github.com/shizukutanaka/yagura/internal/ifacebloat"
 	"github.com/shizukutanaka/yagura/internal/thelper"
 	"github.com/shizukutanaka/yagura/internal/today"
 	"github.com/shizukutanaka/yagura/internal/typeassert"
@@ -1788,6 +1789,25 @@ func humanThelper(w io.Writer, r thelper.Report) {
 	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tFUNC\tPARAM")
 	for _, f := range r.Findings {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", f.Severity, f.File, f.Line, f.Func, f.Name)
+	}
+	tw.Flush()
+}
+
+func humanIfaceBloat(w io.Writer, r ifacebloat.Report) {
+	fmt.Fprintf(w, "iface-bloat: %d files, %d interface(s), %d over threshold %d (max methods %d)\n",
+		r.FilesScanned, r.InterfacesScanned, r.OverThreshold, r.Threshold, r.MaxMethods)
+	if len(r.Findings) == 0 {
+		fmt.Fprintln(w, "no oversized interfaces — all named interfaces are within the method threshold")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SEVERITY\tFILE\tLINE\tINTERFACE\tMETHODS")
+	for _, f := range r.Findings {
+		if f.Rule != "interface-bloat" {
+			fmt.Fprintf(tw, "%s\t%s\t%d\t-\t- (%s)\n", f.Severity, f.File, f.Line, f.Rule)
+			continue
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%d\n", f.Severity, f.File, f.Line, f.Name, f.Methods)
 	}
 	tw.Flush()
 }

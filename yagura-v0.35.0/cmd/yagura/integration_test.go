@@ -195,6 +195,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_cognit",
 		"yagura_prealloc",
 		"yagura_thelper",
+		// v0.94 — interface design (interfacebloat-style)
+		"yagura_ifacebloat",
 		// v0.36 — package import coupling (architecture / SDP)
 		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)

@@ -4,6 +4,55 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.94.0] - 2026-06-30
+
+### Theme — "ifacebloat: interface-design axis, Socratic 新視点 XXI (Rob Pike's proverb, interfacebloat-style)"
+
+#### New quality lens — `internal/ifacebloat` (interface design)
+
+- **Axis**: interface granularity / Interface Segregation — Rob Pike: "The bigger
+  the interface, the weaker the abstraction."
+- **Counts** (go/ast, type-info-free):
+  - Named method declaration → +1 per name
+  - Embedded interface (`io.Reader`) → +1
+  - Type-union term (`~int | ~string`) → +1
+- **Default threshold**: 10 (interfacebloat convention)
+- **Severity**: `medium` if > threshold; `high` if > 2 × threshold
+- **Exclusions**: `_test.go` (mock interfaces are intentionally large)
+- 17 TDD tests; deterministic (File → Line → Name sort)
+- Dogfood: lens found **1 violation** — `mcp.QuotaMonitor` with 12 methods.
+  `IsStale`/`AnyStale` were in the interface but never called through it (only
+  used within `internal/quotamonitor` itself) — an ISP violation. Removed both
+  from the interface; `QuotaMonitor` is now 10 methods (at threshold, no finding).
+  `iface-bloat --dir .` now reports 0, build and all tests green.
+
+#### MCP + CLI
+- MCP tool `yagura_ifacebloat` (92nd tool) — accepts `files` + optional `threshold`
+- CLI verb `yagura iface-bloat --dir . [--max N] [--json] [--strict]`
+- Shell completion entry; human-readable tabwriter output
+
+#### Counts
+- MCP tools: 91 → **92**
+- Internal packages: 85 → **86**
+- Consecutive reproducible releases: 88 → **89** (v0.6 → v0.94)
+
+#### What's not yet
+- `ifacebloat` counts embedded interfaces as 1 regardless of how many methods the
+  embedded type has (type resolution requires `go/types`; blocked by ADR-0001).
+  Users wanting method-expansion counts can run `iface-bloat` with a lower
+  threshold as a conservative proxy.
+
+#### Synergy
+- `ifacebloat` + `coupling` cross-reference: large interfaces with high fan-out
+  create the worst abstraction debt — both lenses flag the same package.
+- `hotspot` axis: interface-bloat findings are a natural addition to hotspot
+  convergence once more cross-type lenses mature.
+
+#### Sources
+- Rob Pike, Google I/O 2012: "The bigger the interface, the weaker the abstraction."
+- sashamelentyev/interfacebloat (reference linter)
+- Qiita/Zenn 記事群: 「インターフェースは小さく保て」「Interface Segregation の実践」
+
 ## [v0.93.0] - 2026-06-24
 
 ### Theme — "thelper: test-helper hygiene, the test-quality axis deepened (Socratic 新視点 XX)"

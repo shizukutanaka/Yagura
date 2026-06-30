@@ -28,6 +28,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/globalcheck"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
+	"github.com/shizukutanaka/yagura/internal/ifacebloat"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/nestdepth"
@@ -1443,6 +1444,41 @@ func buildPreallocTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := prealloc.Scan(in.Files)
+			return rep, nil
+		},
+	}
+}
+
+func buildIfaceBloatTool(_ Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_ifacebloat",
+		Description: "[Q] Interface design: named interfaces with too many methods (Rob Pike \"bigger interface = weaker abstraction\"; interfacebloat-style)",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+				"threshold": map[string]any{
+					"type":        "integer",
+					"description": "method-count threshold above which an interface is flagged (default 10)",
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files     map[string]string `json:"files"`
+				Threshold int               `json:"threshold"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := ifacebloat.Scan(in.Files, in.Threshold)
 			return rep, nil
 		},
 	}

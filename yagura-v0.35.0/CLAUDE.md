@@ -21,12 +21,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 85 internal packages
+## Map — 86 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 91 tool definitions
+- `internal/mcp` — MCP server + 92 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -160,6 +160,14 @@ cortex flywheel 4 段階すべてを単体で機械化:
   のみ flag(style ノイズを出さない)。テストが主題なので _test.go も走査する(L4 の逆)。
   dogfood で 68 ヘルパー中 1 件(mcp の depsWithPinDrift)を検出し修正、`thelper --dir .` は 0 に。
   CLI `thelper --dir . [--strict]`、MCP `yagura_thelper`★ v0.93
+- `internal/ifacebloat` — 名前付きインターフェースのメソッド数を go/ast で計測する
+  *インターフェース設計軸* のレンズ(ソクラテス新視点 XXI、Qiita/Zenn 調査、
+  sashamelentyev/interfacebloat 由来)。Rob Pike の格言「the bigger the interface, the
+  weaker the abstraction」を機械化。method = 1 per name、埋め込みインターフェース = 1、
+  型ユニオン項 = 1。_test.go 除外(モック用大インターフェースは意図的)。default threshold 10。
+  severity: medium(> threshold)/ high(> 2× threshold)。Interface Segregation 違反を可視化。
+  dogfood で Yagura 自身のインターフェース全件はしきい値以内。
+  CLI `iface-bloat --dir . [--max N] [--strict]`、MCP `yagura_ifacebloat`★ v0.94
 - `internal/paramcheck` — 関数のパラメータ数(Fowler "Long Parameter List" smell)を
   go/ast で計測(ソクラテス新視点、complexity の *水平方向の対*)。complexity だけを
   gate にすると巨大関数をヘルパに割って複雑度を下げつつ 6・7 個と引数を引き回す退行を

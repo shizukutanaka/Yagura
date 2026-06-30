@@ -102,6 +102,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/sessionsummary"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
+	"github.com/shizukutanaka/yagura/internal/ifacebloat"
 	"github.com/shizukutanaka/yagura/internal/thelper"
 	"github.com/shizukutanaka/yagura/internal/today"
 	"github.com/shizukutanaka/yagura/internal/typeassert"
@@ -166,6 +167,7 @@ var cliHandlers = map[string]cliHandler{
 	"nest-depth":   cliNestDepth,
 	"global-check": cliGlobalCheck,
 	"type-assert":  cliTypeAssert,
+	"iface-bloat":  cliIfaceBloat,
 	// shell completion
 	"completion": cliCompletion,
 }
@@ -3094,6 +3096,35 @@ func cliThelper(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// cliIfaceBloat は `yagura iface-bloat` を処理する。名前付きインターフェースのメソッド数を
+// go/ast で計測し、しきい値(--max、既定 10)を超えるものを flag する。
+// Rob Pike の格言「the bigger the interface, the weaker the abstraction」を機械化した
+// インターフェース設計軸のレンズ(interfacebloat 相当、zero-dep)。
+func cliIfaceBloat(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("iface-bloat", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	max := fset.Int("max", 10, "method-count threshold; interfaces above this are flagged")
+	strict := fset.Bool("strict", false, "exit non-zero if any interface exceeds the threshold")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := ifacebloat.Scan(sr.Files, *max)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanIfaceBloat(stdout, rep)
+	if *strict && rep.OverThreshold > 0 {
+		return fmt.Errorf("%d interface(s) exceed method threshold %d (max observed %d)", rep.OverThreshold, rep.Threshold, rep.MaxMethods)
+	}
+	return nil
+}
+
 // cliGlobalCheck は `yagura global-check` を処理する。package-level の可変グローバル
 // 変数(実際に mutate されるもの)を検出する。共有可変状態 = テスト不能性 + データ競合の
 // 源。--strict で 1 件でもあれば exit 1。
@@ -5051,7 +5082,7 @@ var yaguraVerbs = []string{
 	"code-health", "cognit", "complexity", "completion", "coupling", "coverage", "ctx-check",
 	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "err-wrap", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "global-check", "graph", "graph-impact", "graph-neighbors", "graph-stats",
-	"harness-coverage", "harness-recommend", "help", "hotspot", "init-sh", "inject-scan",
+	"harness-coverage", "harness-recommend", "help", "hotspot", "iface-bloat", "init-sh", "inject-scan",
 	"list", "mcp-audit", "naked-ret", "name-check", "nest-depth", "ops-risk", "parallel-plan", "param-check", "path-policy",
 	"pin-drift", "plan-status", "plugin-audit", "prealloc", "predeclared", "progress-file", "publicity-scan",
 	"quality-check", "recv-check", "recovery-decide", "register", "regress", "release-radar",
@@ -5174,6 +5205,7 @@ func buildZshVerbLines() string {
 		"harness-recommend":    "Claude Code .claude/ scaffold by language",
 		"help":                 "print help message",
 		"hotspot":              "convergent-signal hotspots: functions flagged by 2+ signature lenses",
+		"iface-bloat":          "interface design: named interfaces with too many methods (Rob Pike proverb; interfacebloat-style)",
 		"name-check":           "name↔signature consistency: predicates return bool, getters/constructors return a value",
 		"ctx-check":            "context.Context discipline: must be first param, not stored in struct fields",
 		"init-sh":              "generate init.sh or init.ps1 for agent sessions",
