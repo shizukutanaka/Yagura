@@ -4,6 +4,61 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.99.0] - 2026-07-01
+
+### Theme — "hotspot backlog: fully cleared, 13 → 0 high-severity repo-wide"
+
+Completes the arc started in v0.95, when fixing `hotspot`'s synthesis
+staleness (4→12 lenses) surfaced 13 high-severity convergent-signal
+refactor targets. v0.96-v0.98 cleared all 9 `internal/` targets; this
+release clears the final 4, all in `cmd/yagura` — the daemon boot sequence
+and CLI dispatch glue that was deliberately deferred three releases running
+for its higher blast radius. `hotspot --min-lenses 3` now reports **zero**
+convergent hotspots anywhere in the codebase.
+
+#### Refactored (measure → refactor → confirm)
+
+- **`cmd/yagura/cli.go` — `cliSecretScan`** (77 lines) → extracted
+  `secretScanTargets` (resolve `--slug` or all non-archived projects) and
+  `buildSecretScanner` (default vs. `--rules-file`-driven scanner
+  construction).
+- **`cmd/yagura/cli.go` — `cliFlowRisk`** (61 lines) → extracted
+  `readFlowRiskInput` (file/stdin), `parseFlowSteps` (line → `flowrisk.Step`),
+  `filterFlowRisks` (severity-rank filter).
+- **`cmd/yagura/cli.go` — `cliParallelPlan`** (85 lines) → hoisted the
+  anonymous JSON input struct to a named `parallelPlanInput` type, then
+  extracted `parallelPlanTasks` and `parallelPlanAgents` (each independently
+  validates and builds its half of the `agentparallel.PlanDataParallel` input).
+- **`cmd/yagura/main.go` — `collectYaguraMetrics`** (119 lines, the
+  `/metrics` Prometheus exposition builder) → split into 5 per-family
+  builders: `mcpToolMetrics`, `portfolioHealthMetrics`, `cacheMetrics`,
+  `hookMetrics`, `alertLifecycleMetrics`. This function is pure/read-only
+  (gathers stats, builds report structs, no daemon state mutation) despite
+  living in `main.go`, and is covered by a dedicated `metrics_test.go` (6
+  tests) plus a doc-guard test — materially lower risk than it first
+  appeared from file location alone.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, zero regressions
+- Dogfood: `hotspot --dir . --min-lenses 3` — high-severity convergent
+  hotspots **4 → 0**, repo-wide
+- Reproducible build verified (byte-for-byte identical across 2 builds)
+
+#### Counts
+- MCP tools: 92 (unchanged) | Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 93 → **94** (v0.6 → v0.99)
+
+#### What's not yet
+- `hotspot --min-lenses 2` still reports 57 medium-severity (2-lens)
+  convergent functions, the large majority in `cmd/yagura/cli.go`'s many CLI
+  verb handlers (`cognit`+`complexity` pairs). `code-health --dir cmd/yagura`
+  remains grade **C** (70, 36 high-complexity functions) — this release
+  targeted only the 4 highest-confidence (3+ lens) hotspots, not the full
+  medium-severity backlog or the package's broader complexity profile, which
+  remain a substantial future increment given the file's size (~5300 lines
+  across `cli.go` alone).
+
 ## [v0.98.0] - 2026-07-01
 
 ### Theme — "hotspot backlog: internal/ fully cleared (13 → 0 high-severity outside cmd/)"

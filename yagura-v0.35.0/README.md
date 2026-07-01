@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.98.0** — 92 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Hotspot backlog: `internal/` fully cleared.** Third round on the 69 convergent-signal targets `hotspot` surfaced in v0.95 (13 high-severity at the time). This release decomposes the final 3 `internal/` targets — `audit.Read` (also de-duplicated its file-listing logic with `Verify`, which had the identical block copy-pasted), `secretscan.Scanner.Scan` (extracted the per-match rule-evaluation body), and `dashboard.(*Handler).ServeHTTP` (extracted sub-path routing, project sorting, summarization, and the two data-panel builders) — bringing the high-severity count from **13 at v0.95 to 0 outside `cmd/yagura`**. The remaining 4 (`cli.go` ×3, `main.go` ×1) are the daemon boot sequence and CLI dispatch glue, deliberately held for a dedicated future increment given their higher blast radius. Zero test regressions across all 6 packages touched this arc. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.99.0** — 92 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Hotspot backlog: fully cleared, 13 → 0 high-severity repo-wide.** The final round on the arc started in v0.95: the last 4 high-severity convergent hotspots, all in `cmd/yagura` (the daemon boot/CLI glue deliberately deferred across v0.96-v0.98 for its higher blast radius), are now decomposed — `cliSecretScan`, `cliFlowRisk`, `cliParallelPlan` (each extract-method split along its natural phases), and `main.go`'s `collectYaguraMetrics` (split into 5 metrics-family builders: MCP tool stats, portfolio health, cache, hooks, alert lifecycle). `hotspot --min-lenses 3` now reports **zero** convergent hotspots anywhere in the codebase. Zero test regressions across all 4 touched CLI/daemon test suites; reproducible build verified. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-93 consecutive releases (v0.6 → v0.98) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+94 consecutive releases (v0.6 → v0.99) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

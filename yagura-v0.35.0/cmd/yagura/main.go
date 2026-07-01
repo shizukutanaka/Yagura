@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.98.0"
+	version     = "0.99.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -1150,13 +1150,26 @@ func (l *registryLookup) ResolveByPath(cwd string) (string, bool) {
 // exposition format にまとめる。
 //
 // 既存 metrics.Registry が scan counters を担い、こちらが label 付き metrics
-// (per-tool, per-project) を担当する分担。
+// (per-tool, per-project) を担当する分担。各 metrics family は独立(順序のみ固定)
+// なので family 別に mcpToolMetrics 等へ委譲する。
 func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver, health *healthState) []promexport.Collection {
 	var out []promexport.Collection
+	out = append(out, mcpToolMetrics(srv)...)
+	out = append(out, portfolioHealthMetrics(health)...)
+	out = append(out, cacheMetrics(srv)...)
+	out = append(out, hookMetrics(hr)...)
+	out = append(out, alertLifecycleMetrics(srv)...)
+	return out
+}
 
-	// MCP tool stats (per-tool counters)
+// mcpToolMetrics は MCP tool 別の呼出数/リクエストバイト数/レスポンスバイト数/
+// エラー数を Prometheus counter として組み立てる(per-tool labels)。
+func mcpToolMetrics(srv *mcp.Server) []promexport.Collection {
 	stats := srv.AllToolStats()
-	var calls, reqBytes, respBytes, errs []promexport.Sample
+	calls := make([]promexport.Sample, 0, len(stats))
+	reqBytes := make([]promexport.Sample, 0, len(stats))
+	respBytes := make([]promexport.Sample, 0, len(stats))
+	errs := make([]promexport.Sample, 0, len(stats))
 	for _, ts := range stats {
 		labels := map[string]string{"tool": ts.Name}
 		calls = append(calls, promexport.Sample{Labels: labels, Value: float64(ts.Calls)})
@@ -1164,109 +1177,132 @@ func collectYaguraMetrics(srv *mcp.Server, hr *hookreceiver.Receiver, health *he
 		respBytes = append(respBytes, promexport.Sample{Labels: labels, Value: float64(ts.ResponseBytes)})
 		errs = append(errs, promexport.Sample{Labels: labels, Value: float64(ts.ErrorCount)})
 	}
-	out = append(out,
-		promexport.Collection{Name: "yagura_mcp_tool_calls_total",
+	return []promexport.Collection{
+		{Name: "yagura_mcp_tool_calls_total",
 			Type: "counter", Help: "Total MCP tool invocations per tool",
 			Samples: calls},
-		promexport.Collection{Name: "yagura_mcp_tool_request_bytes_total",
+		{Name: "yagura_mcp_tool_request_bytes_total",
 			Type: "counter", Help: "Cumulative request bytes per tool",
 			Samples: reqBytes},
-		promexport.Collection{Name: "yagura_mcp_tool_response_bytes_total",
+		{Name: "yagura_mcp_tool_response_bytes_total",
 			Type: "counter", Help: "Cumulative response bytes per tool",
 			Samples: respBytes},
-		promexport.Collection{Name: "yagura_mcp_tool_errors_total",
+		{Name: "yagura_mcp_tool_errors_total",
 			Type: "counter", Help: "Total errors returned per tool",
 			Samples: errs},
-	)
+	}
+}
 
-	// Portfolio health (latest alert_fix sweep). Lets external monitoring page on
-	// portfolio-wide alert pressure (resolved/snoozed already excluded), not just
-	// per-project sensors. Emitted only once a sweep has run.
-	if health != nil {
-		if hs, ok := health.PortfolioHealth(); ok {
-			out = append(out, promexport.Collection{
-				Name: "yagura_portfolio_alerts",
-				Type: "gauge",
-				Help: "Open alerts from the latest health sweep by severity (resolved/snoozed excluded)",
-				Samples: []promexport.Sample{
-					{Labels: map[string]string{"severity": "critical"}, Value: float64(hs.Critical)},
-					{Labels: map[string]string{"severity": "high"}, Value: float64(hs.High)},
-					{Labels: map[string]string{"severity": "medium"}, Value: float64(hs.Medium)},
-					{Labels: map[string]string{"severity": "low"}, Value: float64(hs.Low)},
-				},
+// portfolioHealthMetrics は直近の alert_fix health sweep をゲージにする。外部監視が
+// per-project sensor だけでなく portfolio 全体のアラート圧を見られるようにする
+// (resolved/snoozed は除外済み)。sweep 未実施 / health 未設定なら空。
+func portfolioHealthMetrics(health *healthState) []promexport.Collection {
+	if health == nil {
+		return nil
+	}
+	hs, ok := health.PortfolioHealth()
+	if !ok {
+		return nil
+	}
+	return []promexport.Collection{{
+		Name: "yagura_portfolio_alerts",
+		Type: "gauge",
+		Help: "Open alerts from the latest health sweep by severity (resolved/snoozed excluded)",
+		Samples: []promexport.Sample{
+			{Labels: map[string]string{"severity": "critical"}, Value: float64(hs.Critical)},
+			{Labels: map[string]string{"severity": "high"}, Value: float64(hs.High)},
+			{Labels: map[string]string{"severity": "medium"}, Value: float64(hs.Medium)},
+			{Labels: map[string]string{"severity": "low"}, Value: float64(hs.Low)},
+		},
+	}}
+}
+
+// cacheMetrics は dedupe cache のヒット/ミス累計を返す(観測 0 件なら空)。
+func cacheMetrics(srv *mcp.Server) []promexport.Collection {
+	cs := srv.CacheStats()
+	if cs.Hits+cs.Misses == 0 {
+		return nil
+	}
+	return []promexport.Collection{
+		{Name: "yagura_cache_hits_total",
+			Type: "counter", Help: "Cumulative dedupe cache hits",
+			Samples: []promexport.Sample{{Value: float64(cs.Hits)}}},
+		{Name: "yagura_cache_misses_total",
+			Type: "counter", Help: "Cumulative dedupe cache misses",
+			Samples: []promexport.Sample{{Value: float64(cs.Misses)}}},
+	}
+}
+
+// hookMetrics は hook receiver の project 別イベント/エラー/ツール呼出を組み立てる。
+// hr が nil なら空。
+func hookMetrics(hr *hookreceiver.Receiver) []promexport.Collection {
+	if hr == nil {
+		return nil
+	}
+	allStats := hr.AllStats()
+	var hookCalls, hookTools []promexport.Sample
+	hookErrs := make([]promexport.Sample, 0, len(allStats))
+	for slug, st := range allStats {
+		for event, count := range st.ByEvent {
+			hookCalls = append(hookCalls, promexport.Sample{
+				Labels: map[string]string{"project": slug, "event": event},
+				Value:  float64(count),
 			})
 		}
+		// per-tool agent activity (any agent, via /hooks/agent). Maps to OTel
+		// gen_ai.tool.name; exported as the `tool` label for Yagura consistency.
+		for tool, count := range st.ByTool {
+			hookTools = append(hookTools, promexport.Sample{
+				Labels: map[string]string{"project": slug, "tool": tool},
+				Value:  float64(count),
+			})
+		}
+		hookErrs = append(hookErrs, promexport.Sample{
+			Labels: map[string]string{"project": slug},
+			Value:  float64(st.ErrorCount),
+		})
 	}
-
-	// Cache stats
-	if cs := srv.CacheStats(); cs.Hits+cs.Misses > 0 {
+	var out []promexport.Collection
+	if len(hookCalls) > 0 {
 		out = append(out,
-			promexport.Collection{Name: "yagura_cache_hits_total",
-				Type: "counter", Help: "Cumulative dedupe cache hits",
-				Samples: []promexport.Sample{{Value: float64(cs.Hits)}}},
-			promexport.Collection{Name: "yagura_cache_misses_total",
-				Type: "counter", Help: "Cumulative dedupe cache misses",
-				Samples: []promexport.Sample{{Value: float64(cs.Misses)}}},
+			promexport.Collection{Name: "yagura_hook_events_total",
+				Type: "counter", Help: "Agent hook events received per project per event type (any agent)",
+				Samples: hookCalls},
+			promexport.Collection{Name: "yagura_hook_errors_total",
+				Type: "counter", Help: "Agent tool errors observed via hooks per project (any agent)",
+				Samples: hookErrs},
 		)
 	}
-
-	// Hook receiver stats (per-project event counters)
-	if hr != nil {
-		var hookCalls, hookErrs, hookTools []promexport.Sample
-		for slug, st := range hr.AllStats() {
-			for event, count := range st.ByEvent {
-				hookCalls = append(hookCalls, promexport.Sample{
-					Labels: map[string]string{"project": slug, "event": event},
-					Value:  float64(count),
-				})
-			}
-			// per-tool agent activity (any agent, via /hooks/agent). Maps to OTel
-			// gen_ai.tool.name; exported as the `tool` label for Yagura consistency.
-			for tool, count := range st.ByTool {
-				hookTools = append(hookTools, promexport.Sample{
-					Labels: map[string]string{"project": slug, "tool": tool},
-					Value:  float64(count),
-				})
-			}
-			hookErrs = append(hookErrs, promexport.Sample{
-				Labels: map[string]string{"project": slug},
-				Value:  float64(st.ErrorCount),
-			})
-		}
-		if len(hookCalls) > 0 {
-			out = append(out,
-				promexport.Collection{Name: "yagura_hook_events_total",
-					Type: "counter", Help: "Agent hook events received per project per event type (any agent)",
-					Samples: hookCalls},
-				promexport.Collection{Name: "yagura_hook_errors_total",
-					Type: "counter", Help: "Agent tool errors observed via hooks per project (any agent)",
-					Samples: hookErrs},
-			)
-		}
-		// Tool-call family only when at least one tool call was observed — a project
-		// with only non-tool events (SessionStart/Stop) would otherwise emit an empty
-		// HELP/TYPE header with no samples.
-		if len(hookTools) > 0 {
-			out = append(out, promexport.Collection{Name: "yagura_hook_tool_calls_total",
-				Type: "counter", Help: "Agent tool calls observed via hooks per project per tool (OTel gen_ai.tool.name)",
-				Samples: hookTools})
-		}
+	// Tool-call family only when at least one tool call was observed — a project
+	// with only non-tool events (SessionStart/Stop) would otherwise emit an empty
+	// HELP/TYPE header with no samples.
+	if len(hookTools) > 0 {
+		out = append(out, promexport.Collection{Name: "yagura_hook_tool_calls_total",
+			Type: "counter", Help: "Agent tool calls observed via hooks per project per tool (OTel gen_ai.tool.name)",
+			Samples: hookTools})
 	}
+	return out
+}
 
-	// Alert lifecycle stats
-	if store := srv.AlertStore(); store != nil {
-		for status, count := range store.Stats() {
-			out = append(out, promexport.Collection{
-				Name: "yagura_alert_lifecycle_current",
-				Type: "gauge",
-				Help: "Current count of alerts by lifecycle status",
-				Samples: []promexport.Sample{{
-					Labels: map[string]string{"status": string(status)},
-					Value:  float64(count),
-				}},
-			})
-		}
+// alertLifecycleMetrics は alert store の lifecycle 別現在件数をゲージにする
+// (store 未設定なら空)。
+func alertLifecycleMetrics(srv *mcp.Server) []promexport.Collection {
+	store := srv.AlertStore()
+	if store == nil {
+		return nil
 	}
-
+	stats := store.Stats()
+	out := make([]promexport.Collection, 0, len(stats))
+	for status, count := range stats {
+		out = append(out, promexport.Collection{
+			Name: "yagura_alert_lifecycle_current",
+			Type: "gauge",
+			Help: "Current count of alerts by lifecycle status",
+			Samples: []promexport.Sample{{
+				Labels: map[string]string{"status": string(status)},
+				Value:  float64(count),
+			}},
+		})
+	}
 	return out
 }

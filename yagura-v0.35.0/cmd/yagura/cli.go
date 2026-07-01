@@ -673,47 +673,18 @@ func cliSecretScan(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var toScan []*project.Project
-	if *slug != "" {
-		p, err := reg.Get(*slug)
-		if err != nil {
-			if errors.Is(err, registry.ErrNotFound) {
-				return fmt.Errorf("not found: %s", *slug)
-			}
-			return err
-		}
-		toScan = []*project.Project{p}
-	} else {
-		for _, p := range reg.List() {
-			if p.Stage != project.StageArchived {
-				toScan = append(toScan, p)
-			}
-		}
+	toScan, err := secretScanTargets(reg, *slug)
+	if err != nil {
+		return err
 	}
-	var items []secretscan.ScanItem
+	items := make([]secretscan.ScanItem, 0, len(toScan))
 	for _, p := range toScan {
 		items = append(items, projectScanItems(p)...)
 	}
 
-	// Custom rules: explicit --rules-file or auto-detect ./.yagura/secretscan.json.
-	scanner := secretscan.New()
-	rf := *rulesFile
-	if rf == "" {
-		candidate := filepath.Join(".yagura", "secretscan.json")
-		if _, statErr := os.Stat(candidate); statErr == nil {
-			rf = candidate
-		}
-	}
-	if rf != "" {
-		cfg, loadErr := secretscan.LoadUserConfig(rf)
-		if loadErr != nil {
-			return fmt.Errorf("custom rules: %w", loadErr)
-		}
-		rules, applyErr := cfg.Apply(secretscan.DefaultRules())
-		if applyErr != nil {
-			return fmt.Errorf("apply custom rules: %w", applyErr)
-		}
-		scanner = secretscan.NewWithRules(rules)
+	scanner, err := buildSecretScanner(*rulesFile)
+	if err != nil {
+		return err
 	}
 
 	result := scanner.ScanBatch(items)
@@ -736,6 +707,51 @@ func cliSecretScan(args []string, stdout, stderr io.Writer) error {
 	}
 	humanSecretScan(stdout, result, len(toScan), len(items))
 	return nil
+}
+
+// secretScanTargets は --slug 指定があればその 1 project、無ければ非 archived 全件を返す。
+func secretScanTargets(reg *registry.Registry, slug string) ([]*project.Project, error) {
+	if slug != "" {
+		p, err := reg.Get(slug)
+		if err != nil {
+			if errors.Is(err, registry.ErrNotFound) {
+				return nil, fmt.Errorf("not found: %s", slug)
+			}
+			return nil, err
+		}
+		return []*project.Project{p}, nil
+	}
+	var toScan []*project.Project
+	for _, p := range reg.List() {
+		if p.Stage != project.StageArchived {
+			toScan = append(toScan, p)
+		}
+	}
+	return toScan, nil
+}
+
+// buildSecretScanner は --rules-file(または自動検出した .yagura/secretscan.json)が
+// あればカスタムルールを適用した scanner、無ければ既定ルールの scanner を返す。
+func buildSecretScanner(rulesFile string) (*secretscan.Scanner, error) {
+	rf := rulesFile
+	if rf == "" {
+		candidate := filepath.Join(".yagura", "secretscan.json")
+		if _, statErr := os.Stat(candidate); statErr == nil {
+			rf = candidate
+		}
+	}
+	if rf == "" {
+		return secretscan.New(), nil
+	}
+	cfg, loadErr := secretscan.LoadUserConfig(rf)
+	if loadErr != nil {
+		return nil, fmt.Errorf("custom rules: %w", loadErr)
+	}
+	rules, applyErr := cfg.Apply(secretscan.DefaultRules())
+	if applyErr != nil {
+		return nil, fmt.Errorf("apply custom rules: %w", applyErr)
+	}
+	return secretscan.NewWithRules(rules), nil
 }
 
 func cliGhaAudit(args []string, stdout, stderr io.Writer) error {
@@ -2307,37 +2323,13 @@ func cliFlowRisk(args []string, stdout, stderr io.Writer) error {
 		return errUsage
 	}
 
-	var data []byte
-	var err error
-	if *file != "" {
-		data, err = os.ReadFile(*file)
-		if err != nil {
-			return fmt.Errorf("read sequence %s: %w", *file, err)
-		}
-	} else {
-		data, err = io.ReadAll(os.Stdin)
-		if err != nil {
-			return fmt.Errorf("read stdin: %w", err)
-		}
+	data, err := readFlowRiskInput(*file)
+	if err != nil {
+		return err
 	}
 
-	var steps []flowrisk.Step
-	for _, line := range strings.Split(string(data), "\n") {
-		name := strings.TrimSpace(line)
-		if name == "" {
-			continue
-		}
-		steps = append(steps, flowrisk.Step{Name: name, Capability: flowrisk.ClassifyTool(name)})
-	}
-	allRisks := flowrisk.Analyze(steps)
-
-	// Filter by --min-severity.
-	var risks []flowrisk.FlowRisk
-	for _, r := range allRisks {
-		if flowRank[strings.ToLower(r.Severity)] <= flowRank[minFlowSev] {
-			risks = append(risks, r)
-		}
-	}
+	steps := parseFlowSteps(data)
+	risks := filterFlowRisks(flowrisk.Analyze(steps), flowRank, minFlowSev)
 
 	if *jsonOut {
 		if err := emitJSON(stdout, map[string]any{"steps": len(steps), "flows": risks}); err != nil {
@@ -2350,6 +2342,49 @@ func cliFlowRisk(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("%d flow(s) at or above %s detected — failing because --strict is set", len(risks), *minSev)
 	}
 	return nil
+}
+
+// readFlowRiskInput は --file 指定があればそのファイル、無ければ stdin を読む。
+func readFlowRiskInput(file string) ([]byte, error) {
+	if file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("read sequence %s: %w", file, err)
+		}
+		return data, nil
+	}
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return nil, fmt.Errorf("read stdin: %w", err)
+	}
+	return data, nil
+}
+
+// parseFlowSteps は 1 行 1 ツール/操作名のテキストを flowrisk.Step へ変換する
+// (空行は無視、capability は ClassifyTool で正規化)。
+func parseFlowSteps(data []byte) []flowrisk.Step {
+	lines := strings.Split(string(data), "\n")
+	steps := make([]flowrisk.Step, 0, len(lines))
+	for _, line := range lines {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		steps = append(steps, flowrisk.Step{Name: name, Capability: flowrisk.ClassifyTool(name)})
+	}
+	return steps
+}
+
+// filterFlowRisks は rank[severity] <= rank[minSev] の risk のみ残す
+// (rank は小さいほど深刻: high=0 < medium=1)。
+func filterFlowRisks(allRisks []flowrisk.FlowRisk, rank map[string]int, minSev string) []flowrisk.FlowRisk {
+	risks := make([]flowrisk.FlowRisk, 0, len(allRisks))
+	for _, r := range allRisks {
+		if rank[strings.ToLower(r.Severity)] <= rank[minSev] {
+			risks = append(risks, r)
+		}
+	}
+	return risks
 }
 
 // ─── coverage (v0.36.0, blind-spot meta 視点) ─────────────────
@@ -4864,6 +4899,23 @@ func cliSessionSummary(args []string, stdout, stderr io.Writer) error {
 // cliParallelPlan は `yagura parallel-plan [--file f] [--json]` を処理する。
 // MCP yagura_parallel_plan と同一の agentparallel.PlanDataParallel を呼ぶ。
 // Input JSON: {"tasks":[{id,weight?,min_tier?}...], "agents":[{name,tier?,capacity_percent?,max_concurrency?}...], "task_count"?:N, "global_concurrency"?:N}
+// parallelPlanInput は `parallel-plan` の JSON 入力形状。
+type parallelPlanInput struct {
+	Tasks []struct {
+		ID      string  `json:"id"`
+		Weight  float64 `json:"weight"`
+		MinTier string  `json:"min_tier"`
+	} `json:"tasks"`
+	TaskCount         int `json:"task_count"`
+	GlobalConcurrency int `json:"global_concurrency"`
+	Agents            []struct {
+		Name            string `json:"name"`
+		Tier            string `json:"tier"`
+		CapacityPercent *int   `json:"capacity_percent"`
+		MaxConcurrency  int    `json:"max_concurrency"`
+	} `json:"agents"`
+}
+
 func cliParallelPlan(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("parallel-plan", stderr)
 	jsonOut := fs.Bool("json", false, "output JSON")
@@ -4877,21 +4929,7 @@ func cliParallelPlan(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("parallel-plan: %w", err)
 	}
 
-	var in struct {
-		Tasks []struct {
-			ID      string  `json:"id"`
-			Weight  float64 `json:"weight"`
-			MinTier string  `json:"min_tier"`
-		} `json:"tasks"`
-		TaskCount         int `json:"task_count"`
-		GlobalConcurrency int `json:"global_concurrency"`
-		Agents            []struct {
-			Name            string `json:"name"`
-			Tier            string `json:"tier"`
-			CapacityPercent *int   `json:"capacity_percent"`
-			MaxConcurrency  int    `json:"max_concurrency"`
-		} `json:"agents"`
-	}
+	var in parallelPlanInput
 	if err := json.Unmarshal(data, &in); err != nil {
 		return fmt.Errorf("parallel-plan: invalid JSON: %w", err)
 	}
@@ -4899,8 +4937,28 @@ func cliParallelPlan(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("parallel-plan: at least one agent is required")
 	}
 
-	var tasks []agentparallel.Task
+	tasks, err := parallelPlanTasks(in)
+	if err != nil {
+		return err
+	}
+	agents, err := parallelPlanAgents(in)
+	if err != nil {
+		return err
+	}
+
+	plan := agentparallel.PlanDataParallel(tasks, agents, in.GlobalConcurrency)
+	if *jsonOut {
+		return emitJSON(stdout, plan)
+	}
+	humanParallelPlan(stdout, plan)
+	return nil
+}
+
+// parallelPlanTasks は in.Tasks(明示的)または in.TaskCount(自動生成、weight=1)から
+// agentparallel.Task の一覧を構築する。
+func parallelPlanTasks(in parallelPlanInput) ([]agentparallel.Task, error) {
 	if len(in.Tasks) > 0 {
+		tasks := make([]agentparallel.Task, 0, len(in.Tasks))
 		for i, t := range in.Tasks {
 			id := strings.TrimSpace(t.ID)
 			if id == "" {
@@ -4908,27 +4966,33 @@ func cliParallelPlan(args []string, stdout, stderr io.Writer) error {
 			}
 			tier, ok := cliParseTier(t.MinTier)
 			if !ok {
-				return fmt.Errorf("task %q: unknown min_tier %q (use any/cheap/mid/strong)", id, t.MinTier)
+				return nil, fmt.Errorf("task %q: unknown min_tier %q (use any/cheap/mid/strong)", id, t.MinTier)
 			}
 			tasks = append(tasks, agentparallel.Task{ID: id, Weight: t.Weight, MinTier: tier})
 		}
-	} else if in.TaskCount > 0 {
+		return tasks, nil
+	}
+	if in.TaskCount > 0 {
+		tasks := make([]agentparallel.Task, 0, in.TaskCount)
 		for i := 0; i < in.TaskCount; i++ {
 			tasks = append(tasks, agentparallel.Task{ID: fmt.Sprintf("task-%d", i+1), Weight: 1})
 		}
-	} else {
-		return fmt.Errorf("parallel-plan: provide 'tasks' or a positive 'task_count'")
+		return tasks, nil
 	}
+	return nil, fmt.Errorf("parallel-plan: provide 'tasks' or a positive 'task_count'")
+}
 
+// parallelPlanAgents は in.Agents から agentparallel.Agent の一覧を構築する。
+func parallelPlanAgents(in parallelPlanInput) ([]agentparallel.Agent, error) {
 	agents := make([]agentparallel.Agent, 0, len(in.Agents))
 	for _, a := range in.Agents {
 		name := strings.TrimSpace(a.Name)
 		if name == "" {
-			return fmt.Errorf("parallel-plan: agent name must not be empty")
+			return nil, fmt.Errorf("parallel-plan: agent name must not be empty")
 		}
 		tier, ok := cliParseTier(a.Tier)
 		if !ok {
-			return fmt.Errorf("agent %q: unknown tier %q (use any/cheap/mid/strong)", name, a.Tier)
+			return nil, fmt.Errorf("agent %q: unknown tier %q (use any/cheap/mid/strong)", name, a.Tier)
 		}
 		capPct := 100
 		if a.CapacityPercent != nil {
@@ -4941,13 +5005,7 @@ func cliParallelPlan(args []string, stdout, stderr io.Writer) error {
 			MaxConcurrency: a.MaxConcurrency,
 		})
 	}
-
-	plan := agentparallel.PlanDataParallel(tasks, agents, in.GlobalConcurrency)
-	if *jsonOut {
-		return emitJSON(stdout, plan)
-	}
-	humanParallelPlan(stdout, plan)
-	return nil
+	return agents, nil
 }
 
 // cliGraphNeighbors は registry の depends_on graph を BFS で探索し近傍を返す。
