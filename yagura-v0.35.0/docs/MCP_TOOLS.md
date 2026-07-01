@@ -576,7 +576,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ### `yagura_hotspot`
 
-[Q] Convergent-signal hotspots: functions flagged by 2+ signature lenses (complexity/param/flag/return)
+[Q] Convergent-signal hotspots: functions flagged by 2+ of 12 independent lenses (complexity, params, returns, cognit, nestdepth, and more)
 
 **Arguments:**
 

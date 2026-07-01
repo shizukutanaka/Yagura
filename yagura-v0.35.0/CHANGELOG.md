@@ -4,6 +4,77 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.95.0] - 2026-07-01
+
+### Theme — "hotspot synthesis-staleness fix: the auditor's own blind spot (self-referential Socratic finding)"
+
+This release was triggered by a product-level SWOT audit ("長所短所改善点を洗
+い出して改善"), not a new lens. The audit ran `code-health` and `hotspot`
+across the repo and asked a meta-question: is the *synthesis* layer — the
+tooling that combines other lenses — itself still correct as the lens roster
+has grown? It was not.
+
+#### Finding — `internal/hotspot` had decayed to 19% lens coverage
+
+`hotspot` (§4, v0.70) unions independent function-level lenses and reports
+functions flagged by 2+ of them as high-confidence convergent refactor
+targets — the flagship synthesis feature of the whole lens suite. It was
+wired to exactly the 4 lenses that existed at launch (`complexity`,
+`paramcheck`, `flagarg`, `returncheck`). Between v0.70 and v0.94 the lens
+roster tripled to 21, but `hotspot`'s convergence pool was never revisited.
+
+Symptom: `hotspot --dir . --min-lenses 2` reported **0** convergent hotspots
+repo-wide, even though newer single lenses (`cognit`, `nestdepth`, etc.) kept
+finding real issues in isolation — the newer signals were simply invisible to
+convergence detection. A synthesis lens auditing other lenses is subject to
+the exact staleness problem every other lens exists to catch — a
+meta-Socratic blind spot.
+
+#### Fix
+
+`internal/hotspot` now unions **12** lenses instead of 4: added `cognit`,
+`nestdepth`, `typeassert`, `namecheck`, `ctxcheck`, `errwrap`, `nakedret`,
+`prealloc` — all of which report `File`/`Line`/`Func` using the same
+`(Recv).Method` convention the original 4 already relied on for keying.
+Excluded: `thelper` (subject is test files, outside hotspot's non-test scope)
+and `errdiscard`/`synccheck`/`predeclared`/`errpolicy` (no equivalent
+per-function key — `Caller` can be empty, `Name` points at an identifier or
+type, not a function).
+
+- 2 new TDD tests lock in cross-lens convergence for the newly-added lenses
+  (`nestdepth`+`typeassert`, `errwrap`+`prealloc`), independent of the
+  original signature quartet
+- 1 existing test (`TestScan_QuadHotspotHighSeverity`) updated: the synthetic
+  `Monster` fixture's nested if/else + for + switch genuinely clears
+  `cognit`'s default threshold too — a correct behavior change, not a
+  regression
+- **Dogfood**: repo-wide convergent hotspots jumped from **0 to 69** (13
+  high-severity, 3+ lens convergence) on the identical codebase — proof the
+  population had been undercounted, not that the code regressed. Backlog for
+  future increments (not fixed in this release, consistent with the
+  `prealloc`/v0.92 precedent of surfacing findings and fixing a representative
+  subset over time).
+
+#### Docs
+- `docs/quality-lens-spec.md` — new **W5** (synthesis staleness), documented
+  as addressed in the same entry (mirrors the W3/`calibrate` precedent)
+- `CLAUDE.md`, `cmd/yagura/cli.go`, `internal/mcp/tools_quality.go` — hotspot
+  descriptions updated from "4 signature lenses" to "12 lenses"
+
+#### Counts
+- MCP tools: 92 (unchanged — no new tool, `yagura_hotspot` behavior only)
+- Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 89 → **90** (v0.6 → v0.95)
+
+#### What's not yet
+- The 69 dogfooded convergent hotspots are not fixed in this release — they
+  are now *visible*, which is the release's actual deliverable. Expect
+  targeted refactors in upcoming increments following the established
+  measure → refactor → confirm pattern.
+- `errdiscard`/`synccheck`/`predeclared`/`errpolicy` remain outside hotspot's
+  convergence pool; a future increment could add package/declaration-level
+  convergence as a second axis alongside the current function-level one.
+
 ## [v0.94.0] - 2026-06-30
 
 ### Theme — "ifacebloat: interface-design axis, Socratic 新視点 XXI (Rob Pike's proverb, interfacebloat-style)"

@@ -2699,9 +2699,11 @@ func cliDepRank(args []string, stdout, stderr io.Writer) error {
 
 // ─── hotspot (v0.70.0) ───────────────────────────────────────
 
-// cliHotspot は `yagura hotspot` を処理する。4 つのシグネチャ系レンズ
-// (complexity / paramcheck / flagarg / returncheck)を同じ file set に適用し、
-// 複数レンズが独立に指摘した関数(= 収束シグナル)を高信頼リファクタ対象として報告。
+// cliHotspot は `yagura hotspot` を処理する。12 個の関数キー付きレンズ
+// (complexity / paramcheck / flagarg / returncheck / cognit / nestdepth /
+// typeassert / namecheck / ctxcheck / errwrap / nakedret / prealloc)を
+// 同じ file set に適用し、複数レンズが独立に指摘した関数(= 収束シグナル)を
+// 高信頼リファクタ対象として報告。
 // ソクラテス的動機: 個々のレンズは偽陽性を持つが、独立シグナルの収束は高信頼。
 // --min-lenses で収束数の下限(default 2)、--strict で hotspot 検出時 exit 1。
 func cliHotspot(args []string, stdout, stderr io.Writer) error {
@@ -5204,7 +5206,7 @@ func buildZshVerbLines() string {
 		"harness-coverage":     "Fowler taxonomy self-audit (4 quadrants)",
 		"harness-recommend":    "Claude Code .claude/ scaffold by language",
 		"help":                 "print help message",
-		"hotspot":              "convergent-signal hotspots: functions flagged by 2+ signature lenses",
+		"hotspot":              "convergent-signal hotspots: functions flagged by 2+ of 12 independent lenses",
 		"iface-bloat":          "interface design: named interfaces with too many methods (Rob Pike proverb; interfacebloat-style)",
 		"name-check":           "name↔signature consistency: predicates return bool, getters/constructors return a value",
 		"ctx-check":            "context.Context discipline: must be first param, not stored in struct fields",

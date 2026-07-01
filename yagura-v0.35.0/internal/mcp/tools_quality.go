@@ -999,7 +999,7 @@ func buildDepRankTool(d Deps) *Tool {
 func buildHotspotTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_hotspot",
-		Description: "[Q] Convergent-signal hotspots: functions flagged by 2+ signature lenses (complexity/param/flag/return)",
+		Description: "[Q] Convergent-signal hotspots: functions flagged by 2+ of 12 independent lenses (complexity, params, returns, cognit, nestdepth, and more)",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

@@ -208,14 +208,21 @@ cortex flywheel 4 段階すべてを単体で機械化:
   どのレンズも測っていなかった。in-degree が高い内部パッケージ = 変更時に多くの importers を
   コンパイルエラー/型エラーリスクにさらす。threshold(default 5)超過を severity 付きで flag。
   CLI `dep-rank --dir . [--module M] [--threshold N] [--top N]`、MCP `yagura_dep_rank`★ v0.69
-- `internal/hotspot` — 4 つのシグネチャ系レンズ(complexity/paramcheck/flagarg/returncheck)を
-  同じ file set に適用し、複数レンズが独立に指摘した関数(収束シグナル)を高信頼リファクタ対象
-  として報告(ソクラテス新視点 VI、synthesis)。個々のレンズは偽陽性を持つが、独立シグナルの
-  *収束* は単一シグナルより高信頼——引数 6 個 *かつ* 戻り値 4 個 *かつ* 複雑度超過の関数は
-  ほぼ確実に本物。既存レンズを再利用するだけでロジック再実装なし。非テストかつパース可能な
-  .go に scope を確定してから委譲(下流レンズの _test.go/parse-error 挙動差を吸収)。
-  2 レンズ収束=medium / 3+ 収束=high。CLI `hotspot --dir . [--min-lenses N] [--strict]`、
-  MCP `yagura_hotspot`★ v0.70; `ReleaseReadinessExt` top finding resolved v0.71
+- `internal/hotspot` — 関数キー付きレンズ群を同じ file set に適用し、複数レンズが独立に
+  指摘した関数(収束シグナル)を高信頼リファクタ対象として報告(ソクラテス新視点 VI、
+  synthesis)。個々のレンズは偽陽性を持つが、独立シグナルの *収束* は単一シグナルより高信頼——
+  引数 6 個 *かつ* 戻り値 4 個 *かつ* 複雑度超過の関数はほぼ確実に本物。既存レンズを再利用
+  するだけでロジック再実装なし。非テストかつパース可能な .go に scope を確定してから委譲
+  (下流レンズの _test.go/parse-error 挙動差を吸収)。2 レンズ収束=medium / 3+ 収束=high。
+  v0.70 発足時は complexity/paramcheck/flagarg/returncheck の 4 レンズのみを束ねていたが、
+  その後 cognit/nestdepth/typeassert/namecheck/ctxcheck/errwrap/nakedret/prealloc の 8 レンズ
+  (いずれも File/Line/Func を報告する同一規約)が追加されても hotspot は更新されず、収束母数が
+  21 レンズ中 4 つ(19%)まで陳腐化していた——**hotspot 自身がソクラテスの盲点**になっていた。
+  v0.95 で 12 レンズへ拡張、dogfood で収束ホットスポットが 0 件 → **69 件**(high 13 件)に
+  急増して発見(thelper はテスト専用ファイルが主題のため対象外、errdiscard/synccheck/
+  predeclared/errpolicy は Func と同型の関数キーを持たないため対象外)。
+  CLI `hotspot --dir . [--min-lenses N] [--strict]`、MCP `yagura_hotspot`★ v0.70
+  (12-lens expansion★ v0.95); `ReleaseReadinessExt` top finding resolved v0.71
 - `internal/namecheck` — 関数名・error 変数・error 型のシグネチャ整合を検査する *意味軸*
   のレンズ(ソクラテス新視点 VII)。これまで全レンズは *構造* を測ったが、名前と振る舞いの
   整合は未計測の契約だった(W2)。is/has/can/should/must 述語は第一戻り値 bool を、Get/New

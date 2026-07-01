@@ -82,6 +82,21 @@ Lenses are organized by the **axis** they measure:
   corpus-specific percentile distributions so thresholds can be data-driven.*
 - **W4 — Convergence needs population.** `hotspot` is only meaningful on a
   codebase large enough for signals to overlap; on a 3-file project it is noise.
+- **W5 — Synthesis staleness (self-referential blind spot).** `hotspot` (§4)
+  was wired to exactly the 4 lenses that existed at its v0.70 launch
+  (complexity/paramcheck/flagarg/returncheck). By v0.94 the lens roster had
+  tripled to 21, but hotspot's convergence pool was never revisited — its own
+  most valuable feature (multi-signal confidence) silently decayed to 19%
+  coverage of the available signals, and repo-wide convergence dropped to 0
+  reported hotspots even as newer single lenses (`cognit`, `nestdepth`, etc.)
+  kept finding real issues in isolation. A synthesis lens is itself subject to
+  the same drift every other lens targets — a *meta*-Socratic blind spot: who
+  audits the auditor's completeness? *Addressed v0.95 — hotspot now unions 12
+  lenses (adding cognit/nestdepth/typeassert/namecheck/ctxcheck/errwrap/
+  nakedret/prealloc, all sharing the `(Recv).Method` func-key convention).
+  Dogfood: repo-wide convergent hotspots jumped from 0 to 69 (13 high-severity)
+  on the same codebase — proof the population had been undercounted, not that
+  the codebase had gotten worse.*
 
 ## 6. Improvements (改善点) — prioritized
 

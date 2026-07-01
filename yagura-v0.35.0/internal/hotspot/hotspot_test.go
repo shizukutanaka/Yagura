@@ -63,8 +63,10 @@ func TestScan_QuadHotspotHighSeverity(t *testing.T) {
 	if h.Severity != "high" {
 		t.Errorf("3+ lenses should be high severity, got %q", h.Severity)
 	}
-	// lenses must be sorted and contain the expected set
-	want := []string{"complexity", "flagarg", "paramcheck", "returncheck"}
+	// lenses must be sorted and contain the expected set. Monster's nested
+	// if/else + for + switch also clears cognit's default threshold (15),
+	// so the v0.95 expanded lens pool adds "cognit" to the original 4.
+	want := []string{"cognit", "complexity", "flagarg", "paramcheck", "returncheck"}
 	if !reflect.DeepEqual(h.Lenses, want) {
 		t.Errorf("expected lenses %v, got %v", want, h.Lenses)
 	}
@@ -197,5 +199,82 @@ func TestScan_FilesScannedTracked(t *testing.T) {
 	rep := Scan(map[string]string{"bad.go": quadFlagSrc, "good.go": cleanSrc}, 2)
 	if rep.FilesScanned != 2 {
 		t.Errorf("expected 2 files scanned, got %d", rep.FilesScanned)
+	}
+}
+
+// deepAssertSrc trips two of the v0.95-expanded lenses independent of the
+// original signature quartet: nestdepth (5 nested ifs > default threshold 4)
+// and typeassert (a single-value type assertion that panics on mismatch).
+// One param, one return, no bool param, low complexity — so complexity/
+// paramcheck/flagarg/returncheck must NOT also fire on it.
+const deepAssertSrc = `package p
+
+func Deep(x interface{}) int {
+	v := x.(int)
+	if v > 0 {
+		if v > 1 {
+			if v > 2 {
+				if v > 3 {
+					if v > 4 {
+						return v
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+`
+
+func TestScan_ExpandedLensesConverge(t *testing.T) {
+	rep := Scan(map[string]string{"deep.go": deepAssertSrc}, 2)
+	if len(rep.Hotspots) != 1 {
+		t.Fatalf("expected 1 hotspot, got %d: %+v", len(rep.Hotspots), rep.Hotspots)
+	}
+	h := rep.Hotspots[0]
+	if h.Func != "Deep" {
+		t.Errorf("expected func Deep, got %q", h.Func)
+	}
+	want := []string{"nestdepth", "typeassert"}
+	if !reflect.DeepEqual(h.Lenses, want) {
+		t.Errorf("expected lenses %v, got %v", want, h.Lenses)
+	}
+}
+
+// wrapPreallocSrc trips errwrap (non-%w wrapping verb) and prealloc
+// (un-preallocated append in a range loop) on the same function — two more
+// of the newly-added lenses, orthogonal to nestdepth/typeassert/complexity.
+const wrapPreallocSrc = `package p
+
+import (
+	"errors"
+	"fmt"
+)
+
+func Collect(items []int) ([]int, error) {
+	var out []int
+	for _, it := range items {
+		out = append(out, it)
+	}
+	if len(out) == 0 {
+		err := errors.New("no items")
+		return nil, fmt.Errorf("empty: %v", err)
+	}
+	return out, nil
+}
+`
+
+func TestScan_ErrwrapPreallocConverge(t *testing.T) {
+	rep := Scan(map[string]string{"collect.go": wrapPreallocSrc}, 2)
+	if len(rep.Hotspots) != 1 {
+		t.Fatalf("expected 1 hotspot, got %d: %+v", len(rep.Hotspots), rep.Hotspots)
+	}
+	h := rep.Hotspots[0]
+	if h.Func != "Collect" {
+		t.Errorf("expected func Collect, got %q", h.Func)
+	}
+	want := []string{"errwrap", "prealloc"}
+	if !reflect.DeepEqual(h.Lenses, want) {
+		t.Errorf("expected lenses %v, got %v", want, h.Lenses)
 	}
 }

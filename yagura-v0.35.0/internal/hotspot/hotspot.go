@@ -1,11 +1,22 @@
-// Package hotspot は関数レベルのシグネチャ系レンズ(complexity / paramcheck /
-// flagarg / returncheck)の findings を関数単位で重ね合わせ、複数のレンズが
-// 独立して同じ関数を指摘した箇所を「ホットスポット」として報告する。
+// Package hotspot は関数レベルの各レンズの findings を関数単位で重ね合わせ、
+// 複数のレンズが独立して同じ関数を指摘した箇所を「ホットスポット」として報告する。
 //
 // ソクラテス新視点 VI(収束シグナル):個々のレンズはそれぞれ偽陽性を持つ——
 // 引数 6 個の関数が妥当なこともあり、戻り値 4 個の関数が妥当なこともある。
 // しかし *複数の独立したレンズが同時に* 指摘する関数は、ほぼ確実に本物の
 // リファクタ対象である。独立シグナルの収束は、単一シグナルより高信頼。
+//
+// v0.70 時点は signature 系 4 レンズ(complexity/paramcheck/flagarg/returncheck)
+// のみを束ねていたが、その後 cognit/nestdepth/typeassert/namecheck/ctxcheck/
+// errwrap/nakedret/prealloc など「(Recv).Method」規約で File/Line/Func を報告
+// する関数キー付きレンズが 8 つ追加され、収束母数が古いまま取り残されていた
+// (v0.94 時点で hotspot は 21 レンズ中 4 つしか見ていない = 収束シグナルの
+// 有効性が発足時から目減りし続けていた)。本改修でその 8 レンズを合流し、
+// 収束母数を 12 レンズへ拡張する(ソクラテス新視点、hotspot 自身の陳腐化)。
+// thelper は主題がテストファイルであり hotspot の非テストスコープと相容れない
+// ため対象外。errdiscard/synccheck/predeclared/errpolicy は Func と同型の
+// 関数キーを持たない(Caller が空になりうる/Name が識別子や型を指す)ため、
+// 誤収束を避けて対象外とする。
 //
 // 既存レンズを再利用するだけでロジックを再実装しない(ADR-0001 / zero-dep)。
 package hotspot
@@ -17,10 +28,18 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/shizukutanaka/yagura/internal/cognit"
 	"github.com/shizukutanaka/yagura/internal/complexity"
+	"github.com/shizukutanaka/yagura/internal/ctxcheck"
+	"github.com/shizukutanaka/yagura/internal/errwrap"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
+	"github.com/shizukutanaka/yagura/internal/nakedret"
+	"github.com/shizukutanaka/yagura/internal/namecheck"
+	"github.com/shizukutanaka/yagura/internal/nestdepth"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
+	"github.com/shizukutanaka/yagura/internal/prealloc"
 	"github.com/shizukutanaka/yagura/internal/returncheck"
+	"github.com/shizukutanaka/yagura/internal/typeassert"
 )
 
 // defaultMinLenses は「ホットスポット」と見なす最小レンズ数。
@@ -63,7 +82,7 @@ func scopeFiles(files map[string]string) map[string]string {
 	return out
 }
 
-// funcKey は (file, func) で関数を一意化する。4 レンズはいずれもメソッドを
+// funcKey は (file, func) で関数を一意化する。12 レンズはいずれもメソッドを
 // "(Recv).Method" 形式で命名し、FuncDecl の位置行を報告するため衝突しない。
 type funcKey struct {
 	file string
@@ -75,7 +94,7 @@ type acc struct {
 	lenses map[string]bool
 }
 
-// Scan は 4 つのシグネチャ系レンズを同じ file set に対して既定しきい値で実行し、
+// Scan は 12 個の関数キー付きレンズを同じ file set に対して既定しきい値で実行し、
 // minLenses 個以上のレンズが指摘した関数をホットスポットとして返す。
 // minLenses<=1 は defaultMinLenses(2) に丸める。
 func Scan(files map[string]string, minLenses int) Report {
@@ -89,14 +108,26 @@ func Scan(files map[string]string, minLenses int) Report {
 	// 引きずられないよう、ここで同一の file set に揃えてから委譲する。
 	scoped := scopeFiles(files)
 
-	// 各レンズを既定しきい値(threshold=0)で実行。すべて同じ file set を走査。
+	// 各レンズを既定しきい値(threshold=0、または閾値パラメータなし)で実行。
+	// すべて同じ file set を走査。
 	cRep := complexity.Scan(scoped, 0)
 	pRep := paramcheck.Scan(scoped, 0)
 	fRep := flagarg.Scan(scoped, 0)
 	rRep := returncheck.Scan(scoped, 0)
+	cogRep := cognit.Scan(scoped, 0)
+	ndRep := nestdepth.Scan(scoped, 0)
+	taRep := typeassert.Scan(scoped)
+	ncRep := namecheck.Scan(scoped)
+	ccRep := ctxcheck.Scan(scoped)
+	ewRep := errwrap.Scan(scoped)
+	nrRep := nakedret.Scan(scoped, 0)
+	prRep := prealloc.Scan(scoped)
 
 	by := map[funcKey]*acc{}
 	record := func(file, fn string, line int, lens string) {
+		if fn == "" {
+			return
+		}
 		k := funcKey{file: file, fn: fn}
 		a := by[k]
 		if a == nil {
@@ -120,6 +151,30 @@ func Scan(files map[string]string, minLenses int) Report {
 	}
 	for _, f := range rRep.Findings {
 		record(f.File, f.Func, f.Line, "returncheck")
+	}
+	for _, f := range cogRep.Findings {
+		record(f.File, f.Func, f.Line, "cognit")
+	}
+	for _, f := range ndRep.Findings {
+		record(f.File, f.Func, f.Line, "nestdepth")
+	}
+	for _, f := range taRep.Findings {
+		record(f.File, f.Func, f.Line, "typeassert")
+	}
+	for _, f := range ncRep.Findings {
+		record(f.File, f.Func, f.Line, "namecheck")
+	}
+	for _, f := range ccRep.Findings {
+		record(f.File, f.Func, f.Line, "ctxcheck")
+	}
+	for _, f := range ewRep.Findings {
+		record(f.File, f.Func, f.Line, "errwrap")
+	}
+	for _, f := range nrRep.Findings {
+		record(f.File, f.Func, f.Line, "nakedret")
+	}
+	for _, f := range prRep.Findings {
+		record(f.File, f.Func, f.Line, "prealloc")
 	}
 
 	rep := Report{
