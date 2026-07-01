@@ -4,6 +4,60 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.96.0] - 2026-07-01
+
+### Theme — "hotspot backlog sweep: acting on the 69 convergent-signal targets v0.95 surfaced"
+
+Follow-through on the product-level SWOT audit ("長所短所改善点を洗い出して改善",
+second pass). v0.95 fixed `hotspot`'s synthesis staleness (4→12 lenses) and
+found 69 convergent-signal refactor targets repo-wide, 13 of them high-severity
+(3+ independent lenses agreeing). This release works down 3 of the 13.
+
+#### Refactored (measure → refactor → confirm)
+
+All three were flagged by the identical 3-lens signature
+(`cognit`+`complexity`+`prealloc`): high cyclomatic/cognitive complexity plus
+an un-preallocated `append` inside a `range` loop. Each was decomposed into
+single-responsibility helpers along its natural phase boundaries, with the
+`append` sites given capacity hints in the same pass.
+
+- **`internal/coupling/coupling.go` — `Scan`** (107 lines) → `buildDepGraph`
+  (import graph construction), `computeFanIn`, `instabilityFunc`,
+  `sortedKeys`, `buildPackages`, `detectSDPViolations` (6 helpers). 9 existing
+  tests unchanged.
+- **`internal/deadcode/deadcode.go` — `scanPackage`** (79 lines) →
+  `parsePackageFiles`, `collectPackageCandidates`, `markReferences`,
+  `reportDead` (4 helpers; the local `fileAST` type hoisted to package scope
+  so helpers can share it). 13 existing tests unchanged.
+- **`internal/synccheck/synccheck.go` — `collectLockyTypes`** (60 lines) →
+  `collectStructFields`, `computeLockySet` (2 helpers). 17 existing tests
+  unchanged.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, zero regressions
+- Dogfood: `hotspot --dir . --min-lenses 3` — high-severity convergent
+  hotspots **13 → 10**; all three targeted functions cleared the 3-lens
+  convergence signal entirely
+- `hotspot --dir . --min-lenses 2` — total convergent hotspots 69 → 67
+- `code-health --dir internal/coupling` and `internal/deadcode` — both now
+  grade **A** (100); `internal/synccheck` grade **B** (88) — the extracted
+  `computeLockySet` still carries a standalone complexity of 11 (just over
+  the gate) from its fixed-point iteration, a legitimate residual not chased
+  further this release (scope discipline)
+
+#### Counts
+- MCP tools: 92 (unchanged) | Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 90 → **91** (v0.6 → v0.96)
+
+#### What's not yet
+- 10 high-severity hotspots remain, concentrated in `cmd/yagura/cli.go` and
+  `main.go` — higher blast-radius daemon/CLI glue code, deliberately deferred
+  to a dedicated future increment rather than rushed alongside lower-risk
+  `internal/` targets.
+- `synccheck.computeLockySet`'s complexity-11 residual is visible but
+  untouched — a candidate for the next hotspot sweep.
+
 ## [v0.95.0] - 2026-07-01
 
 ### Theme — "hotspot synthesis-staleness fix: the auditor's own blind spot (self-referential Socratic finding)"

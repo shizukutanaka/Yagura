@@ -111,14 +111,33 @@ func Scan(files map[string]string) Report {
 	return r
 }
 
+// fileAST は 1 ファイルのパース結果と test ファイル判定を束ねる。
+type fileAST struct {
+	f      *ast.File
+	isTest bool
+}
+
 func scanPackage(dir string, pkgPaths []string, files map[string]string, r *Report) {
 	fset := token.NewFileSet()
-	type fileAST struct {
-		f      *ast.File
-		isTest bool
-	}
-	var asts []fileAST
+	asts := parsePackageFiles(dir, pkgPaths, files, fset, r)
 
+	// 1) 候補(非 test ファイルの unexported func/type/const/var)を収集。
+	cands := collectPackageCandidates(asts, fset, dir)
+	r.DeclaredUnexported += len(cands)
+	if len(cands) == 0 {
+		return
+	}
+
+	// 2) 全ファイル(test 含む)を走査し、宣言位置以外の出現を「参照」とみなす。
+	referenced := markReferences(asts, cands)
+
+	// 3) 未参照の候補を dead として報告(name 昇順で決定論的)。
+	reportDead(cands, referenced, r)
+}
+
+// parsePackageFiles は pkgPaths を同一 fset でパースし、parse-error を r に記録する。
+func parsePackageFiles(dir string, pkgPaths []string, files map[string]string, fset *token.FileSet, r *Report) []fileAST {
+	asts := make([]fileAST, 0, len(pkgPaths))
 	for _, path := range pkgPaths {
 		f, err := parser.ParseFile(fset, path, files[path], 0)
 		if err != nil {
@@ -138,8 +157,11 @@ func scanPackage(dir string, pkgPaths []string, files map[string]string, r *Repo
 		}
 		asts = append(asts, fileAST{f: f, isTest: strings.HasSuffix(path, "_test.go")})
 	}
+	return asts
+}
 
-	// 1) 候補(非 test ファイルの unexported func/type/const/var)を収集。
+// collectPackageCandidates は非 test ファイルの unexported 宣言候補を集める。
+func collectPackageCandidates(asts []fileAST, fset *token.FileSet, dir string) map[string]*candidate {
 	cands := map[string]*candidate{}
 	for _, fa := range asts {
 		if fa.isTest {
@@ -147,12 +169,11 @@ func scanPackage(dir string, pkgPaths []string, files map[string]string, r *Repo
 		}
 		collectCandidates(fa.f, fset, dir, cands)
 	}
-	r.DeclaredUnexported += len(cands)
-	if len(cands) == 0 {
-		return
-	}
+	return cands
+}
 
-	// 2) 全ファイル(test 含む)を走査し、宣言位置以外の出現を「参照」とみなす。
+// markReferences は全ファイル(test 含む)を走査し、宣言位置以外での出現を参照とみなす。
+func markReferences(asts []fileAST, cands map[string]*candidate) map[string]bool {
 	referenced := map[string]bool{}
 	for _, fa := range asts {
 		ast.Inspect(fa.f, func(n ast.Node) bool {
@@ -170,8 +191,11 @@ func scanPackage(dir string, pkgPaths []string, files map[string]string, r *Repo
 			return true
 		})
 	}
+	return referenced
+}
 
-	// 3) 未参照の候補を dead として報告(name 昇順で決定論的)。
+// reportDead は未参照候補を Findings へ name 昇順(決定論的)に追加する。
+func reportDead(cands map[string]*candidate, referenced map[string]bool, r *Report) {
 	names := make([]string, 0, len(cands))
 	for n := range cands {
 		names = append(names, n)

@@ -144,7 +144,12 @@ func Scan(files map[string]string) Report {
 // 固定点反復 1 段で 1 hop の推移を解決(`Outer{ Inner }` で Inner が locky なら
 // Outer も locky)。多段は保守的に解決しない(false positive 回避)。
 func collectLockyTypes(parsed map[string]*ast.File) map[string]bool {
-	// 各 struct 型の field type のリストを収集。
+	structFields := collectStructFields(parsed)
+	return computeLockySet(structFields)
+}
+
+// collectStructFields は file set 全体から各 struct 型の field type のリストを収集する。
+func collectStructFields(parsed map[string]*ast.File) map[string][]ast.Expr {
 	structFields := map[string][]ast.Expr{}
 	for _, f := range parsed {
 		for _, decl := range f.Decls {
@@ -161,7 +166,7 @@ func collectLockyTypes(parsed map[string]*ast.File) map[string]bool {
 				if !ok || st.Fields == nil {
 					continue
 				}
-				var fields []ast.Expr
+				fields := make([]ast.Expr, 0, len(st.Fields.List))
 				for _, fld := range st.Fields.List {
 					fields = append(fields, fld.Type)
 				}
@@ -169,7 +174,12 @@ func collectLockyTypes(parsed map[string]*ast.File) map[string]bool {
 			}
 		}
 	}
+	return structFields
+}
 
+// computeLockySet は直接ロック型を含む struct、および 1 hop 固定点反復で locky 型を
+// 直接指す(Ident or *Ident)struct を "lock-bearing" 型として判定する。
+func computeLockySet(structFields map[string][]ast.Expr) map[string]bool {
 	locky := map[string]bool{}
 	// 初期: 直接ロック型を含むものを locky に。
 	for name, fields := range structFields {

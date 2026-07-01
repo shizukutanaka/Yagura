@@ -67,10 +67,28 @@ func Scan(files map[string]string, modulePath string) Report {
 	r := Report{ModulePath: modulePath}
 	prefix := modulePath + "/"
 
-	deps := map[string]map[string]bool{} // from-dir → set(to-dir)
-	allPkgs := map[string]bool{}
+	deps, allPkgs, parseFindings := buildDepGraph(files, prefix)
+	r.Findings = append(r.Findings, parseFindings...)
 
-	// パスを決定論的に処理(parse-error の出力順を安定させる)。
+	ca := computeFanIn(deps)
+	instability := instabilityFunc(deps, ca)
+	names := sortedKeys(allPkgs)
+
+	r.Packages = buildPackages(names, deps, ca, instability)
+	r.PackageCount = len(r.Packages)
+
+	r.Findings = append(r.Findings, detectSDPViolations(names, deps, instability)...)
+	sortFindings(r.Findings)
+	return r
+}
+
+// buildDepGraph は files を module-relative の import グラフ(from-dir → set(to-dir))
+// へ変換する。外部/stdlib import は無視。パスは決定論的な順で処理し、parse-error を
+// 収集する(呼び出し順に依存しない安定した Findings 順のため)。
+func buildDepGraph(files map[string]string, prefix string) (deps map[string]map[string]bool, allPkgs map[string]bool, findings []Finding) {
+	deps = map[string]map[string]bool{}
+	allPkgs = map[string]bool{}
+
 	paths := make([]string, 0, len(files))
 	for p := range files {
 		paths = append(paths, p)
@@ -86,7 +104,7 @@ func Scan(files map[string]string, modulePath string) Report {
 
 		imps, perr := parseImports(path, files[path])
 		if perr != "" {
-			r.Findings = append(r.Findings, Finding{
+			findings = append(findings, Finding{
 				Rule: "parse-error", Severity: "low", From: dir,
 				Message: "Go source did not parse: " + perr,
 			})
@@ -106,16 +124,23 @@ func Scan(files map[string]string, modulePath string) Report {
 			allPkgs[to] = true
 		}
 	}
+	return deps, allPkgs, findings
+}
 
-	// Ca / Ce / I を算出。
+// computeFanIn は各 to-dir への Ca(fan-in、誰が自分に依存するか)を数える。
+func computeFanIn(deps map[string]map[string]bool) map[string]int {
 	ca := map[string]int{}
 	for _, tos := range deps {
 		for to := range tos {
 			ca[to]++
 		}
 	}
+	return ca
+}
 
-	instability := func(name string) float64 {
+// instabilityFunc は I = Ce/(Ca+Ce) を返すクロージャを組み立てる。
+func instabilityFunc(deps map[string]map[string]bool, ca map[string]int) func(string) float64 {
+	return func(name string) float64 {
 		ce := len(deps[name])
 		denom := ca[name] + ce
 		if denom == 0 {
@@ -123,20 +148,28 @@ func Scan(files map[string]string, modulePath string) Report {
 		}
 		return float64(ce) / float64(denom)
 	}
+}
 
-	names := make([]string, 0, len(allPkgs))
-	for n := range allPkgs {
+// sortedKeys は bool-set のキーをソート済み slice にする。
+func sortedKeys(m map[string]bool) []string {
+	names := make([]string, 0, len(m))
+	for n := range m {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	return names
+}
 
+// buildPackages は各 package の Ca/Ce/Instability/Imports を Package スライスへ集約する。
+func buildPackages(names []string, deps map[string]map[string]bool, ca map[string]int, instability func(string) float64) []Package {
+	pkgs := make([]Package, 0, len(names))
 	for _, n := range names {
-		var imps []string
+		imps := make([]string, 0, len(deps[n]))
 		for to := range deps[n] {
 			imps = append(imps, to)
 		}
 		sort.Strings(imps)
-		r.Packages = append(r.Packages, Package{
+		pkgs = append(pkgs, Package{
 			Name:        n,
 			FanIn:       ca[n],
 			FanOut:      len(deps[n]),
@@ -144,10 +177,14 @@ func Scan(files map[string]string, modulePath string) Report {
 			Imports:     imps,
 		})
 	}
-	r.PackageCount = len(r.Packages)
+	return pkgs
+}
 
-	// SDP 違反: edge from→to で I[to] - I[from] >= margin
-	//(安定な from が より不安定な to に依存している)。
+// detectSDPViolations は edge from→to で I[to] - I[from] >= margin
+// (安定な from が より不安定な to に依存している)を Stable Dependencies Principle
+// 違反として報告する。
+func detectSDPViolations(names []string, deps map[string]map[string]bool, instability func(string) float64) []Finding {
+	var findings []Finding
 	for _, from := range names {
 		fi := instability(from)
 		tos := make([]string, 0, len(deps[from]))
@@ -158,7 +195,7 @@ func Scan(files map[string]string, modulePath string) Report {
 		for _, to := range tos {
 			ti := instability(to)
 			if ti-fi >= sdpMargin {
-				r.Findings = append(r.Findings, Finding{
+				findings = append(findings, Finding{
 					Rule: "sdp-violation", Severity: "medium", From: from, To: to,
 					Message: "stable package " + from + " (I=" + f2(fi) + ") depends on more-unstable " +
 						to + " (I=" + f2(ti) + ") — changes in " + to + " ripple through " + from +
@@ -167,8 +204,7 @@ func Scan(files map[string]string, modulePath string) Report {
 			}
 		}
 	}
-	sortFindings(r.Findings)
-	return r
+	return findings
 }
 
 // parseImports は ImportsOnly で import パス一覧と(あれば)parse エラー文を返す。
