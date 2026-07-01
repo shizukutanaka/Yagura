@@ -248,57 +248,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	// PWA 静的アセット(manifest / service worker / icon)。dashboard を
-	// インストール可能なデスクトップアプリにするためのルート。既存の HTML 描画には
-	// 触れず、既知 path のときだけ早期 return する(additive)。
-	if serveAsset(w, r.URL.Path) {
-		return
-	}
-
-	// v0.35: Activity 列のドリルダウン(read-only)。非 CLI ユーザが「エージェントが
-	// 何をしたか」を totals だけでなく構造化サマリで見られる。additive — 既知 path のみ。
-	if r.URL.Path == "/dashboard/activity" {
-		h.serveActivityDetail(w, r)
-		return
-	}
-
-	// v0.35: portfolio alert drill-down from the health banner (read-only).
-	if r.URL.Path == "/dashboard/alerts" {
-		h.serveAlertDetail(w, r)
+	if h.dispatchKnownSubPath(w, r) {
 		return
 	}
 
 	now := h.now()
 	projects := h.registry.List()
-	sort.SliceStable(projects, func(i, j int) bool {
-		stageRank := map[project.Stage]int{
-			project.StageActive:      0,
-			project.StageMaintenance: 1,
-			project.StagePaused:      2,
-			project.StageArchived:    3,
-		}
-		if stageRank[projects[i].Stage] != stageRank[projects[j].Stage] {
-			return stageRank[projects[i].Stage] < stageRank[projects[j].Stage]
-		}
-		if projects[i].Priority != projects[j].Priority {
-			return projects[i].Priority > projects[j].Priority
-		}
-		return projects[i].Slug < projects[j].Slug
-	})
-
-	var counts = map[project.Stage]int{}
-	var failingCI, stale int
-	for _, p := range projects {
-		counts[p.Stage]++
-		if p.CIStatus == project.CIStatusFailing {
-			failingCI++
-		}
-		if p.Stage == project.StageActive && !p.LatestActivity.IsZero() &&
-			now.Sub(p.LatestActivity).Hours()/24 >= 14 {
-			stale++
-		}
-	}
+	sortProjectsForDashboard(projects)
+	counts, failingCI, stale := summarizeProjects(projects, now)
 
 	data := map[string]any{
 		"Now":         now,
@@ -311,17 +268,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"Stale":       stale,
 		"Projects":    projects,
 	}
-
 	// v0.35: per-project agent activity (Activity column). 活動のある project だけ載せる。
-	activity := map[string]HookActivity{}
-	if h.hooks != nil {
-		for _, p := range projects {
-			if a, ok := h.hooks.ProjectActivity(p.Slug); ok && a.Total > 0 {
-				activity[p.Slug] = a
-			}
-		}
-	}
-	data["Activity"] = activity
+	data["Activity"] = h.buildActivityMap(projects)
 
 	// v0.35: portfolio health banner (latest alert_fix sweep). Only shown when a
 	// provider is wired and the sweep found alerts.
@@ -332,52 +280,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// v0.14.0: agent panel data
-	if h.quota != nil {
-		statuses := h.quota.AllStatuses()
-		recommended, reason := h.quota.Recommend()
-		staleAgents := h.quota.AnyStale(quotamonitor.DefaultIdleTimeout)
-		staleSet := map[quotamonitor.Agent]bool{}
-		for _, a := range staleAgents {
-			staleSet[a] = true
-		}
-		// v0.16.0: usage summaries(sparkline + numeric metrics)
-		usages := h.quota.AllUsageSummaries()
-
-		// 表示順を固定(Claude Code → Windsurf)
-		var agents []map[string]any
-		for _, a := range []quotamonitor.Agent{
-			quotamonitor.AgentClaudeCode, quotamonitor.AgentWindsurf,
-		} {
-			s, ok := statuses[a]
-			if !ok {
-				continue
-			}
-			u := usages[a]
-			agents = append(agents, map[string]any{
-				"Name":             string(s.Agent),
-				"State":            string(s.State),
-				"RemainingPercent": s.RemainingPercent,
-				"LastReportSource": s.LastReportSource,
-				"LastReportAt":     s.LastReportAt,
-				"WindowResetsAt":   s.WindowResetsAt,
-				"HandoffAt":        s.HandoffAt,
-				"LastHeartbeatAt":  s.LastHeartbeatAt,
-				"Stale":            staleSet[a],
-				// v0.16.0: usage metrics
-				"TotalReports":      u.TotalReports,
-				"Consumed1h":        u.Consumed1h,
-				"Consumed24h":       u.Consumed24h,
-				"AvgConsumePerHour": u.AvgConsumePerHour,
-				"WindowHours":       u.WindowHours,
-				"HasUsageHistory":   u.TotalReports >= 2,
-				"SparklinePath":     buildSparklinePath(u.Samples),
-			})
-		}
-		data["AgentsPanel"] = map[string]any{
-			"Agents":               agents,
-			"RecommendedAgent":     string(recommended),
-			"RecommendationReason": reason,
-		}
+	if panel := h.buildAgentsPanel(); panel != nil {
+		data["AgentsPanel"] = panel
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -385,6 +289,128 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if err := h.tmpl.Execute(w, data); err != nil {
 		h.logger.Error("dashboard: template execute failed", "err", err)
+	}
+}
+
+// dispatchKnownSubPath は PWA アセット / Activity ドリルダウン / Alert
+// ドリルダウンの既知 sub-path を処理する。処理済みなら true(呼び出し元は即 return)。
+// 既存の HTML 描画には触れず、既知 path のときだけ分岐する(additive)。
+func (h *Handler) dispatchKnownSubPath(w http.ResponseWriter, r *http.Request) bool {
+	if serveAsset(w, r.URL.Path) {
+		return true
+	}
+	if r.URL.Path == "/dashboard/activity" {
+		h.serveActivityDetail(w, r)
+		return true
+	}
+	if r.URL.Path == "/dashboard/alerts" {
+		h.serveAlertDetail(w, r)
+		return true
+	}
+	return false
+}
+
+// sortProjectsForDashboard は stage → priority(降順)→ slug の順に安定ソートする。
+func sortProjectsForDashboard(projects []*project.Project) {
+	stageRank := map[project.Stage]int{
+		project.StageActive:      0,
+		project.StageMaintenance: 1,
+		project.StagePaused:      2,
+		project.StageArchived:    3,
+	}
+	sort.SliceStable(projects, func(i, j int) bool {
+		if stageRank[projects[i].Stage] != stageRank[projects[j].Stage] {
+			return stageRank[projects[i].Stage] < stageRank[projects[j].Stage]
+		}
+		if projects[i].Priority != projects[j].Priority {
+			return projects[i].Priority > projects[j].Priority
+		}
+		return projects[i].Slug < projects[j].Slug
+	})
+}
+
+// summarizeProjects は stage 別件数・failing CI 件数・stale(active かつ 14 日超未活動)
+// 件数を集計する。
+func summarizeProjects(projects []*project.Project, now time.Time) (counts map[project.Stage]int, failingCI, stale int) {
+	counts = map[project.Stage]int{}
+	for _, p := range projects {
+		counts[p.Stage]++
+		if p.CIStatus == project.CIStatusFailing {
+			failingCI++
+		}
+		if p.Stage == project.StageActive && !p.LatestActivity.IsZero() &&
+			now.Sub(p.LatestActivity).Hours()/24 >= 14 {
+			stale++
+		}
+	}
+	return counts, failingCI, stale
+}
+
+// buildActivityMap は活動のある project だけの Activity 列データを組み立てる。
+// h.hooks 未設定時は空 map(hooks なしでも Activity キーは常に存在する)。
+func (h *Handler) buildActivityMap(projects []*project.Project) map[string]HookActivity {
+	activity := map[string]HookActivity{}
+	if h.hooks == nil {
+		return activity
+	}
+	for _, p := range projects {
+		if a, ok := h.hooks.ProjectActivity(p.Slug); ok && a.Total > 0 {
+			activity[p.Slug] = a
+		}
+	}
+	return activity
+}
+
+// buildAgentsPanel は v0.14.0 agent panel データ(表示順固定: Claude Code →
+// Windsurf)を組み立てる。h.quota 未設定時は nil(呼び出し元は data キーを
+// 設定しない)。
+func (h *Handler) buildAgentsPanel() map[string]any {
+	if h.quota == nil {
+		return nil
+	}
+	statuses := h.quota.AllStatuses()
+	recommended, reason := h.quota.Recommend()
+	staleAgents := h.quota.AnyStale(quotamonitor.DefaultIdleTimeout)
+	staleSet := map[quotamonitor.Agent]bool{}
+	for _, a := range staleAgents {
+		staleSet[a] = true
+	}
+	// v0.16.0: usage summaries(sparkline + numeric metrics)
+	usages := h.quota.AllUsageSummaries()
+
+	var agents []map[string]any
+	for _, a := range []quotamonitor.Agent{
+		quotamonitor.AgentClaudeCode, quotamonitor.AgentWindsurf,
+	} {
+		s, ok := statuses[a]
+		if !ok {
+			continue
+		}
+		u := usages[a]
+		agents = append(agents, map[string]any{
+			"Name":             string(s.Agent),
+			"State":            string(s.State),
+			"RemainingPercent": s.RemainingPercent,
+			"LastReportSource": s.LastReportSource,
+			"LastReportAt":     s.LastReportAt,
+			"WindowResetsAt":   s.WindowResetsAt,
+			"HandoffAt":        s.HandoffAt,
+			"LastHeartbeatAt":  s.LastHeartbeatAt,
+			"Stale":            staleSet[a],
+			// v0.16.0: usage metrics
+			"TotalReports":      u.TotalReports,
+			"Consumed1h":        u.Consumed1h,
+			"Consumed24h":       u.Consumed24h,
+			"AvgConsumePerHour": u.AvgConsumePerHour,
+			"WindowHours":       u.WindowHours,
+			"HasUsageHistory":   u.TotalReports >= 2,
+			"SparklinePath":     buildSparklinePath(u.Samples),
+		})
+	}
+	return map[string]any{
+		"Agents":               agents,
+		"RecommendedAgent":     string(recommended),
+		"RecommendationReason": reason,
 	}
 }
 
@@ -1076,7 +1102,7 @@ a:focus-visible {
   {{end}}
   </main>
 
-  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.97.0</footer>
+  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.98.0</footer>
 </div>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/dashboard/sw.js',{scope:'/dashboard'}).catch(function(){});}</script>
 <script>

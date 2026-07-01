@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.97.0** — 92 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Hotspot backlog sweep, round 2:** continuing the v0.96 follow-through on the 69 convergent-signal targets `hotspot` surfaced, this release decomposes 3 more of the high-severity set (all sharing `cognit`+`complexity`+`prealloc`): `publicityscan.Scan` (4 independent per-line leak checks extracted), `harness.AuditClaudeMd` (5 structural checks extracted along their natural phase boundaries), and `selfimprove.Analyze` (5 numbered rule phases, already delineated by inline comments, extracted 1:1). High-severity hotspots: **10 → 7**. Zero test regressions across all three packages. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.98.0** — 92 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Hotspot backlog: `internal/` fully cleared.** Third round on the 69 convergent-signal targets `hotspot` surfaced in v0.95 (13 high-severity at the time). This release decomposes the final 3 `internal/` targets — `audit.Read` (also de-duplicated its file-listing logic with `Verify`, which had the identical block copy-pasted), `secretscan.Scanner.Scan` (extracted the per-match rule-evaluation body), and `dashboard.(*Handler).ServeHTTP` (extracted sub-path routing, project sorting, summarization, and the two data-panel builders) — bringing the high-severity count from **13 at v0.95 to 0 outside `cmd/yagura`**. The remaining 4 (`cli.go` ×3, `main.go` ×1) are the daemon boot sequence and CLI dispatch glue, deliberately held for a dedicated future increment given their higher blast radius. Zero test regressions across all 6 packages touched this arc. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-92 consecutive releases (v0.6 → v0.97) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+93 consecutive releases (v0.6 → v0.98) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

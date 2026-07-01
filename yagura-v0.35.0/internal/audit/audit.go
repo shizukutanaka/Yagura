@@ -209,22 +209,10 @@ type VerifyResult struct {
 // ディレクトリが存在しない場合は空の結果を返す(エラー扱いではない)。
 // 戻り値は各ファイルの検証結果(ファイル名昇順=日付昇順)。
 func Verify(dir string) ([]VerifyResult, error) {
-	entries, err := os.ReadDir(dir)
+	files, err := listJSONLFiles(dir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read dir: %w", err)
+		return nil, err
 	}
-	var files []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		files = append(files, filepath.Join(dir, e.Name()))
-	}
-	sort.Strings(files)
-
 	results := make([]VerifyResult, 0, len(files))
 	for _, p := range files {
 		results = append(results, verifyFile(p))
@@ -232,11 +220,9 @@ func Verify(dir string) ([]VerifyResult, error) {
 	return results, nil
 }
 
-// Read は dir 内の全 *.jsonl を日付順(ファイル名昇順=時系列)に読み、record を返す。
-// kind != "" のときはその Kind の record だけを返す。整合性検証はしない(Verify が担う)。
-// ディレクトリ不在は空スライス(エラーではない)。壊れた行に当たった場合は、そこまでに
-// 読めた record と error を返す(best-effort 読出)。
-func Read(dir, kind string) ([]Record, error) {
+// listJSONLFiles は dir 内の *.jsonl をファイル名昇順(=日付昇順)で返す。
+// ディレクトリ不在は空スライス(エラーではない)。Verify/Read で共有する。
+func listJSONLFiles(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -252,28 +238,52 @@ func Read(dir, kind string) ([]Record, error) {
 		files = append(files, filepath.Join(dir, e.Name()))
 	}
 	sort.Strings(files)
+	return files, nil
+}
 
+// Read は dir 内の全 *.jsonl を日付順(ファイル名昇順=時系列)に読み、record を返す。
+// kind != "" のときはその Kind の record だけを返す。整合性検証はしない(Verify が担う)。
+// ディレクトリ不在は空スライス(エラーではない)。壊れた行に当たった場合は、そこまでに
+// 読めた record と error を返す(best-effort 読出)。
+func Read(dir, kind string) ([]Record, error) {
+	files, err := listJSONLFiles(dir)
+	if err != nil {
+		return nil, err
+	}
 	var out []Record
 	for _, p := range files {
-		f, err := os.Open(p) //nolint:gosec
-		if err != nil {
-			return out, fmt.Errorf("open %s: %w", p, err)
+		recs, rerr := decodeJSONLFile(p, kind)
+		out = append(out, recs...)
+		if rerr != nil {
+			return out, rerr
 		}
-		dec := json.NewDecoder(f)
-		for {
-			var r Record
-			if derr := dec.Decode(&r); derr != nil {
-				if errors.Is(derr, io.EOF) {
-					break
-				}
-				f.Close()
-				return out, fmt.Errorf("decode %s: %w", p, derr)
+	}
+	return out, nil
+}
+
+// decodeJSONLFile は 1 ファイルを JSONL decode し、kind でフィルタした record を
+// 返す(kind=="" は無条件)。decode エラー時は、そこまでに読めた record と error を
+// 返す(best-effort 読出)。
+func decodeJSONLFile(path, kind string) ([]Record, error) {
+	f, err := os.Open(path) //nolint:gosec
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+
+	var out []Record
+	dec := json.NewDecoder(f)
+	for {
+		var r Record
+		if derr := dec.Decode(&r); derr != nil {
+			if errors.Is(derr, io.EOF) {
+				break
 			}
-			if kind == "" || r.Kind == kind {
-				out = append(out, r)
-			}
+			return out, fmt.Errorf("decode %s: %w", path, derr)
 		}
-		f.Close()
+		if kind == "" || r.Kind == kind {
+			out = append(out, r)
+		}
 	}
 	return out, nil
 }

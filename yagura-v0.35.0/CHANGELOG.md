@@ -4,6 +4,64 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.98.0] - 2026-07-01
+
+### Theme — "hotspot backlog: internal/ fully cleared (13 → 0 high-severity outside cmd/)"
+
+Fourth pass on the product SWOT audit ("長所短所改善点を洗い出して改善"), and
+the completion of the arc started in v0.95. Of the 13 high-severity
+convergent-signal hotspots `hotspot` surfaced when its synthesis staleness
+was fixed, v0.96 and v0.97 cleared 6; this release clears the final 3
+`internal/` targets, leaving **zero** high-severity hotspots in `internal/`.
+
+#### Refactored (measure → refactor → confirm)
+
+- **`internal/audit/audit.go` — `Read`** (41 lines) → extracted
+  `decodeJSONLFile` (per-file JSONL decode + kind filter). Also fixed a
+  genuine DRY violation found along the way: `Read` and `Verify` had
+  byte-for-byte identical file-listing logic (list `*.jsonl` in a dir,
+  sorted, tolerating a missing dir) duplicated in both functions — extracted
+  as a shared `listJSONLFiles` helper that both now call. 20 existing tests
+  (including a fuzz target and an example) unchanged.
+- **`internal/secretscan/secretscan.go` — `(*Scanner).Scan`** (50 lines) →
+  extracted `matchToFinding` (per-regex-match rule evaluation: capture-group
+  entropy check, fingerprint dedup, `Finding` construction). All existing
+  tests unchanged.
+- **`internal/dashboard/dashboard.go` — `(*Handler).ServeHTTP`** (145 lines,
+  the HTTP request path for `GET /dashboard`) → 5 helpers:
+  `dispatchKnownSubPath` (PWA asset / activity / alert sub-routing),
+  `sortProjectsForDashboard`, `summarizeProjects`, `buildActivityMap`,
+  `buildAgentsPanel`. Pure extract-method — no behavior change; the higher
+  blast radius of touching request-handling code was mitigated by keeping
+  every extraction mechanical (no logic altered) and running the full
+  package test suite after. All existing tests unchanged.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, zero regressions
+- Dogfood: `hotspot --dir . --min-lenses 3` — high-severity convergent
+  hotspots **7 → 4**, and critically: **0 remain in `internal/`** — the
+  4 that remain are exclusively `cmd/yagura/cli.go` (×3) and
+  `cmd/yagura/main.go` (×1)
+- `code-health`: `internal/dashboard` grade A (100); `internal/audit` and
+  `internal/secretscan` grade A (92/96 — each has one unrelated
+  high-complexity residual, out of scope this release)
+- Reproducible build verified (byte-for-byte identical across 2 builds)
+
+#### Counts
+- MCP tools: 92 (unchanged) | Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 92 → **93** (v0.6 → v0.98)
+
+#### What's not yet
+- The 4 remaining high-severity hotspots are concentrated in
+  `cmd/yagura/cli.go` (`cliSecretScan`, `cliFlowRisk`, `cliParallelPlan`) and
+  `cmd/yagura/main.go` (`collectYaguraMetrics`) — the daemon boot sequence
+  and CLI dispatch glue. These carry materially higher blast radius than the
+  `internal/` targets cleared across v0.96-v0.98 (touching them risks the
+  actual startup path and every CLI verb's entry point) and are a natural
+  candidate for a dedicated future increment with its own careful
+  verification pass, rather than being folded into this backlog sweep.
+
 ## [v0.97.0] - 2026-07-01
 
 ### Theme — "hotspot backlog sweep, round 2: 3 more high-severity convergent targets fixed"
