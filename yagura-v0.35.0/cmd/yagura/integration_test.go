@@ -181,6 +181,8 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_dep_rank",
 		// v0.70 — convergent-signal hotspots (functions flagged by 2+ signature lenses)
 		"yagura_hotspot",
+		// v0.100 — meta: Jaccard overlap between hotspot's 12 lenses (consolidation signal)
+		"yagura_lens_overlap",
 		"yagura_name_check",
 		"yagura_ctx_check",
 		"yagura_err_wrap",

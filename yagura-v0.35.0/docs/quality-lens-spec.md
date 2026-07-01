@@ -52,7 +52,7 @@ Lenses are organized by the **axis** they measure:
 | Test trust | `testcoverage` (source↔test mapping), `assertcheck` (assertion density), `thelper` (test-helper `t.Helper()` hygiene) |
 | Concurrency | `ctxcheck` (`context.Context` first-param + no struct field), `synccheck` (sync-lock copy discipline), `globalcheck` (mutable global state) |
 | Interface design | `ifacebloat` (named interfaces with too many methods; interfacebloat-style) |
-| Meta | `coverage` (scan blind spots), `hotspot` (multi-lens convergence), `calibrate` (corpus-derived thresholds) |
+| Meta | `coverage` (scan blind spots), `hotspot` (multi-lens convergence), `calibrate` (corpus-derived thresholds), `lensoverlap` (pairwise lens redundancy/orthogonality) |
 
 ## 4. Strengths (長所)
 
@@ -97,6 +97,20 @@ Lenses are organized by the **axis** they measure:
   Dogfood: repo-wide convergent hotspots jumped from 0 to 69 (13 high-severity)
   on the same codebase — proof the population had been undercounted, not that
   the codebase had gotten worse.*
+- **W6 — No lens retirement/consolidation mechanism.** `selfimprove` explicitly
+  cites the Darwin Gödel Machine's "produce → trial → **select**" and can flag
+  *skills* for retirement (via `harness`'s skill-audit), but no equivalent
+  "select" mechanism ever existed for the lenses themselves — no correlation
+  check, no consolidation review. RSI without a working select half is
+  monotonic accretion, not evolution: 25 lenses shipped since v0.36 and none
+  were ever merged or retired. *Addressed v0.100 by `lensoverlap` (§22), which
+  measures pairwise Jaccard overlap between the 12 hotspot-unioned lenses.
+  This does not autonomously decide what to consolidate — it supplies the
+  measurement a consolidation decision would need. Dogfood found the highest
+  overlap at `cognit`↔`complexity` (Jaccard 0.39, below the tool's own 0.4
+  "medium" threshold) — evidence against, not for, the redundancy hypothesis
+  that motivated building it. All other pairs measured ≤0.03. A genuine
+  Socratic update: the hypothesis was tested and not confirmed by the data.*
 
 ## 6. Improvements (改善点) — prioritized
 
@@ -712,3 +726,72 @@ were removed from the interface in the same release; `QuotaMonitor` is now exact
 10 methods (at threshold, not flagged). `iface-bloat --dir .` now reports 0, and
 the fix shrank the public contract without changing any behaviour — the lens
 immediately paid for itself.
+
+## 22. `lensoverlap` — specification (meta: lens redundancy / orthogonality)
+
+### Motivation (Socratic self-audit, v0.99.1 → v0.100)
+
+A direct follow-through on W6 (§5). `internal/selfimprove` cites the Darwin
+Gödel Machine's "produce → trial → **select**" and gives *skills* a retirement
+path (harness's skill-audit), but no equivalent existed for quality lenses.
+25 lenses shipped since v0.36 and none were ever measured for redundancy
+against each other — in particular, `complexity` (McCabe), `cognit`
+(cognitive complexity), and `nestdepth` (max nesting depth) all claim to
+measure "how hard is this function to understand" from a different angle,
+but nothing had ever checked whether they converge on the same functions in
+practice (which would suggest redundancy) or diverge (which would validate
+keeping them distinct).
+
+`lensoverlap` measures, not decides: it reports the pairwise Jaccard overlap
+between the 12 lenses `hotspot` (§4) already unions, and leaves the
+consolidation judgment to a human. This mirrors the project's own stance on
+`hotspot` itself (a synthesis tool that surfaces signal, not one that
+auto-refactors) and on `selfimprove`'s retire proposals (advisory, not
+automatic).
+
+### Method (reuses `hotspot`'s 12-lens pool and scoping convention)
+
+For each of the 12 lenses, `lensoverlap` computes the set of `(file, func)`
+keys it flags (same `funcKey` convention as `hotspot`, same `scopeFiles`:
+non-test, parseable `.go` only, so downstream lenses' differing `_test.go`
+handling doesn't skew the comparison). For every lens pair `(A, B)`:
+
+```
+Jaccard(A, B) = |flagged_A ∩ flagged_B| / |flagged_A ∪ flagged_B|
+```
+
+`0/0` (both lenses flag nothing) is defined as `0`, not `NaN` — an
+unmeasurable pair reads as "no evidence of overlap," not an error.
+
+### Severity (informational, not a gate)
+
+| Jaccard | Meaning |
+|---|---|
+| < 0.4 | no signal — treated as independent axes |
+| 0.4 – 0.7 | `medium` — meaningful correlation, worth a look |
+| ≥ 0.7 | `high` — strong overlap, consolidation candidate |
+
+These thresholds are conventions (like `interfacebloat`'s 10 or `nestdepth`'s
+4), not derived from a corpus — a `calibrate`-style empirical calibration is
+a natural future refinement. There is deliberately **no `--strict` flag**:
+`lensoverlap` is observability, not a CI gate, since "these two lenses
+overlap a lot" is not itself a defect to fail a build on.
+
+### Output (deterministic)
+
+`Report.Pairs` sorted Jaccard descending, ties broken `LensA → LensB`
+ascending. All `C(12,2) = 66` pairs are always present (lenses with zero
+findings still appear as empty sets, so a lens that currently has nothing to
+flag — e.g. `nestdepth` on a codebase already at depth ≤4 — is visible as
+"unmeasurable right now," not silently dropped).
+
+**Dogfood note**: on Yagura itself, the highest overlap found was
+`cognit`↔`complexity` at Jaccard **0.39** — real correlation (both are
+complexity measures) but *below* the tool's own 0.4 "medium" threshold. Every
+other pair measured ≤0.03. This is evidence *against* the redundancy
+hypothesis that motivated building the lens, not for it: the three
+complexity-family lenses (`complexity`/`cognit`/`nestdepth`) largely flag
+different functions in practice, supporting keeping them as distinct axes
+rather than consolidating. A genuine Socratic result — the hypothesis was
+tested and not confirmed, and that is reported honestly rather than
+reframed as a hit.

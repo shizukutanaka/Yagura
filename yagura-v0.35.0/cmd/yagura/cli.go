@@ -71,6 +71,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/globalcheck"
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
+	"github.com/shizukutanaka/yagura/internal/lensoverlap"
 	"github.com/shizukutanaka/yagura/internal/initps1"
 	"github.com/shizukutanaka/yagura/internal/initsh"
 	"github.com/shizukutanaka/yagura/internal/injectscan"
@@ -155,6 +156,7 @@ var cliHandlers = map[string]cliHandler{
 	"err-discard":  cliErrDiscard,
 	"dep-rank":     cliDepRank,
 	"hotspot":      cliHotspot,
+	"lens-overlap": cliLensOverlap,
 	"name-check":   cliNameCheck,
 	"ctx-check":    cliCtxCheck,
 	"err-wrap":     cliErrWrap,
@@ -2766,6 +2768,33 @@ func cliHotspot(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// ─── lens-overlap (v0.100.0, meta 視点: レンズ自身の淘汰) ──────
+
+// cliLensOverlap は `yagura lens-overlap` を処理する。hotspot が束ねる 12 レンズの
+// 指摘関数集合を Jaccard 係数で比較し、統合候補(高重複)と直交性の実証(低重複)を
+// 報告する。ソクラテス的動機: quality lens 自身には retire/consolidate の仕組みが
+// 無かった(skill には selfimprove の retire 提案があるのに)——本レンズはその
+// 判断材料(相関の実測値)を提供する。pass/fail gate ではなく observability。
+func cliLensOverlap(args []string, stdout, stderr io.Writer) error {
+	fset := newFlagSet("lens-overlap", stderr)
+	jsonOut := fset.Bool("json", false, "JSON output")
+	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	if err := fset.Parse(args); err != nil {
+		return errUsage
+	}
+	sr, err := readGoFiles(*dir)
+	if err != nil {
+		return fmt.Errorf("scanning %s: %w", *dir, err)
+	}
+	warnIncompleteScan(stderr, sr, *dir)
+	rep := lensoverlap.Scan(sr.Files)
+	if *jsonOut {
+		return emitJSON(stdout, rep)
+	}
+	humanLensOverlap(stdout, rep)
+	return nil
+}
+
 // ─── name-check (v0.73.0) ────────────────────────────────────
 
 // cliNameCheck は `yagura name-check` を処理する。関数名がシグネチャの約束を
@@ -5143,6 +5172,7 @@ var yaguraVerbs = []string{
 	"dead-code", "dep-rank", "diff-scan", "err-discard", "err-policy", "err-wrap", "feature-list", "flag-arg", "flow-risk",
 	"gha-audit", "get", "global-check", "graph", "graph-impact", "graph-neighbors", "graph-stats",
 	"harness-coverage", "harness-recommend", "help", "hotspot", "iface-bloat", "init-sh", "inject-scan",
+	"lens-overlap",
 	"list", "mcp-audit", "naked-ret", "name-check", "nest-depth", "ops-risk", "parallel-plan", "param-check", "path-policy",
 	"pin-drift", "plan-status", "plugin-audit", "prealloc", "predeclared", "progress-file", "publicity-scan",
 	"quality-check", "recv-check", "recovery-decide", "register", "regress", "release-radar",
@@ -5265,6 +5295,7 @@ func buildZshVerbLines() string {
 		"harness-recommend":    "Claude Code .claude/ scaffold by language",
 		"help":                 "print help message",
 		"hotspot":              "convergent-signal hotspots: functions flagged by 2+ of 12 independent lenses",
+		"lens-overlap":         "meta: Jaccard overlap between hotspot's 12 lenses (consolidation candidates vs confirmed-orthogonal axes)",
 		"iface-bloat":          "interface design: named interfaces with too many methods (Rob Pike proverb; interfacebloat-style)",
 		"name-check":           "name↔signature consistency: predicates return bool, getters/constructors return a value",
 		"ctx-check":            "context.Context discipline: must be first param, not stored in struct fields",

@@ -28,6 +28,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/globalcheck"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
+	"github.com/shizukutanaka/yagura/internal/lensoverlap"
 	"github.com/shizukutanaka/yagura/internal/ifacebloat"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
@@ -1026,6 +1027,36 @@ func buildHotspotTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := hotspot.Scan(in.Files, in.MinLenses)
+			return rep, nil
+		},
+	}
+}
+
+func buildLensOverlapTool(_ Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_lens_overlap",
+		Description: "[Q] Meta: Jaccard overlap between hotspot's 12 lenses — high overlap flags consolidation candidates, near-zero confirms orthogonal axes",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"files": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+			"required": []string{"files"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			var in struct {
+				Files map[string]string `json:"files"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if len(in.Files) == 0 {
+				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
+			}
+			rep := lensoverlap.Scan(in.Files)
 			return rep, nil
 		},
 	}

@@ -23,12 +23,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 86 internal packages
+## Map — 87 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
 - `internal/project` — Project struct + validation
-- `internal/mcp` — MCP server + 92 tool definitions
+- `internal/mcp` — MCP server + 93 tool definitions
 - `internal/audit` — JSONL audit log + replay
 - `internal/config` — env / flag 設定
 - `internal/today` — portfolio「今日注力すべき」ランキング(priority/PRs/CI/staleness
@@ -224,6 +224,17 @@ cortex flywheel 4 段階すべてを単体で機械化:
   急増して発見(thelper はテスト専用ファイルが主題のため対象外、errdiscard/synccheck/
   predeclared/errpolicy は Func と同型の関数キーを持たないため対象外)。
   CLI `hotspot --dir . [--min-lenses N] [--strict]`、MCP `yagura_hotspot`★ v0.70
+- `internal/lensoverlap` — hotspot が束ねる 12 レンズ間の指摘関数集合を Jaccard 係数で
+  比較する *メタ軸* のレンズ(ソクラテス式自己監査、v0.99.1 の問答の直接の帰結)。
+  selfimprove は Darwin Gödel Machine の「produce → trial → select」を引用し skill には
+  retire 提案(harness の skill-audit)があるが、quality lens 自身にはその "select"
+  (淘汰・統合)の仕組みが一つも無かった——complexity/cognit/nestdepth のような似た軸が
+  実際どれだけ相関しているか検証する手段が無いまま増え続けていた。統合すべきか否かの
+  判断は本レンズの役目ではなく、判断材料(相関の実測値)を提供するだけ(observability、
+  pass/fail gate ではない)。dogfood で最大重なりは `cognit`↔`complexity` の Jaccard
+  **0.39**(medium 閾値 0.4 未満)——「冗長」仮説を裏付ける結果にはならず、他の全ペアは
+  ≤0.03 で直交性を実証。ソクラテス的検証: 仮説を測定で裏切られても、その通りに報告する。
+  CLI `lens-overlap --dir .`、MCP `yagura_lens_overlap`★ v0.100
   (12-lens expansion★ v0.95); `ReleaseReadinessExt` top finding resolved v0.71
 - `internal/namecheck` — 関数名・error 変数・error 型のシグネチャ整合を検査する *意味軸*
   のレンズ(ソクラテス新視点 VII)。これまで全レンズは *構造* を測ったが、名前と振る舞いの

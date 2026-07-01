@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.99.1** — 92 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Docs fix from a Socratic self-audit (「ソクラテス式問答法で過不足の機能を考える」):** CLAUDE.md's own Why section claimed to mechanize "all 4 cortex flywheel stages" but only ever named ②Review/③Release/④Alert-Fix — ①Plan was never listed, despite `plan_status`/`today`/`agents_md`/`feature_list` implementing it. A self-referential irony: the project that ships `claudemd-audit` (auditing *other* projects' CLAUDE.md structural completeness) had a prose-completeness gap in its own. Fixed. The broader session also surfaced two open strategic questions for explicit human judgment rather than autonomous action: (1) the 25 quality lenses added since v0.36 are all Go-AST-only, while the portfolio's `Project.Language` field and its oldest sensors (`qualitycheck`/`secretscan`/`testcoverage`) are polyglot — most feature growth may be auditing Yagura itself rather than serving the actual non-Go portfolio; (2) there is no retirement/consolidation mechanism for lenses (unlike skills, which `selfimprove` can flag for retirement) — RSI's Darwin Gödel "produce → trial → **select**" is missing its select half at the lens level. See [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.100.0** — 93 MCP tools, 87 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **New `lens-overlap` meta-lens — acting on the previous Socratic self-audit's finding that quality lenses had no retirement/consolidation mechanism (unlike skills, which `selfimprove` can flag for retirement).** `lens-overlap` measures pairwise Jaccard overlap between the 12 lenses `hotspot` unions — high overlap (≥0.7) flags consolidation candidates, near-zero confirms genuinely orthogonal axes. This is *observability*, not a pass/fail gate: the tool provides the measurement, consolidation decisions stay human. Dogfooded on Yagura itself: the highest overlap found was `cognit`↔`complexity` at Jaccard **0.39** — meaningfully correlated (both measure structural complexity) but well below even the tool's own "medium" threshold (0.4), let alone "high" (0.7). This is evidence *against* the redundancy hypothesis raised last release, not for it — a genuine Socratic update from measurement, not a self-congratulatory finding manufactured to confirm the prior suspicion. Every other pair measured near-zero (≤0.03), confirming most lenses are functionally orthogonal. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -36,7 +36,7 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
 │        ▼                              │              │
 │  ┌────────────────────────────────────────────────┐  │
 │  │  yagura daemon (single binary, ~9 MB)          │  │
-│  │  - 92 MCP tools                                │  │
+│  │  - 93 MCP tools                                │  │
 │  │  - HTTP hook receiver                          │  │
 │  │  - Prometheus /metrics                         │  │
 │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -69,7 +69,7 @@ icon that opens in its own window, like a native app. On Windows, double-click
 as an app window; on macOS/Linux, run `yagura-tray` for the same one-click
 launch. From the app you can **register your first project with a form** (no
 terminal needed) — it goes through the MCP server and is audited like any other
-call. This adds nothing to the core — the daemon and the 92 MCP tools are
+call. This adds nothing to the core — the daemon and the 93 MCP tools are
 unchanged; the desktop app is just the dashboard made installable via web
 standards. See [docs/desktop.md](docs/desktop.md).
 
@@ -181,7 +181,7 @@ Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has bee
 
 ### Other agents (Gemini CLI, Codex, custom)
 
-Yagura is agent-agnostic. Its 92 MCP tools work with **any** MCP client, and the
+Yagura is agent-agnostic. Its 93 MCP tools work with **any** MCP client, and the
 daemon's hook ingestion is agent-neutral too: **point any agent's lifecycle
 hooks at `/hooks/agent`** (Gemini CLI, Codex, raw OpenTelemetry, or a generic
 shape) and the receiver normalizes them via `internal/agentevent` — aligned to
@@ -193,7 +193,7 @@ normalization for programmatic use, and `/metrics` exports per-project, per-tool
 agent activity (`yagura_hook_tool_calls_total{project,tool}`, aligned to the
 OTel `gen_ai.tool.name` convention) for Prometheus/Grafana.
 
-## MCP tools (92 total)
+## MCP tools (93 total)
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-95 consecutive releases (v0.6 → v0.99.1) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+96 consecutive releases (v0.6 → v0.100.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
@@ -267,7 +267,7 @@ sha256sum -c SHA256SUMS
 ```
 .
 ├── cmd/yagura/              # Entry point (single binary)
-├── internal/                # 86 packages, none exported
+├── internal/                # 87 packages, none exported
 │   ├── mcp/                 # MCP server, tool registration
 │   ├── registry/            # Project registry (JSON file per project)
 │   ├── scanner/             # Background sensor loop (24 h)

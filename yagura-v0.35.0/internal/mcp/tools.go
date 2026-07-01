@@ -177,6 +177,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildDepRankTool(d))
 	// [Q] v0.70.0 — convergent-signal hotspots (functions flagged by 2+ signature lenses)
 	s.Register(buildHotspotTool(d))
+	// [Q] v0.100.0 — meta: Jaccard overlap between hotspot's 12 lenses (lens consolidation signal)
+	s.Register(buildLensOverlapTool(d))
 	// [Q] v0.73.0 — name↔signature consistency (semantic axis: name keeps its promise)
 	s.Register(buildNameCheckTool(d))
 	// [Q] v0.75.0 — context.Context discipline (first-param + no struct-field; containedctx-style)

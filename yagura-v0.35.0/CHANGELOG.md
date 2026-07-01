@@ -4,6 +4,71 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.100.0] - 2026-07-01
+
+### Theme — "lens-overlap: acting on the Socratic self-audit's W6 (no lens select mechanism)"
+
+Second, action-taking pass on the Socratic self-audit started in v0.99.1
+("ソクラテス式問答法で過不足の機能を考える" — use the Socratic method to think
+about excess/deficient features, repeated). That release surfaced but did not
+act on two open questions; this release resolves one of them with a new
+meta-lens, deliberately choosing *observability* over autonomous action on
+the underlying strategic question.
+
+#### New meta-lens — `internal/lensoverlap`
+
+`selfimprove` cites the Darwin Gödel Machine's "produce → trial → **select**"
+and gives *skills* a retirement path (`harness`'s skill-audit), but no
+equivalent "select" mechanism ever existed for quality lenses — 25 lenses
+shipped since v0.36 and none were ever checked for redundancy against each
+other. `lensoverlap` measures pairwise Jaccard overlap between the 12 lenses
+`hotspot` already unions:
+
+- `Jaccard(A, B) = |flagged_A ∩ flagged_B| / |flagged_A ∪ flagged_B|`, using
+  the same `(file, func)` key and file-scoping convention as `hotspot`
+- 0/0 (both lenses flag nothing) is defined as 0, not NaN
+- Severity buckets are informational, not a gate: `medium` ≥0.4, `high` ≥0.7,
+  no `--strict` flag — this is deliberately observability, not a pass/fail
+  check, since "these two lenses overlap" isn't itself a build-failing defect
+- 16 TDD tests: 9 on the pure Jaccard-computation core (`overlapStats`,
+  tested with plain maps, no AST needed) + 7 integration tests against real
+  lens output
+- MCP tool `yagura_lens_overlap` (93rd tool); CLI verb `yagura lens-overlap
+  --dir . [--json]`
+
+#### Dogfood — a genuine Socratic result, not a manufactured one
+
+Ran `lens-overlap --dir .` on Yagura itself. The highest overlap found was
+`cognit`↔`complexity` at Jaccard **0.39** — real correlation (both are
+complexity measures) but *below* the tool's own 0.4 "medium" threshold. Every
+other pair measured ≤0.03. This is evidence **against** the redundancy
+hypothesis that motivated building the lens in the first place, not for it:
+`complexity`/`cognit`/`nestdepth` largely flag different functions in
+practice, supporting keeping them as distinct axes rather than consolidating.
+The hypothesis was tested and not confirmed — reported honestly rather than
+reframed as a hit, per the actual Socratic method (update belief from
+evidence, don't just confirm what you expected).
+
+#### Verification
+
+- `go test -race ./...` — all packages green
+- `yagura lens-overlap --dir .` dogfooded successfully (see above)
+- Reproducible build verified
+
+#### Counts
+- MCP tools: 92 → **93** | Internal packages: 86 → **87**
+- Consecutive reproducible releases: 95 → **96** (v0.6 → v0.100.0)
+
+#### What's not yet
+- The other open question from v0.99.1 (whether the 25 Go-AST-only lenses
+  should go polyglot, given the portfolio's `Project.Language` field and
+  older sensors are language-agnostic) remains unresolved — a strategic
+  product-direction decision, not something this release attempts to
+  autonomously act on.
+- `lensoverlap`'s severity thresholds (0.4/0.7) are conventions, not derived
+  from a corpus — a `calibrate`-style empirical calibration is a natural
+  future refinement, same caveat every threshold-bearing lens carries (W3).
+
 ## [v0.99.1] - 2026-07-01
 
 ### Theme — "Socratic self-audit: a documentation gap in Yagura's own CLAUDE.md, plus two open strategic questions"

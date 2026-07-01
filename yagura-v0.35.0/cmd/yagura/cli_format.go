@@ -46,6 +46,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/globalcheck"
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
+	"github.com/shizukutanaka/yagura/internal/lensoverlap"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/nestdepth"
@@ -1606,6 +1607,26 @@ func humanHotspot(w io.Writer, r hotspot.Report) {
 			h.Severity, strings.Join(h.Lenses, "+"), h.File, h.Line, h.Func)
 	}
 	tw.Flush()
+}
+
+func humanLensOverlap(w io.Writer, r lensoverlap.Report) {
+	fmt.Fprintf(w, "lens-overlap: %d files, %d lenses compared (%d pairs), %d high-overlap, %d medium-overlap\n",
+		r.FilesScanned, r.LensesCompared, len(r.Pairs), r.HighOverlap, r.MediumOverlap)
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "JACCARD\tSEVERITY\tLENS A\tLENS B\tINTERSECTION\tUNION")
+	shown := 0
+	for _, p := range r.Pairs {
+		if p.Jaccard == 0 {
+			continue
+		}
+		fmt.Fprintf(tw, "%.2f\t%s\t%s\t%s\t%d\t%d\n",
+			p.Jaccard, p.Severity, p.LensA, p.LensB, p.Intersection, p.Union)
+		shown++
+	}
+	tw.Flush()
+	if shown == 0 {
+		fmt.Fprintln(w, "no overlapping pairs — every lens flags a disjoint set of functions")
+	}
 }
 
 func humanNameCheck(w io.Writer, r namecheck.Report) {
