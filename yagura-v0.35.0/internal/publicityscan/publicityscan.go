@@ -60,68 +60,92 @@ var genericUsers = map[string]bool{
 var exampleEmailDomains = []string{"example.com", "example.org", "example.net", "example.edu", "localhost"}
 
 // Scan は content 全体を行単位で走査し、publicity leak を返す。決定論的。
+// 各 check は独立(order のみ固定)なので行単位に checkXxx へ委譲する。
 func Scan(content string) []Finding {
 	var out []Finding
 	for i, line := range strings.Split(content, "\n") {
 		ln := i + 1
+		out = append(out, checkHomePaths(line, ln)...)
+		out = append(out, checkInternalHost(line, ln)...)
+		out = append(out, checkPrivateIP(line, ln)...)
+		out = append(out, checkEmail(line, ln)...)
+	}
+	return out
+}
 
-		// 絶対 home パス(OS ユーザ名の leak）。
-		for _, m := range reUnixHome.FindAllStringSubmatch(line, -1) {
-			if !genericUsers[strings.ToLower(m[1])] {
-				out = append(out, Finding{
-					RuleID: "absolute-home-path", Severity: SevHigh, Line: ln, Snippet: m[0],
-					Description: "absolute home path leaks an OS username and local filesystem layout",
-					Suggestion:  "replace with a relative path, $HOME, or a placeholder like /Users/<you>",
-				})
-			}
-		}
-		for _, m := range reWinHome.FindAllStringSubmatch(line, -1) {
-			if !genericUsers[strings.ToLower(m[1])] {
-				out = append(out, Finding{
-					RuleID: "absolute-home-path", Severity: SevHigh, Line: ln, Snippet: m[0],
-					Description: "absolute Windows home path leaks a username",
-					Suggestion:  `replace with %USERPROFILE% or a placeholder`,
-				})
-			}
-		}
-
-		// 内部 hostname(末尾が .local 等で、その後に別拡張子が続かないもの）。
-		for _, idx := range reInternalHost.FindAllStringIndex(line, -1) {
-			// filename(settings.local.json 等)誤検出を避ける: 直後が '.' なら skip。
-			if idx[1] < len(line) && line[idx[1]] == '.' {
-				continue
-			}
+// checkHomePaths は絶対 home パス(Unix/Windows、OS ユーザ名の leak)を検出する。
+func checkHomePaths(line string, ln int) []Finding {
+	var out []Finding
+	for _, m := range reUnixHome.FindAllStringSubmatch(line, -1) {
+		if !genericUsers[strings.ToLower(m[1])] {
 			out = append(out, Finding{
-				RuleID: "internal-hostname", Severity: SevMedium, Line: ln, Snippet: line[idx[0]:idx[1]],
-				Description: "internal hostname may reveal internal network topology",
-				Suggestion:  "use a public hostname or a placeholder in published docs",
+				RuleID: "absolute-home-path", Severity: SevHigh, Line: ln, Snippet: m[0],
+				Description: "absolute home path leaks an OS username and local filesystem layout",
+				Suggestion:  "replace with a relative path, $HOME, or a placeholder like /Users/<you>",
 			})
 		}
-
-		// private IP(127.x loopback は除外）。直後が '/' の CIDR(10.0.0.0/8 等)は
-		// レンジ定義であって host leak ではないので除外する。
-		for _, idx := range rePrivateIP.FindAllStringIndex(line, -1) {
-			if idx[1] < len(line) && line[idx[1]] == '/' {
-				continue
-			}
+	}
+	for _, m := range reWinHome.FindAllStringSubmatch(line, -1) {
+		if !genericUsers[strings.ToLower(m[1])] {
 			out = append(out, Finding{
-				RuleID: "private-ip", Severity: SevMedium, Line: ln, Snippet: line[idx[0]:idx[1]],
-				Description: "private/RFC1918 IP address reveals internal addressing",
-				Suggestion:  "remove or replace with a placeholder before publishing",
+				RuleID: "absolute-home-path", Severity: SevHigh, Line: ln, Snippet: m[0],
+				Description: "absolute Windows home path leaks a username",
+				Suggestion:  `replace with %USERPROFILE% or a placeholder`,
 			})
 		}
+	}
+	return out
+}
 
-		// email(ドキュメント例 / no-reply は除外）。
-		for _, m := range reEmail.FindAllString(line, -1) {
-			if isExampleEmail(m) {
-				continue
-			}
-			out = append(out, Finding{
-				RuleID: "user-email", Severity: SevLow, Line: ln, Snippet: m,
-				Description: "email address is a personal/user identifier",
-				Suggestion:  "confirm this address is meant to be public; otherwise redact",
-			})
+// checkInternalHost は内部 hostname(末尾が .local 等)を検出する。filename
+// (settings.local.json 等)誤検出を避けるため、直後が '.' なら skip。
+func checkInternalHost(line string, ln int) []Finding {
+	idxs := reInternalHost.FindAllStringIndex(line, -1)
+	out := make([]Finding, 0, len(idxs))
+	for _, idx := range idxs {
+		if idx[1] < len(line) && line[idx[1]] == '.' {
+			continue
 		}
+		out = append(out, Finding{
+			RuleID: "internal-hostname", Severity: SevMedium, Line: ln, Snippet: line[idx[0]:idx[1]],
+			Description: "internal hostname may reveal internal network topology",
+			Suggestion:  "use a public hostname or a placeholder in published docs",
+		})
+	}
+	return out
+}
+
+// checkPrivateIP は private IP(127.x loopback は除外)を検出する。直後が '/' の
+// CIDR(10.0.0.0/8 等)はレンジ定義であって host leak ではないので除外する。
+func checkPrivateIP(line string, ln int) []Finding {
+	idxs := rePrivateIP.FindAllStringIndex(line, -1)
+	out := make([]Finding, 0, len(idxs))
+	for _, idx := range idxs {
+		if idx[1] < len(line) && line[idx[1]] == '/' {
+			continue
+		}
+		out = append(out, Finding{
+			RuleID: "private-ip", Severity: SevMedium, Line: ln, Snippet: line[idx[0]:idx[1]],
+			Description: "private/RFC1918 IP address reveals internal addressing",
+			Suggestion:  "remove or replace with a placeholder before publishing",
+		})
+	}
+	return out
+}
+
+// checkEmail はユーザ email(ドキュメント例 / no-reply は除外)を検出する。
+func checkEmail(line string, ln int) []Finding {
+	matches := reEmail.FindAllString(line, -1)
+	out := make([]Finding, 0, len(matches))
+	for _, m := range matches {
+		if isExampleEmail(m) {
+			continue
+		}
+		out = append(out, Finding{
+			RuleID: "user-email", Severity: SevLow, Line: ln, Snippet: m,
+			Description: "email address is a personal/user identifier",
+			Suggestion:  "confirm this address is meant to be public; otherwise redact",
+		})
 	}
 	return out
 }

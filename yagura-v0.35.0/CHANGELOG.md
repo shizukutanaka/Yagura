@@ -4,6 +4,58 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.97.0] - 2026-07-01
+
+### Theme — "hotspot backlog sweep, round 2: 3 more high-severity convergent targets fixed"
+
+Third pass on the product-level SWOT audit ("長所短所改善点を洗い出して改善").
+Continues working down the 69 convergent-signal targets `hotspot` surfaced in
+v0.95 (13 high-severity at the time; v0.96 cleared 3, leaving 10). This
+release clears 3 more, all sharing the identical `cognit`+`complexity`+
+`prealloc` signature.
+
+#### Refactored (measure → refactor → confirm)
+
+- **`internal/publicityscan/publicityscan.go` — `Scan`** (65 lines) → 4
+  independent per-line leak checks extracted: `checkHomePaths` (Unix/Windows
+  absolute home paths), `checkInternalHost`, `checkPrivateIP`, `checkEmail`.
+  Each check's `FindAll*` results are captured once so the result slice can
+  be preallocated to the match count, closing the `prealloc` leg on all 3
+  originally-flagged loops. 12 existing tests unchanged.
+- **`internal/harness/claudemd_audit.go` — `AuditClaudeMd`** (71 lines) → 5
+  helpers along its already-commented phase boundaries: `checkTitle`,
+  `checkSections` (returns heading count for the downstream wall check),
+  `checkInstructionCount`, `checkStructureWall`, plus an `emptyClaudeMdResult`
+  early-return extraction. 11 existing tests unchanged.
+- **`internal/selfimprove/selfimprove.go` — `Analyze`** (127 lines) → 5
+  helpers matching the function's own ①-⑤ numbered rule comments 1:1:
+  `reliabilityProposals`, `tokenEconomyProposals`, `retireProposals`,
+  `coverageProposals`, `fitnessProposals`. 8 existing tests unchanged.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, zero regressions
+- Dogfood: `hotspot --dir . --min-lenses 3` — high-severity convergent
+  hotspots **10 → 7**; all three targeted functions cleared the 3-lens
+  convergence signal entirely
+- `code-health --dir internal/publicityscan` and `internal/selfimprove` —
+  both now grade **A** (100); `internal/harness` stays grade B (other
+  functions in the package, outside this release's scope, still carry
+  complexity — not chased here)
+- Reproducible build verified (byte-for-byte identical across 2 builds)
+
+#### Counts
+- MCP tools: 92 (unchanged) | Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 91 → **92** (v0.6 → v0.97)
+
+#### What's not yet
+- 7 high-severity hotspots remain: 3 in `cmd/yagura/cli.go`, 1 in
+  `cmd/yagura/main.go` (higher blast-radius daemon/CLI glue, still
+  deliberately deferred), and 3 newly-surfaced-to-top-of-list in
+  `internal/audit/audit.go:Read`, `internal/dashboard/dashboard.go:
+  (*Handler).ServeHTTP`, `internal/secretscan/secretscan.go:(*Scanner).Scan`
+  — reasonable next-round candidates.
+
 ## [v0.96.0] - 2026-07-01
 
 ### Theme — "hotspot backlog sweep: acting on the 69 convergent-signal targets v0.95 surfaced"
