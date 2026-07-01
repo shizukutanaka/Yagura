@@ -11,6 +11,8 @@ yagura は **portfolio orchestrator + harness** で、m's sovereign computing st
 **1 つの zero-dep Go daemon** で運用する MCP server。
 
 cortex flywheel 4 段階すべてを単体で機械化:
+- ① Plan:    `plan_status` + `today`(優先度ランキング)+ `agents_md` + `feature_list`
+  (Plan.md 起点の計画/引き継ぎ artifact 生成)
 - ② Review:  `quality_check` + `ai_verify` + `test_audit` + `secretscan` + `gha_audit` + `pin_drift`
 - ③ Release: `release_radar` (Plan.md aware ranking)
 - ④ Alert-Fix: `alert_fix` (6 source × 4 severity の rule-based recommendation hub)

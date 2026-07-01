@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.99.0** — 92 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Hotspot backlog: fully cleared, 13 → 0 high-severity repo-wide.** The final round on the arc started in v0.95: the last 4 high-severity convergent hotspots, all in `cmd/yagura` (the daemon boot/CLI glue deliberately deferred across v0.96-v0.98 for its higher blast radius), are now decomposed — `cliSecretScan`, `cliFlowRisk`, `cliParallelPlan` (each extract-method split along its natural phases), and `main.go`'s `collectYaguraMetrics` (split into 5 metrics-family builders: MCP tool stats, portfolio health, cache, hooks, alert lifecycle). `hotspot --min-lenses 3` now reports **zero** convergent hotspots anywhere in the codebase. Zero test regressions across all 4 touched CLI/daemon test suites; reproducible build verified. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.99.1** — 92 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Docs fix from a Socratic self-audit (「ソクラテス式問答法で過不足の機能を考える」):** CLAUDE.md's own Why section claimed to mechanize "all 4 cortex flywheel stages" but only ever named ②Review/③Release/④Alert-Fix — ①Plan was never listed, despite `plan_status`/`today`/`agents_md`/`feature_list` implementing it. A self-referential irony: the project that ships `claudemd-audit` (auditing *other* projects' CLAUDE.md structural completeness) had a prose-completeness gap in its own. Fixed. The broader session also surfaced two open strategic questions for explicit human judgment rather than autonomous action: (1) the 25 quality lenses added since v0.36 are all Go-AST-only, while the portfolio's `Project.Language` field and its oldest sensors (`qualitycheck`/`secretscan`/`testcoverage`) are polyglot — most feature growth may be auditing Yagura itself rather than serving the actual non-Go portfolio; (2) there is no retirement/consolidation mechanism for lenses (unlike skills, which `selfimprove` can flag for retirement) — RSI's Darwin Gödel "produce → trial → **select**" is missing its select half at the lens level. See [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-94 consecutive releases (v0.6 → v0.99) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+95 consecutive releases (v0.6 → v0.99.1) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

@@ -4,6 +4,65 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.99.1] - 2026-07-01
+
+### Theme — "Socratic self-audit: a documentation gap in Yagura's own CLAUDE.md, plus two open strategic questions"
+
+Directive this round was reflective rather than mechanical
+("ソクラテス式問答法で過不足の機能を考える" — use the Socratic method to think
+about excess/deficient features). Rather than shipping another lens, this
+release is a genuine audit of the product itself, verified against the
+actual codebase at each step rather than asserted from memory.
+
+#### Fixed — CLAUDE.md's own Why section was incomplete
+
+CLAUDE.md claims Yagura mechanizes "all 4 cortex flywheel stages" but its
+bullet list only ever named ②Review/③Release/④Alert-Fix — ①Plan was never
+listed, despite `yagura_plan_status`/`yagura_today`/`yagura_agents_md`/
+`yagura_feature_list` implementing it. Confirmed via `grep` across
+CLAUDE.md/docs/README that stage ① is genuinely never named anywhere. A
+self-referential irony: the project that ships `claudemd-audit` — a tool
+that scores *other* projects' CLAUDE.md structural completeness — had a
+prose-completeness gap in its own (not caught by `claudemd-audit` itself,
+since that tool checks for the 4 canonical *section headings*, not the
+internal completeness of prose within a section). Added the missing ①Plan
+bullet.
+
+#### Surfaced — two open strategic questions (not autonomously acted on)
+
+1. **Lens polyglot asymmetry.** `internal/project.Project.Language` is
+   free text and the oldest sensors (`qualitycheck`, `secretscan`,
+   `testcoverage`) are genuinely polyglot (Go/TS/JS/Python/Rust). But every
+   one of the 25 quality lenses added since v0.36 (`complexity`, `cognit`,
+   `nestdepth`, `ifacebloat`, ...) is `go/ast`-only. If most of the 23+
+   portfolio projects Yagura claims to orchestrate are not Go, this large
+   share of feature growth may be auditing Yagura itself rather than
+   serving the portfolio it's meant to serve.
+2. **No lens retirement/consolidation mechanism.** `internal/selfimprove`
+   explicitly cites the Darwin Gödel Machine's "produce → trial → select"
+   and can flag *skills* for retirement (via `harness`'s skill-audit), but
+   no equivalent mechanism exists for the lenses themselves — no
+   consolidation review, no correlation check between e.g. `complexity`/
+   `cognit`/`nestdepth` (three axes measuring related notions of
+   "how hard is this function to understand"). RSI without a working
+   "select" half is monotonic accretion, not evolution.
+
+These are framed as options for explicit human judgment, not autonomously
+executed — they represent product-direction trade-offs (should the lens
+suite go polyglot? should lenses be prunable?) rather than mechanical bugs.
+
+#### Verification
+
+- `go test -race ./...` — all packages green (docs-only change, no code
+  behavior touched)
+- `yagura claudemd-audit` on Yagura's own CLAUDE.md: still 100/100 (the fix
+  was prose completeness, outside the tool's structural scope)
+- Reproducible build verified
+
+#### Counts
+- MCP tools: 92 (unchanged) | Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 94 → **95** (v0.6 → v0.99.1)
+
 ## [v0.99.0] - 2026-07-01
 
 ### Theme — "hotspot backlog: fully cleared, 13 → 0 high-severity repo-wide"
