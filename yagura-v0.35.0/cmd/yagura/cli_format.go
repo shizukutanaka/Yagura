@@ -807,6 +807,8 @@ func humanASTCheck(w io.Writer, res astcheck.Result) {
 func humanCoverage(w io.Writer, r coverage.Report) {
 	fmt.Fprintf(w, "coverage_ratio: %.2f   total_files: %d   analyzable: %d   uncovered_source: %d   non_source: %d\n",
 		r.CoverageRatio, r.TotalFiles, r.Analyzable, r.UncoveredSource, r.NonSource)
+	fmt.Fprintf(w, "ast_lens_coverage_ratio: %.2f   ast_lens_analyzable: %d   (Go-only: complexity/cognit/nestdepth/... 25+ lenses; sensor-tier coverage above does not imply these ran)\n",
+		r.ASTLensCoverageRatio, r.ASTLensAnalyzable)
 	printCountMap(w, "analyzable by language", r.ByLanguage)
 	if len(r.UncoveredByExt) > 0 {
 		printCountMap(w, "blind spots (uncovered source, by ext)", r.UncoveredByExt)

@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.100.0** — 93 MCP tools, 87 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **New `lens-overlap` meta-lens — acting on the previous Socratic self-audit's finding that quality lenses had no retirement/consolidation mechanism (unlike skills, which `selfimprove` can flag for retirement).** `lens-overlap` measures pairwise Jaccard overlap between the 12 lenses `hotspot` unions — high overlap (≥0.7) flags consolidation candidates, near-zero confirms genuinely orthogonal axes. This is *observability*, not a pass/fail gate: the tool provides the measurement, consolidation decisions stay human. Dogfooded on Yagura itself: the highest overlap found was `cognit`↔`complexity` at Jaccard **0.39** — meaningfully correlated (both measure structural complexity) but well below even the tool's own "medium" threshold (0.4), let alone "high" (0.7). This is evidence *against* the redundancy hypothesis raised last release, not for it — a genuine Socratic update from measurement, not a self-congratulatory finding manufactured to confirm the prior suspicion. Every other pair measured near-zero (≤0.03), confirming most lenses are functionally orthogonal. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.101.0** — 93 MCP tools, 87 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **`coverage` fix — a concrete, mechanically demonstrable Socratic finding (third pass):** `coverage`'s `Analyzable`/`CoverageRatio` conflated two capability tiers — the polyglot sensor tier (`qualitycheck`/`secretscan`/`testcoverage`, covers Go/TS/JS/Python/Rust/Java) and the AST quality-lens tier (25+ lenses like `complexity`/`cognit`/`nestdepth`, **Go-only**). A pure-Python project would read `coverage_ratio: 1.0` implying full "clean" confidence while zero of the 25+ lenses ever ran on it. Added `ASTLensAnalyzable`/`ASTLensCoverageRatio` fields so both tiers are visible side-by-side; purely additive, 6 new tests, existing fields/tests unchanged. Dogfooded on Yagura's own pure-Go codebase: both ratios read identical (0.99/0.99), confirming the fix is inert here and only diverges on genuinely polyglot trees. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-96 consecutive releases (v0.6 → v0.100.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+97 consecutive releases (v0.6 → v0.101.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

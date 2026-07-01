@@ -4,6 +4,67 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.101.0] - 2026-07-01
+
+### Theme — "coverage: split sensor-tier from AST-lens-tier coverage (Socratic finding, third pass)"
+
+Third action-taking pass on the ongoing Socratic self-audit
+("ソクラテス式問答法で過不足の機能を考える"). Investigating the still-open
+polyglot question from v0.99.1/v0.100.0 surfaced a concrete, mechanically
+demonstrable gap in an *existing* lens rather than a new abstract concern.
+
+#### Finding
+
+`internal/coverage`'s `Analyzable`/`CoverageRatio` fields count any file with
+a "covered" extension (`.go`/`.ts`/`.js`/`.py`/`.rs`/`.java`) as equally
+analyzable. But this conflates two very different capability tiers:
+
+1. **Sensor tier** (`qualitycheck`, `secretscan`, `testcoverage`) — genuinely
+   polyglot, covers all 6 extensions.
+2. **AST quality-lens tier** (`complexity`, `cognit`, `nestdepth`,
+   `paramcheck`, ..., `hotspot`, `lensoverlap` — 25+ lenses) — `go/ast`-only,
+   covers `.go` exclusively.
+
+A pure-Python project would read `coverage_ratio: 1.0` (implying full "clean"
+confidence) while **zero** of the 25+ quality lenses ever fire on it — only
+the 3 sensor-tier tools would run. `coverage`'s own stated mission ("quantify
+how much code the clean verdict actually saw") was itself subtly
+miscalibrated for exactly the scenario it exists to catch.
+
+#### Fixed — `coverage.Report` gains an AST-lens-tier view
+
+- New fields: `ASTLensAnalyzable` (files only the Go-only lens tier can see)
+  and `ASTLensCoverageRatio` (that fraction of all code files)
+- 6 new TDD tests, including the exact failure scenario (`TestClassify_
+  ASTLensCoverageRatio_PurePythonIsZero`: sensor tier reads 1.0, AST-lens
+  tier reads 0)
+- `humanCoverage` CLI output now prints both ratios side by side with an
+  explanatory note
+- Purely additive — existing `Analyzable`/`CoverageRatio`/`ByLanguage`
+  fields and all 6 existing tests are unchanged
+
+#### Verification
+
+- `go test -race ./...` — all packages green
+- Dogfood: `yagura coverage --dir .` on Yagura's own (pure-Go) codebase shows
+  both ratios identical (0.99/0.99) — confirms the fix is inert on a
+  homogeneous-Go tree, as expected, while now correctly distinguishing on
+  any polyglot tree
+- Reproducible build verified
+
+#### Counts
+- MCP tools: 93 (unchanged — `coverage` has no MCP tool wired, CLI-only)
+- Internal packages: 87 (unchanged)
+- Consecutive reproducible releases: 96 → **97** (v0.6 → v0.101.0)
+
+#### What's not yet
+- The underlying strategic question (should the 25 lenses go polyglot, or
+  is Go-only acceptable given ADR-0001's zero-dependency constraint makes
+  multi-language AST parsing costly) remains open — this release improves
+  the *honesty* of what coverage claims, not the underlying capability gap.
+- No MCP tool exists for `coverage` at all (CLI-only) — a pre-existing gap
+  noted but out of scope here.
+
 ## [v0.100.0] - 2026-07-01
 
 ### Theme — "lens-overlap: acting on the Socratic self-audit's W6 (no lens select mechanism)"
