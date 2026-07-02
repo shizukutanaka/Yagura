@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **93 tools**.
+Generated from a live yagura — **101 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -8,13 +8,13 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ## Table of contents
 
-- [Alerts](#alerts) (2)
+- [Alerts](#alerts) (3)
 - [Code quality (guides)](#code-quality-guides) (9)
 - [Graph](#graph) (3)
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (46)
+- [Misc](#misc) (53)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -51,6 +51,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | `alert_id` (string) | ★ |  |
 | `note` (string) |  |  |
 | `snooze_days` (integer) |  |  |
+
+---
+
+### `yagura_alert_snapshot`
+
+[S] Current alert lifecycle states (active/resolved/snoozed) + stats. Optional status filter.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `status` (string) |  |  |
 
 ---
 
@@ -467,6 +479,40 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ---
 
+### `yagura_cc_security`
+
+[Q] Claude Code project security posture audit. Client supplies gathered facts (gitignore/CLAUDE.md/settings.json contents); server scores deterministically.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `claude_md` (string) |  |  |
+| `env_files` (array) |  |  |
+| `extra_text` (array) |  |  |
+| `gitignore` (string) |  |  |
+| `has_claude_md` (boolean) |  |  |
+| `has_git_dir` (boolean) |  |  |
+| `has_gitignore` (boolean) |  |  |
+| `has_settings` (boolean) |  |  |
+| `has_worklog` (boolean) |  |  |
+| `mcp_server_count` (integer) |  |  |
+| `settings_json` (string) |  |  |
+
+---
+
+### `yagura_claudemd_audit`
+
+[Q] CLAUDE.md structural audit: canonical 4-section coverage, instruction count (Lost in the Middle), issues/suggestions.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `content` (string) | ★ |  |
+
+---
+
 ### `yagura_cognit`
 
 [Q] Cognitive complexity per function (human reading cost; nesting-weighted, switch=1; gocognit-style — complements McCabe)
@@ -477,6 +523,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 |---|---|---|
 | `files` (object) | ★ |  |
 | `max` (integer) |  | cognitive-complexity threshold above which a function is flagged (default 15) |
+
+---
+
+### `yagura_coverage`
+
+[Q] Blind-spot meta lens: classifies paths analyzable/uncovered/non-source. Reports both sensor-tier and Go-only AST-lens-tier ratios.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `paths` (array) | ★ |  |
 
 ---
 
@@ -509,6 +567,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | `files` (object) | ★ |  |
 | `module_prefix` (string) | ★ | Go module path prefix (e.g. github.com/shizukutanaka/yagura) |
 | `threshold` (integer) |  | Minimum in-degree to flag (default 5) |
+
+---
+
+### `yagura_diff_scan`
+
+[Q] Unified-diff delta lens: added lines, removed lines, and removed safety guards (error-check/recover/cleanup).
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `diff` (string) | ★ |  |
 
 ---
 
@@ -547,6 +617,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 |---|---|---|
 | `files` (object) | ★ | map of filename → content for .go files to analyse |
 | `threshold` (integer) |  | minimum number of bool params to flag (default 1; set 2 to skip single-bool cases) |
+
+---
+
+### `yagura_flow_risk`
+
+[Q] Temporal/flow lens: detects dangerous operation-sequence orderings (secret-read->network, fetch-untrusted->exec/write).
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `steps` (array) | ★ |  |
 
 ---
 
@@ -831,6 +913,22 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ---
 
+### `yagura_review_gate`
+
+[G] cortex flywheel Review synthesis: hard signals (secrets/critical AI risk/lint/AST-high) block; else AI-risk threshold gates review vs allow.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `ai_critical` (integer) |  |  |
+| `ai_risk_score` (integer) |  |  |
+| `ast_high` (integer) |  |  |
+| `lint_prohibited` (integer) |  |  |
+| `secret_findings` (integer) |  |  |
+
+---
+
 ### `yagura_risk_triage`
 
 [G] Composite fix-priority for CVEs (asset+reach+exploit, with rationale).
@@ -863,6 +961,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | `session_calls` (integer) |  | total tool calls in the window (used for token-economy call-share thresholds). |
 | `skills` (array) |  | skill audit results (from yagura_skill_audit): [{path, score, retire}]. |
 | `tools` (array) |  | observed per-tool stats; OMIT to auto-collect this daemon's live token stats. [{name, calls, errors, avg_resp_bytes}]. |
+
+---
+
+### `yagura_self_improve_history`
+
+[S] Replay the self_improve audit trail (past RSI assessments). Optional limit to last N.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `limit` (integer) |  |  |
 
 ---
 

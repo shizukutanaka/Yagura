@@ -23,7 +23,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 87 internal packages
+## Map — 86 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -57,11 +57,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
   (Roadmap #6 の増分、自リポジトリ dogfood 済み)★ v0.36
 - `internal/ccsecurity` — Claude Code プロジェクトのセキュリティ姿勢を決定論的に監査
   (機械判定可能な対策 = .env 同梱/危険フラグ/deny ルール/CLAUDE.md ルール/git/MCP 最小化 を
-  スコア化、人手プロセス項目はガイダンス提示。CLI `cc-security`)★ v0.36
+  スコア化、人手プロセス項目はガイダンス提示。CLI `cc-security`、MCP
+  `yagura_cc_security`(client が事実を集めて渡す content-based 契約)★ v0.36(MCP★ v0.102)
 - `internal/reviewgate` — ② Review scanner 群(secretscan/aiverify/qualitycheck/astcheck)
   の結果を 1 つの合成判定(allow/review/block)へ束ねる deterministic gate。hard signal は
   secure-by-default で即 block。opsrisk(操作)/pathpolicy(パス)の ② Review 版の対。
-  CLI `review-gate --dir . [--strict]`★ v0.36
+  CLI `review-gate --dir . [--strict]`、MCP `yagura_review_gate`★ v0.36(MCP★ v0.102)
 
 ### Security sensors (observation)
 - `internal/osv` — OSV.dev 脆弱性 API client
@@ -73,14 +74,18 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - `internal/handoff` — handoff session management
 - `internal/agentlauncher` — agent process spawn
 - `internal/workspace` — session save/load
-- `internal/harness` — .claude/ + MCP 監査(skill/subagent/workflow/settings/agent-config/plugin/mcp)
+- `internal/harness` — .claude/ + MCP 監査(skill/subagent/workflow/settings/agent-config/plugin/mcp)。
+  `AuditClaudeMd` は CLAUDE.md 構造監査(canonical 4 セクション/命令数/Lost in the Middle)、
+  CLI `claudemd-audit`、MCP `yagura_claudemd_audit`★ v0.102
 
 ### Reasoning / multi-AI (★ v0.35)
 - `internal/agentparallel` — 複数 AI への deterministic な並列 dispatch planner(LPT)
 - `internal/riskreason` — Cyber Risk Reasoning Layer(CVSS+資産+到達性+攻撃性の複合判断)
 - `internal/recovery` — self-healing orchestration の決定論的 recovery 判断(retry/replan/escalate)
 - `internal/selfimprove` — harness レベル再帰的自己改善(RSI)の決定論的カーネル
-  (自己メトリクス→優先度つき改善提案 + 後退検出)。spec: `docs/self-improvement.md` ★ v0.35
+  (自己メトリクス→優先度つき改善提案 + 後退検出)。spec: `docs/self-improvement.md`。
+  MCP `yagura_self_improve`(都度評価)+ `yagura_self_improve_history`(監査証跡の
+  再生、CLI `self-improve-history` 対)★ v0.35(history MCP★ v0.102)
 - `internal/pathpolicy` — 変更パスを glob ルールで deny/review/allow する deterministic guardrail
   (CLI `path-policy` / `.yagura/paths.json` で ADR-0001 等を gate)★ v0.35
 - `internal/opsrisk` — 操作の段階的自律性(auto/log/review/human)を capability・可逆性・
@@ -91,14 +96,17 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - `internal/diffscan` — unified diff から追加行/削除行を抽出する純粋プリミティブ。
   snapshot ではなく delta の視点。`AddedLines`(「変更が新たに持ち込んだもの」)+
   `RemovedLines`/`RemovedGuards`(「外された安全装置」= error-check/recover/cleanup の
-  削除)。CLI `diff-scan` が追加行に secretscan を適用 + 削除 guard を review-only 報告★ v0.36
+  削除)。CLI `diff-scan` が追加行に secretscan を適用 + 削除 guard を review-only 報告、
+  MCP `yagura_diff_scan`★ v0.36(MCP★ v0.102)
 - `internal/flowrisk` — 操作シーケンスの危険な *順序* を検出(temporal/flow の視点)。
   secret-read→network(exfiltration)/ fetch-untrusted→exec(injection→実行)/
   fetch-untrusted→write を taint-flow 的に走査。`Analyze`(純関数)+ `ClassifyTool`
-  (ツール名→capability)。CLI `flow-risk`(1 行 1 操作名、--strict で high flow gate)★ v0.36
+  (ツール名→capability)。CLI `flow-risk`(1 行 1 操作名、--strict で high flow gate)、
+  MCP `yagura_flow_risk`★ v0.36(MCP★ v0.102)
 - `internal/coverage` — scan の盲点を meta 視点で数値化。全ファイルを「解析可能/
   未対応ソース(盲点)/非ソース」に分類し coverage 比率を報告。CLI `coverage --dir .
-  [--min R]`★ v0.36
+  [--min R]`、MCP `yagura_coverage`★ v0.36(MCP★ v0.102、v0.101 の "coverage は CLI-only"
+  という自己申告ギャップを解消)
 - `internal/assertcheck` — テストのアサーション密度を分析(ソクラテス新視点)。
   hollow test(assertion 無し)= 常に緑でも何も証明しない。`Scan(files)` →
   `Report{HollowFiles, AvgDensity, ...}`。CLI `assert-check --dir . [--max-hollow F]`★ v0.36
@@ -318,7 +326,9 @@ cortex flywheel 4 段階すべてを単体で機械化:
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23
 - `internal/plantracker` — Plan.md aware progress parser ★ v0.24
-- `internal/alertfix` — health signal aggregator + rule-based recommendation ★ v0.27
+- `internal/alertfix` — health signal aggregator + rule-based recommendation ★ v0.27。
+  MCP `yagura_alert_snapshot`(現在の lifecycle state 一覧 + stats、CLI `alert-snapshot`
+  対、既存 `buildAlertResolveTool` と同じ `*Store` を再利用)★ v0.102
 
 ### Observation / meta
 - `internal/agentevent` — 任意エージェント(Claude Code/Gemini CLI/Codex/OTel/汎用)の
@@ -327,7 +337,6 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - `internal/sessionsummary` — 正規化イベント列をセッションの構造化 tool-call サマリへ集約
   (tool 別件数/順序/エラー/異常検知。Hermes Desktop 参照。MCP `yagura_session_summary`)★ v0.35
 - `internal/dashboard` — HTML dashboard (薄め)
-- `internal/telemetry` — internal stats
 - `internal/metrics` — counter / gauge primitives
 - `internal/logging` — structured slog wrapper
 - `internal/httplimit` — http rate limit middleware

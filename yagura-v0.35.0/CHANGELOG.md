@@ -4,6 +4,81 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.102.0] - 2026-07-02
+
+### Theme — "MCP parity sweep: close all 8 CLI-only tool gaps + remove a dead package (Socratic self-audit, fourth action pass)"
+
+A strengths/weaknesses/improvements audit of the whole product (two independent
+passes: direct source inspection + a corroborating Explore-agent sweep) found
+that MCP — the primary Claude Code integration surface — had quietly fallen
+behind the CLI: 93 registered MCP tools vs 85 CLI verbs, with 8 verbs backed
+by real domain logic but no MCP equivalent. Every one of the 8 was checked at
+the function-signature level before starting: all are either pure functions
+or already reuse an existing `Deps`-provided dependency, so none required new
+architecture. Also found `internal/telemetry`, a fully orphaned package
+(245 lines impl + 158 lines test, zero callers anywhere in `cmd/` or
+`internal/mcp`) — removed.
+
+#### Fixed — 8 new MCP tools close the CLI→MCP parity gap
+
+- **`yagura_coverage`** — `coverage.Classify(paths)`. Self-flagged as the
+  next concrete increment in v0.101.0's own "What's not yet" section.
+- **`yagura_diff_scan`** — `diffscan.AddedLines`/`RemovedLines`/`RemovedGuards`
+  bundled into one report.
+- **`yagura_flow_risk`** — `flowrisk.Analyze(steps)`.
+- **`yagura_cc_security`** — `ccsecurity.Audit(in)`; client supplies gathered
+  facts (gitignore/CLAUDE.md/settings.json contents) as plain JSON fields,
+  matching the established content-based contract other Guide-tier tools use
+  (e.g. `yagura_ast_check`'s `files` map) — the server never does its own
+  `os.ReadDir`/`os.ReadFile` on a client-supplied path.
+- **`yagura_claudemd_audit`** — `harness.AuditClaudeMd(content)`.
+- **`yagura_review_gate`** — `reviewgate.Evaluate(signals)`; `Signals` is 5
+  pre-aggregated ints the client would already have from the other MCP
+  scanners it called.
+- **`yagura_alert_snapshot`** — reuses the same `*alertfix.Store` that
+  `yagura_alert_resolve` already holds via `Deps`; lifecycle state snapshot +
+  stats, optional status filter.
+- **`yagura_self_improve_history`** — replays the `self_improve` audit trail
+  (`audit.Read`); required adding a `Deps.StateDir` field (new, previously
+  absent) so the MCP layer can resolve the same audit directory the CLI's
+  `self-improve-history` reads from.
+
+20 new TDD tests across `internal/mcp/tools_parity_test.go` (invalid-input,
+required-field, and happy-path cases per tool). MCP tool count: 93 → **101**.
+
+#### Removed — `internal/telemetry`
+
+An OTel-compatible no-op tracer shim, built as speculative "future plugin"
+infrastructure per its own doc comment but never wired into any scanner, MCP
+tool, or CLI verb across 102 releases. Confirmed via exhaustive grep: zero
+importers anywhere except its own `example_test.go`. Package count: 87 → **86**.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, 20 new tests + zero regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l .` — clean
+- `scripts/gen-mcp-docs.sh` regenerated against a live daemon: confirms 101
+  tools registered, `docs/MCP_TOOLS.md` now documents all 8 new tools
+- Reproducible build verified
+
+#### Counts
+
+- MCP tools: 93 → **101** | Internal packages: 87 → **86**
+- Consecutive reproducible releases: 97 → **98** (v0.6 → v0.102.0)
+
+#### What's not yet
+
+- The polyglot lens strategic question (v0.99.1, restated v0.100.0/v0.101.0)
+  remains open — still explicitly a human product-direction decision, not
+  something this release attempts to resolve.
+- `calibrate`'s corpus-derived suggested thresholds are still not fed back
+  into the other lenses' fixed default gates — measured but not applied.
+- Two pre-existing self-flagged-but-unimplemented items are unchanged:
+  `.claude/` commit delegation (`internal/harness/harness.go`) and
+  interactive TTY passphrase entry for `yagura secret`
+  (`cmd/yagura/main.go`) — both larger, riskier changes than fit this
+  parity/cleanup-themed release.
+
 ## [v0.101.0] - 2026-07-01
 
 ### Theme — "coverage: split sensor-tier from AST-lens-tier coverage (Socratic finding, third pass)"

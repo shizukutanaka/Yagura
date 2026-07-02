@@ -42,6 +42,10 @@ type Deps struct {
 	HandoffStore  HandoffStore  // session context 永続化。nil なら session tool は使用不可
 	AgentLauncher AgentLauncher // Windsurf / Claude Code 起動。nil なら handoff は dry-run のみ
 	WorkspaceRoot string        // 現在の workspace ルートパス(handoff 既定値)
+
+	// v0.102.0: self_improve 監査証跡の読み出し用(yagura_self_improve_history)。
+	// 空文字なら audit.Read が空ディレクトリを開けず空スライスを返す(エラーにしない)。
+	StateDir string
 }
 
 // QuotaMonitor は両 agent の quota 状態を管理する interface。
@@ -261,6 +265,16 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildAgentEventTool(d))
 	// [v0.35.0] エージェントセッションの構造化 tool-call サマリ(Hermes Desktop 参照)
 	s.Register(buildSessionSummaryTool(d, s))
+	// [v0.102.0] MCP parity sweep — CLI-only 検出だった 8 verb を MCP tool 化
+	// (Socratic self-audit finding: MCP は主 integration surface なのに CLI に遅行していた)
+	s.Register(buildCoverageTool(d))
+	s.Register(buildDiffScanTool(d))
+	s.Register(buildFlowRiskTool(d))
+	s.Register(buildCCSecurityTool(d))
+	s.Register(buildClaudeMdAuditTool(d))
+	s.Register(buildReviewGateTool(d))
+	s.Register(buildAlertSnapshotTool(s.alertStore))
+	s.Register(buildSelfImproveHistoryTool(d))
 }
 
 // ─── yagura_token_stats (v0.17.0) ────────────────────────────

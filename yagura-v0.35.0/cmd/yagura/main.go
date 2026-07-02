@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.101.0"
+	version     = "0.102.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -677,7 +677,8 @@ func run() error {
 		QuotaMonitor:  quotaMon,
 		HandoffStore:  handoffStore,
 		AgentLauncher: launcher,
-		WorkspaceRoot: wsRoot, // v0.14.0: auto-detected from .git ancestry
+		WorkspaceRoot: wsRoot,       // v0.14.0: auto-detected from .git ancestry
+		StateDir:      cfg.StateDir, // v0.102.0: yagura_self_improve_history
 	})
 	logger.Info("mcp server initialized",
 		"tools", mcpServer.ToolNames(),

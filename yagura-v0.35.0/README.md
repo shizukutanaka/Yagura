@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.101.0** — 93 MCP tools, 87 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **`coverage` fix — a concrete, mechanically demonstrable Socratic finding (third pass):** `coverage`'s `Analyzable`/`CoverageRatio` conflated two capability tiers — the polyglot sensor tier (`qualitycheck`/`secretscan`/`testcoverage`, covers Go/TS/JS/Python/Rust/Java) and the AST quality-lens tier (25+ lenses like `complexity`/`cognit`/`nestdepth`, **Go-only**). A pure-Python project would read `coverage_ratio: 1.0` implying full "clean" confidence while zero of the 25+ lenses ever ran on it. Added `ASTLensAnalyzable`/`ASTLensCoverageRatio` fields so both tiers are visible side-by-side; purely additive, 6 new tests, existing fields/tests unchanged. Dogfooded on Yagura's own pure-Go codebase: both ratios read identical (0.99/0.99), confirming the fix is inert here and only diverges on genuinely polyglot trees. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.102.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **MCP parity sweep — closed all 8 CLI-only tool gaps + removed a dead package:** every CLI verb backed by a pure or Deps-only domain function (`coverage`, `diff-scan`, `flow-risk`, `cc-security`, `claudemd-audit`, `review-gate`, `alert-snapshot`, `self-improve-history`) now has an equivalent MCP tool, closing a gap where MCP — the primary Claude Code integration surface — silently lagged the CLI. Also removed `internal/telemetry`, a fully orphaned OTel-shim package with zero callers anywhere in the tree. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -193,7 +193,7 @@ normalization for programmatic use, and `/metrics` exports per-project, per-tool
 agent activity (`yagura_hook_tool_calls_total{project,tool}`, aligned to the
 OTel `gen_ai.tool.name` convention) for Prometheus/Grafana.
 
-## MCP tools (93 total)
+## MCP tools (101 total)
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-97 consecutive releases (v0.6 → v0.101.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+98 consecutive releases (v0.6 → v0.102.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
@@ -267,7 +267,7 @@ sha256sum -c SHA256SUMS
 ```
 .
 ├── cmd/yagura/              # Entry point (single binary)
-├── internal/                # 87 packages, none exported
+├── internal/                # 86 packages, none exported
 │   ├── mcp/                 # MCP server, tool registration
 │   ├── registry/            # Project registry (JSON file per project)
 │   ├── scanner/             # Background sensor loop (24 h)

@@ -1102,7 +1102,7 @@ a:focus-visible {
   {{end}}
   </main>
 
-  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.101.0</footer>
+  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.102.0</footer>
 </div>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/dashboard/sw.js',{scope:'/dashboard'}).catch(function(){});}</script>
 <script>

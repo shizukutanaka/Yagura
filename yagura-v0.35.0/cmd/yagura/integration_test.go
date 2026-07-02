@@ -233,6 +233,15 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		"yagura_agent_event",
 		// v0.35 — エージェントセッションの構造化サマリ
 		"yagura_session_summary",
+		// v0.102.0 — MCP parity sweep (CLI-only だった 8 verb の tool 化)
+		"yagura_coverage",
+		"yagura_diff_scan",
+		"yagura_flow_risk",
+		"yagura_cc_security",
+		"yagura_claudemd_audit",
+		"yagura_review_gate",
+		"yagura_alert_snapshot",
+		"yagura_self_improve_history",
 	}
 	if len(r.Result.Tools) != len(expectedTools) {
 		t.Errorf("expected %d tools, got %d", len(expectedTools), len(r.Result.Tools))
