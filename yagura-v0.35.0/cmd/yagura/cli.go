@@ -2542,6 +2542,9 @@ func cliComplexity(args []string, stdout, stderr io.Writer) error {
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
+	if err := applyCalibratedThreshold(fset, "max", *dir, "complexity", maxThreshold); err != nil {
+		return err
+	}
 
 	sr, err := readGoFiles(*dir)
 	if err != nil {
@@ -2576,6 +2579,9 @@ func cliParamCheck(args []string, stdout, stderr io.Writer) error {
 	strict := fset.Bool("strict", false, "exit non-zero if any function exceeds --max")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
+	}
+	if err := applyCalibratedThreshold(fset, "max", *dir, "params", maxThreshold); err != nil {
+		return err
 	}
 
 	sr, err := readGoFiles(*dir)
@@ -2648,6 +2654,9 @@ func cliReturnCheck(args []string, stdout, stderr io.Writer) error {
 	strict := fset.Bool("strict", false, "exit non-zero if any function exceeds --max")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
+	}
+	if err := applyCalibratedThreshold(fset, "max", *dir, "returns", maxThreshold); err != nil {
+		return err
 	}
 
 	sr, err := readGoFiles(*dir)
@@ -2925,6 +2934,9 @@ func cliNakedRet(args []string, stdout, stderr io.Writer) error {
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
+	if err := applyCalibratedThreshold(fset, "max-lines", *dir, "func_lines", maxLines); err != nil {
+		return err
+	}
 	sr, err := readGoFiles(*dir)
 	if err != nil {
 		return fmt.Errorf("scanning %s: %w", *dir, err)
@@ -2985,6 +2997,7 @@ func cliCalibrate(args []string, stdout, stderr io.Writer) error {
 	fset := newFlagSet("calibrate", stderr)
 	jsonOut := fset.Bool("json", false, "JSON output")
 	dir := fset.String("dir", ".", "directory to scan recursively for .go files")
+	write := fset.Bool("write", false, "write suggested thresholds to <dir>/.yagura/thresholds.json (feedback loop: complexity/param-check/return-check/naked-ret auto-detect this file)")
 	if err := fset.Parse(args); err != nil {
 		return errUsage
 	}
@@ -2994,10 +3007,86 @@ func cliCalibrate(args []string, stdout, stderr io.Writer) error {
 	}
 	warnIncompleteScan(stderr, sr, *dir)
 	rep := calibrate.Scan(sr.Files)
+	if *write {
+		if err := writeThresholdsFile(*dir, rep.SuggestedThresholds()); err != nil {
+			return err
+		}
+	}
 	if *jsonOut {
 		return emitJSON(stdout, rep)
 	}
 	humanCalibrate(stdout, rep)
+	return nil
+}
+
+// thresholdsFileName is the auto-detected config path (relative to a scan
+// dir) that complexity/param-check/return-check/naked-ret load a calibrated
+// default threshold from, mirroring the .yagura/<tool>.json custom-rule
+// convention already used by aiverify/secretscan/quality-check.
+const thresholdsFileName = "thresholds.json"
+
+// writeThresholdsFile persists t as <dir>/.yagura/thresholds.json.
+func writeThresholdsFile(dir string, t calibrate.Thresholds) error {
+	data, err := json.MarshalIndent(t, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal thresholds: %w", err)
+	}
+	out := filepath.Join(dir, ".yagura")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", out, err)
+	}
+	if err := os.WriteFile(filepath.Join(out, thresholdsFileName), append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write thresholds file: %w", err)
+	}
+	return nil
+}
+
+// loadCalibratedThreshold auto-detects <dir>/.yagura/thresholds.json and
+// returns the value for metric if present. ok=false (no error) means the
+// file doesn't exist — callers keep their flag default. A present-but-
+// malformed file is a real error (surfaced, not silently ignored), since a
+// typo'd threshold should fail loudly rather than pretend calibration ran.
+func loadCalibratedThreshold(dir, metric string) (value int, ok bool, err error) {
+	path := filepath.Join(dir, ".yagura", thresholdsFileName)
+	if _, statErr := os.Stat(path); statErr != nil {
+		return 0, false, nil
+	}
+	t, err := calibrate.LoadThresholdsFile(path)
+	if err != nil {
+		return 0, false, err
+	}
+	v, ok := t[metric]
+	return v, ok, nil
+}
+
+// flagWasSet reports whether name was explicitly passed on the command
+// line (vs. left at its flag.Int default) — an explicit --max must always
+// win over an auto-detected calibrated threshold.
+func flagWasSet(fset *flag.FlagSet, name string) bool {
+	set := false
+	fset.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	return set
+}
+
+// applyCalibratedThreshold overrides *threshold with the calibrated value
+// from <dir>/.yagura/thresholds.json for metric, unless flagName was
+// explicitly passed on the command line. A present-but-malformed
+// thresholds.json is returned as an error (not silently ignored).
+func applyCalibratedThreshold(fset *flag.FlagSet, flagName, dir, metric string, threshold *int) error {
+	if flagWasSet(fset, flagName) {
+		return nil
+	}
+	v, ok, err := loadCalibratedThreshold(dir, metric)
+	if err != nil {
+		return err
+	}
+	if ok {
+		*threshold = v
+	}
 	return nil
 }
 

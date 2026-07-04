@@ -1515,6 +1515,202 @@ func callLegacyAPI() {
 	}
 }
 
+// ─── calibrate --write + numeric-lens threshold feedback loop (v0.103.0) ──
+
+// TestCLI_Calibrate_Write verifies `calibrate --write` persists suggested
+// thresholds to .yagura/thresholds.json in the scanned dir.
+func TestCLI_Calibrate_Write(t *testing.T) {
+	dir := t.TempDir()
+	src := `package p
+func F(a, b, c int) {
+	if a > 0 {
+		if b > 0 {
+			if c > 0 {
+				_ = a
+			}
+		}
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs := runCLICapture(t, "calibrate", "--dir", dir, "--write")
+	if code != 0 {
+		t.Fatalf("calibrate --write: code=%d stderr=%q", code, errs)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, ".yagura", "thresholds.json"))
+	if err != nil {
+		t.Fatalf("expected .yagura/thresholds.json to be written: %v", err)
+	}
+	var got map[string]int
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("thresholds.json not valid JSON: %v", err)
+	}
+	if _, ok := got["complexity"]; !ok {
+		t.Errorf("expected complexity key in written thresholds, got %+v", got)
+	}
+}
+
+// TestCLI_Complexity_AutoDetectsCalibratedThreshold verifies complexity uses
+// a lower calibrated threshold from .yagura/thresholds.json when --max is
+// not explicitly passed, closing the W3 "measured but not applied" gap.
+func TestCLI_Complexity_AutoDetectsCalibratedThreshold(t *testing.T) {
+	dir := t.TempDir()
+	// complexity 3: base 1 + 2 nested ifs.
+	src := "package p\nfunc F(a int) {\n\tif a > 0 {\n\t\tif a > 1 {\n\t\t\t_ = a\n\t\t}\n\t}\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rulesDir := filepath.Join(dir, ".yagura")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "thresholds.json"), []byte(`{"complexity":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "complexity", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("complexity: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if int(resp["threshold"].(float64)) != 2 {
+		t.Errorf("expected calibrated threshold 2 to be auto-detected, got %v", resp["threshold"])
+	}
+}
+
+// TestCLI_Complexity_ExplicitMaxOverridesCalibrated verifies an explicit
+// --max still wins over an auto-detected .yagura/thresholds.json value.
+func TestCLI_Complexity_ExplicitMaxOverridesCalibrated(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte("package p\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rulesDir := filepath.Join(dir, ".yagura")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "thresholds.json"), []byte(`{"complexity":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "complexity", "--dir", dir, "--max", "20", "--json")
+	if code != 0 {
+		t.Fatalf("complexity: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if int(resp["threshold"].(float64)) != 20 {
+		t.Errorf("expected explicit --max 20 to override calibrated file, got %v", resp["threshold"])
+	}
+}
+
+// TestCLI_ParamCheck_AutoDetectsCalibratedThreshold mirrors the complexity
+// case for param-check (metric "params").
+func TestCLI_ParamCheck_AutoDetectsCalibratedThreshold(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte("package p\nfunc F(a, b int) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rulesDir := filepath.Join(dir, ".yagura")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "thresholds.json"), []byte(`{"params":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "param-check", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("param-check: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if int(resp["threshold"].(float64)) != 1 {
+		t.Errorf("expected calibrated threshold 1 to be auto-detected, got %v", resp["threshold"])
+	}
+}
+
+// TestCLI_ReturnCheck_AutoDetectsCalibratedThreshold mirrors the complexity
+// case for return-check (metric "returns").
+func TestCLI_ReturnCheck_AutoDetectsCalibratedThreshold(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte("package p\nfunc F() (int, int) { return 0, 0 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rulesDir := filepath.Join(dir, ".yagura")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "thresholds.json"), []byte(`{"returns":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "return-check", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("return-check: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if int(resp["threshold"].(float64)) != 1 {
+		t.Errorf("expected calibrated threshold 1 to be auto-detected, got %v", resp["threshold"])
+	}
+}
+
+// TestCLI_NakedRet_AutoDetectsCalibratedThreshold mirrors the complexity
+// case for naked-ret (metric "func_lines", flag --max-lines).
+func TestCLI_NakedRet_AutoDetectsCalibratedThreshold(t *testing.T) {
+	dir := t.TempDir()
+	src := "package p\nfunc F() (n int) {\n\tn = 1\n\tn++\n\treturn\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rulesDir := filepath.Join(dir, ".yagura")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "thresholds.json"), []byte(`{"func_lines":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "naked-ret", "--dir", dir, "--json")
+	if code != 0 {
+		t.Fatalf("naked-ret: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if int(resp["threshold"].(float64)) != 2 {
+		t.Errorf("expected calibrated threshold 2 to be auto-detected, got %v", resp["threshold"])
+	}
+}
+
+// TestCLI_Calibrate_BadThresholdsFile verifies a malformed .yagura/thresholds.json
+// surfaces as an error rather than being silently ignored.
+func TestCLI_Calibrate_BadThresholdsFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte("package p\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rulesDir := filepath.Join(dir, ".yagura")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "thresholds.json"), []byte(`{not json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs := runCLICapture(t, "complexity", "--dir", dir)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for malformed thresholds.json, stderr=%q", errs)
+	}
+}
+
 // TestCLI_AIVerify_SummaryOnly confirms --summary-only suppresses per-finding output.
 func TestCLI_AIVerify_SummaryOnly(t *testing.T) {
 	dir := t.TempDir()

@@ -299,7 +299,15 @@ cortex flywheel 4 段階すべてを単体で機械化:
   しきい値超過の関数を「直すべき極端値」として列挙(積を取ることで returns/params の
   `(T,error)` 等の慣用ノイズを排除)。dogfood(1280 関数)で 41 outliers(543 行 run、
   complexity-32 plantracker.Parse、レンズ自身の param 過多 3 件)を surface。
-  CLI `calibrate --dir . [--json]`、MCP `yagura_calibrate`★ v0.80(outliers v0.81)
+  CLI `calibrate --dir . [--json] [--write]`、MCP `yagura_calibrate`★ v0.80(outliers v0.81)。
+  v0.103.0 で feedback loop を閉鎖(W3 完全対応): `--write` が suggested_threshold を
+  `<dir>/.yagura/thresholds.json` へ書き出し、`complexity`/`param-check`/`return-check`/
+  `naked-ret` の CLI が(他 lens の `.yagura/<tool>.json` custom-rule 自動検出と同じ規約で)
+  これを自動検出して既定しきい値を上書きする。明示的な `--max`/`--max-lines` は常に優先
+  (`flagWasSet` で判定)。「測るだけで適用されない」半分実装状態を解消——ただし *自動適用は
+  しない*: `.yagura/thresholds.json` を書くかどうかは利用者の明示的な選択(`calibrate --write`
+  を実行して初めて発生)であり、Yagura 自身のリポジトリには意図的にコミットしていない
+  (このリポジトリの --strict ゲートを本リリースで変えないため)。
 - `internal/regress` — old/new 2 状態を比較し、関数ごとの品質メトリクス
   (complexity/params/returns/func-lines)が *悪化* した箇所を報告する **時系列/回帰軸**
   のレンズ(ソクラテス新視点 XIV)。既存 ~13 レンズは全て単一スナップショットだが、CI で

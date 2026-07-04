@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.102.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **MCP parity sweep — closed all 8 CLI-only tool gaps + removed a dead package:** every CLI verb backed by a pure or Deps-only domain function (`coverage`, `diff-scan`, `flow-risk`, `cc-security`, `claudemd-audit`, `review-gate`, `alert-snapshot`, `self-improve-history`) now has an equivalent MCP tool, closing a gap where MCP — the primary Claude Code integration surface — silently lagged the CLI. Also removed `internal/telemetry`, a fully orphaned OTel-shim package with zero callers anywhere in the tree. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.103.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **calibrate: closed the threshold feedback loop:** `calibrate --write` now persists corpus-derived suggested thresholds to `.yagura/thresholds.json`, and `complexity`/`param-check`/`return-check`/`naked-ret` auto-detect that file (explicit `--max`/`--max-lines` always wins) — closing the "measured but not applied" gap flagged in v0.102.0. Dogfooded on this repo's own tree (in a scratch copy, not committed): suggested thresholds are complexity 12, params 3, returns 2, func_lines 59. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-98 consecutive releases (v0.6 → v0.102.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+99 consecutive releases (v0.6 → v0.103.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

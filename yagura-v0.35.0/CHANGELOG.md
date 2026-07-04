@@ -4,6 +4,86 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.103.0] - 2026-07-04
+
+### Theme — "calibrate: close the threshold feedback loop (W3 completion, fifth Socratic action pass)"
+
+`internal/calibrate` (v0.80) has always derived corpus-specific suggested
+thresholds (`ceil(P95)`) for `complexity`/`param-check`/`return-check`/
+`naked-ret`, but nothing ever consumed them — the values were measured and
+displayed, never applied. v0.102.0's own "What's not yet" section named this
+explicitly: *"`calibrate`'s corpus-derived suggested thresholds are still
+not fed back into the other lenses' fixed default gates — measured but not
+applied."* This release closes that loop.
+
+#### Added — `calibrate --write` + auto-detected `.yagura/thresholds.json`
+
+- `calibrate.Report.SuggestedThresholds()` extracts a `Thresholds` map
+  (metric → `ceil(P95)`) from a scan, skipping metrics with zero observed
+  functions (no unfounded values).
+- `calibrate.LoadThresholdsFile(path)` reads and validates a thresholds
+  JSON file, rejecting unknown metric names outright (fail fast on a typo
+  rather than silently ignoring it).
+- CLI `calibrate --write` persists suggested thresholds to
+  `<dir>/.yagura/thresholds.json`.
+- `complexity`, `param-check`, `return-check`, and `naked-ret` now
+  auto-detect that file in their `--dir` and use the calibrated value as
+  their default threshold — **unless** `--max`/`--max-lines` was passed
+  explicitly, which always wins (checked via `flag.Visit`, mirroring how
+  `aiverify`/`secretscan`/`quality-check` already auto-detect
+  `.yagura/<tool>.json` custom rules; this is the same convention applied
+  to thresholds instead of rules). A present-but-malformed
+  `thresholds.json` is a hard error, not a silent no-op.
+- 13 new TDD tests: 6 in `internal/calibrate` (extraction + file loading,
+  including malformed-JSON and unknown-metric-name cases) and 7 CLI
+  integration tests (one auto-detect case per lens, one explicit-flag-wins
+  regression guard, one `--write` round-trip, one malformed-file-surfaces
+  case).
+
+#### Deliberately not auto-applied to this repository
+
+`calibrate --write` was dogfooded against Yagura's own tree in a scratch
+copy (not committed): `complexity` suggested threshold came back **12**
+(current default 10 — this repo's P95 complexity is slightly *above* the
+conventional default, not below it), `params` **3**, `returns` **2**,
+`func_lines` **59**. Whether to adopt these values for Yagura's own
+`--strict` gates is a separate product decision from building the
+capability — no `.yagura/thresholds.json` is committed here, so this
+release changes zero existing lint-gate behavior. Writing the file is an
+explicit, human-initiated action (`calibrate --write`), same as the
+custom-rule convention it mirrors.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, 13 new tests + zero
+  regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l .` (new code only — two
+  pre-existing formatting drifts elsewhere in `cmd/yagura/cli.go` and
+  `cli_test.go`, unrelated to this change, were left untouched)
+- Dogfooded end-to-end on a scratch copy of this repo: `calibrate --write`
+  → `.yagura/thresholds.json` → `complexity --dir .` reads back threshold
+  12 without `--max`; explicit `--max 20` still overrides
+- Reproducible build verified
+
+#### Counts
+
+- MCP tools: 101 (unchanged — this is a CLI-only feedback loop; MCP tools
+  already take explicit threshold-independent params from the client)
+- Internal packages: 86 (unchanged — extends the existing `calibrate`
+  package, no new package)
+- Consecutive reproducible releases: 98 → **99** (v0.6 → v0.103.0)
+
+#### What's not yet
+
+- The polyglot lens strategic question (v0.99.1, restated v0.100.0/
+  v0.101.0) remains open — unrelated to this release, still a human
+  product-direction decision.
+- W1 (type-info ceiling, `go/types` blocked by ADR-0001) remains
+  architecturally unaddressed.
+- `.claude/` commit delegation and interactive TTY passphrase entry (both
+  carried since v0.102.0) remain unimplemented — larger features, out of
+  scope for this threshold-focused release.
+
 ## [v0.102.0] - 2026-07-02
 
 ### Theme — "MCP parity sweep: close all 8 CLI-only tool gaps + remove a dead package (Socratic self-audit, fourth action pass)"

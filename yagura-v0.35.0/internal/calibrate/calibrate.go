@@ -27,10 +27,13 @@
 package calibrate
 
 import (
+	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"math"
+	"os"
 	"sort"
 	"strings"
 )
@@ -180,6 +183,51 @@ func Scan(files map[string]string) Report {
 	}
 	sortOutliers(r.Outliers)
 	return r
+}
+
+// Thresholds は metric 名 → しきい値。`calibrate --write` が出力し、各数値系
+// レンズ(complexity/param-check/return-check/naked-ret)の CLI が
+// `.yagura/thresholds.json` として自動検出・ロードする(W3「threshold
+// arbitrariness」の feedback loop 閉鎖、他 lens の `.yagura/<tool>.json`
+// カスタムルール自動検出と同じ規約)。
+type Thresholds map[string]int
+
+// SuggestedThresholds は Report の各 Distribution から SuggestedThreshold
+// (ceil(P95))を抽出した map を返す。母数 0(Count==0)のメトリクスは含めない
+// (根拠のない値を feedback しないため)。
+func (r Report) SuggestedThresholds() Thresholds {
+	out := make(Thresholds, len(r.Distributions))
+	for _, d := range r.Distributions {
+		if d.Count == 0 {
+			continue
+		}
+		out[d.Metric] = d.SuggestedThreshold
+	}
+	return out
+}
+
+// LoadThresholdsFile は path の JSON(`{"complexity":N,...}`)を読み、
+// Thresholds として返す。未知の metric 名(MetricNames() に無い)は typo
+// 検出のため即エラーとする(黙って無視しない)。
+func LoadThresholdsFile(path string) (Thresholds, error) {
+	data, err := os.ReadFile(path) //nolint:gosec
+	if err != nil {
+		return nil, fmt.Errorf("calibrate: read thresholds file %s: %w", path, err)
+	}
+	var t Thresholds
+	if err := json.Unmarshal(data, &t); err != nil {
+		return nil, fmt.Errorf("calibrate: parse thresholds file %s: %w", path, err)
+	}
+	known := make(map[string]bool, len(metricDefaults))
+	for _, md := range metricDefaults {
+		known[md.Name] = true
+	}
+	for metric := range t {
+		if !known[metric] {
+			return nil, fmt.Errorf("calibrate: unknown metric %q in %s (known: %v)", metric, path, MetricNames())
+		}
+	}
+	return t, nil
 }
 
 // sortOutliers は決定論的順序: Metric → Value desc → File → Line → Func。

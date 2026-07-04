@@ -1,6 +1,9 @@
 package calibrate
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func dist(r Report, metric string) (Distribution, bool) {
 	for _, d := range r.Distributions {
@@ -377,5 +380,79 @@ func TestScan_OutliersDeterministicOrder(t *testing.T) {
 		if a.Outliers[i] != b.Outliers[i] {
 			t.Errorf("outlier %d differs: %+v vs %+v", i, a.Outliers[i], b.Outliers[i])
 		}
+	}
+}
+
+// ─── Thresholds feedback loop (W3 closure, v0.103.0) ──────────────
+
+func TestSuggestedThresholds_ExtractsPerMetric(t *testing.T) {
+	files := map[string]string{"x.go": `package p
+func F(a, b, c int) {
+	if a > 0 {
+		if b > 0 {
+			if c > 0 {
+				_ = a
+			}
+		}
+	}
+}
+`}
+	r := Scan(files)
+	got := r.SuggestedThresholds()
+	for _, metric := range MetricNames() {
+		if _, ok := got[metric]; !ok {
+			t.Errorf("expected %q in suggested thresholds, got %+v", metric, got)
+		}
+	}
+}
+
+func TestSuggestedThresholds_EmptyWhenNoFuncs(t *testing.T) {
+	r := Scan(map[string]string{"x.go": "package p\n"})
+	got := r.SuggestedThresholds()
+	if len(got) != 0 {
+		t.Errorf("expected empty thresholds for zero funcs, got %+v", got)
+	}
+}
+
+func TestLoadThresholdsFile_ValidJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/thresholds.json"
+	if err := os.WriteFile(path, []byte(`{"complexity":8,"params":6}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadThresholdsFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["complexity"] != 8 || got["params"] != 6 {
+		t.Errorf("want complexity=8 params=6, got %+v", got)
+	}
+}
+
+func TestLoadThresholdsFile_MissingFile(t *testing.T) {
+	if _, err := LoadThresholdsFile("/nonexistent/thresholds.json"); err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+func TestLoadThresholdsFile_MalformedJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/thresholds.json"
+	if err := os.WriteFile(path, []byte(`{not json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadThresholdsFile(path); err == nil {
+		t.Error("expected error for malformed JSON")
+	}
+}
+
+func TestLoadThresholdsFile_UnknownMetricRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/thresholds.json"
+	if err := os.WriteFile(path, []byte(`{"not_a_real_metric":8}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadThresholdsFile(path); err == nil {
+		t.Error("expected error for unknown metric name (fail fast on typo)")
 	}
 }
