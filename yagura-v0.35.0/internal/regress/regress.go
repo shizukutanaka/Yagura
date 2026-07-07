@@ -46,8 +46,20 @@ type Report struct {
 }
 
 // Compare は old/new の file set を比較し、関数ごとの品質メトリクス悪化を報告する。
-// 出力は決定論的(Delta desc → File → Func → Metric)。
+// 出力は決定論的(Delta desc → File → Func → Metric)。conventional threshold
+// (calibrate.MetricDefault)のみで Crossed を判定する — CompareWithThresholds(nil)
+// と等価。
 func Compare(oldFiles, newFiles map[string]string) Report {
+	return CompareWithThresholds(oldFiles, newFiles, nil)
+}
+
+// CompareWithThresholds は Compare と同じだが、Crossed の判定に使うしきい値を
+// metric 名(complexity/params/returns/func_lines)ごとに overrides で上書きできる
+// (v0.104.0、calibrate --write が書く .yagura/thresholds.json を消費する呼出側
+// 向け)。overrides に無い metric は従来どおり calibrate.MetricDefault にフォール
+// バックする。overrides の未知キーは無視する(検証は calibrate.LoadThresholdsFile
+// の責務)。nil を渡せば Compare と完全に同じ挙動。
+func CompareWithThresholds(oldFiles, newFiles map[string]string, overrides map[string]int) Report {
 	oldM := calibrate.FuncMetrics(oldFiles)
 	newM := calibrate.FuncMetrics(newFiles)
 
@@ -69,6 +81,9 @@ func Compare(oldFiles, newFiles map[string]string) Report {
 				continue
 			}
 			def := calibrate.MetricDefault(metric)
+			if v, ok := overrides[metric]; ok {
+				def = v
+			}
 			crossed := def > 0 && newV > def
 			r.Regressions = append(r.Regressions, Regression{
 				File: nf.File, Func: nf.Func, Metric: metric,

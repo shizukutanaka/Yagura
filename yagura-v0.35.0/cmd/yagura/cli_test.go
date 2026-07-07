@@ -1711,6 +1711,62 @@ func TestCLI_Calibrate_BadThresholdsFile(t *testing.T) {
 	}
 }
 
+// TestCLI_Regress_AutoDetectsCalibratedThreshold verifies regress --old/--new
+// picks up a calibrated params threshold from <new>/.yagura/thresholds.json,
+// flipping Crossed for a delta that stays under the conventional gate (5).
+func TestCLI_Regress_AutoDetectsCalibratedThreshold(t *testing.T) {
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldDir, "x.go"), []byte("package p\nfunc F(a int) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(newDir, "x.go"), []byte("package p\nfunc F(a, b int) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rulesDir := filepath.Join(newDir, ".yagura")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "thresholds.json"), []byte(`{"params":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runCLICapture(t, "regress", "--old", oldDir, "--new", newDir, "--json")
+	if code != 0 {
+		t.Fatalf("regress: code=%d stderr=%q", code, errs)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		t.Fatalf("JSON not parseable: %v\n%s", err, out)
+	}
+	if int(resp["crossed"].(float64)) != 1 {
+		t.Errorf("expected calibrated threshold to flip Crossed to 1, got %v", resp["crossed"])
+	}
+}
+
+// TestCLI_Regress_BadThresholdsFile verifies a malformed <new>/.yagura/thresholds.json
+// surfaces as an error rather than being silently ignored.
+func TestCLI_Regress_BadThresholdsFile(t *testing.T) {
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldDir, "x.go"), []byte("package p\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(newDir, "x.go"), []byte("package p\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rulesDir := filepath.Join(newDir, ".yagura")
+	if err := os.MkdirAll(rulesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rulesDir, "thresholds.json"), []byte(`{not json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errs := runCLICapture(t, "regress", "--old", oldDir, "--new", newDir)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for malformed thresholds.json, stderr=%q", errs)
+	}
+}
+
 // TestCLI_AIVerify_SummaryOnly confirms --summary-only suppresses per-finding output.
 func TestCLI_AIVerify_SummaryOnly(t *testing.T) {
 	dir := t.TempDir()

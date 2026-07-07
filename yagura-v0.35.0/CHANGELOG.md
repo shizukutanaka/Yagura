@@ -4,6 +4,100 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.104.0] - 2026-07-07
+
+### Theme — "commercial-grade hardening pass 1: unified HTTP security headers + regress calibration consistency"
+
+Directed to bring the product to commercial-grade quality end to end
+(frontend dashboard through backend daemon). Two verified, mechanical gaps
+found by direct source inspection of the whole HTTP surface (assembled in
+one mux in `cmd/yagura/main.go`) and the v0.103.0 calibration feedback loop.
+
+#### Added — `withSecurityHeaders` middleware (frontend ↔ backend, one seam)
+
+`X-Content-Type-Options: nosniff` was set on exactly one dashboard page and
+absent from the alert/activity sub-pages and every JSON/MCP/metrics
+endpoint; no response anywhere set `Content-Security-Policy`,
+`X-Frame-Options`, or `Referrer-Policy`, despite the dashboard rendering
+inline `<style>`/`<script>` blocks. Added one middleware, wired once at
+server assembly (`withRequestLog(logger, withSecurityHeaders(mux))`),
+applying to every route uniformly:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: no-referrer`
+- `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline';
+  script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self';
+  manifest-src 'self'; frame-ancestors 'none'; base-uri 'none';
+  form-action 'self'`
+
+HSTS is deliberately omitted — this daemon is loopback-default (ADR-0004)
+and typically has no TLS termination in front of it, so pinning HTTPS
+would break the common case. The CSP uses `'unsafe-inline'` for
+style/script because the dashboard's 3 inline blocks have no inline event
+handlers (verified) and no nonce infrastructure exists yet — still a large
+step up from no CSP at all; a nonce-based upgrade is a natural next
+increment. Verified end-to-end against a live daemon (`curl -i`) on
+`/dashboard`, `/healthz`, `/metrics`, and `/mcp` — all four headers present
+on every route; dashboard HTML still renders correctly.
+
+#### Fixed — `regress` now honors calibrated thresholds
+
+v0.103.0 wired `complexity`/`param-check`/`return-check`/`naked-ret` to
+auto-detect `.yagura/thresholds.json`, but `regress` — the quality-ratchet
+lens comparing the *same 4 metrics* old→new — still gated `Crossed`
+purely on the static `calibrate.MetricDefault` table, an inconsistency
+v0.103.0 itself introduced. `regress` was the only remaining verb
+touching the 4 calibrated metrics (verified: `cognit`/`nest-depth`/
+`flag-arg`/`hotspot`/`iface-bloat` all gate on different metrics and were
+correctly left unwired).
+
+- `regress.CompareWithThresholds(old, new, overrides map[string]int) Report`
+  — `Compare` is now a thin wrapper passing `nil` (100% behavior-preserving).
+- `cliRegress` auto-detects `<newDir>/.yagura/thresholds.json` (same
+  detection convention as the four lens CLIs); a present-but-malformed
+  file is a hard error, not a silent no-op.
+- `yagura_regress` MCP tool gains an optional `thresholds` object param
+  (client-supplied, no filesystem access — consistent with the
+  established MCP content-based contract). Tool count unchanged (101):
+  an existing tool extended, not a new one.
+- 8 new TDD tests: 4 in `internal/regress` (lowered/raised gate flips,
+  nil-overrides-matches-`Compare` regression guard, unknown-metric-key
+  ignored), 2 CLI integration tests, 2 MCP tests.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, 10 new tests (2 middleware +
+  8 regress) + zero regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l .` (new code only — three
+  pre-existing formatting drifts in `cmd/yagura/cli.go`, `cli_test.go`,
+  and `internal/mcp/tools_quality.go`, unrelated to this change, left
+  untouched, consistent with v0.102.0/v0.103.0)
+- Dogfooded end-to-end: `regress --old A --new B` on a params 1→2 delta
+  reads `crossed: 0` (under conventional gate 5); planting
+  `.yagura/thresholds.json` with `{"params":1}` in the `--new` dir flips
+  it to `crossed: 1` without touching source
+- Reproducible build verified
+
+#### Counts
+
+- MCP tools: 101 (unchanged — `yagura_regress` extended, not new)
+- Internal packages: 86 (unchanged — extends `regress`/`cmd/yagura`, no
+  new package)
+- Consecutive reproducible releases: 99 → **100** (v0.6 → v0.104.0)
+
+#### What's not yet
+
+- CSP nonce upgrade for the dashboard's inline `<style>`/`<script>`
+  blocks (currently `'unsafe-inline'`) — a natural follow-on, not attempted
+  here.
+- Dashboard dark-mode theming, the polyglot lens strategic question, and
+  the W1 `go/types` ceiling remain open, unrelated to this release's theme.
+- "Commercial-grade, frontend to backend" is a standing directive, not a
+  single release — this is pass 1 (HTTP security posture consistency);
+  further passes (e.g. backend hardening: request size limits, rate-limit
+  coverage audit, dashboard UX polish) are candidate future increments.
+
 ## [v0.103.0] - 2026-07-04
 
 ### Theme — "calibrate: close the threshold feedback loop (W3 completion, fifth Socratic action pass)"

@@ -3129,7 +3129,17 @@ func cliRegress(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("scanning %s: %w", *newDir, err)
 	}
 	warnIncompleteScan(stderr, newSR, *newDir)
-	rep := regress.Compare(oldFiles, newSR.Files)
+
+	var thresholds map[string]int
+	tPath := filepath.Join(*newDir, ".yagura", thresholdsFileName)
+	if _, statErr := os.Stat(tPath); statErr == nil {
+		t, tErr := calibrate.LoadThresholdsFile(tPath)
+		if tErr != nil {
+			return tErr
+		}
+		thresholds = t
+	}
+	rep := regress.CompareWithThresholds(oldFiles, newSR.Files, thresholds)
 	if *jsonOut {
 		return emitJSON(stdout, rep)
 	}

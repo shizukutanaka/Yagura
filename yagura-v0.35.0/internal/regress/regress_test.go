@@ -237,3 +237,66 @@ func TestCompare_EmptyInputs(t *testing.T) {
 		t.Errorf("empty inputs should be empty report, got %+v", r)
 	}
 }
+
+// ─── CompareWithThresholds (v0.104.0, calibrated-threshold feedback loop) ──
+
+func TestCompareWithThresholds_LoweredGateCrosses(t *testing.T) {
+	// params 1 -> 2 stays under the conventional gate (5, see
+	// TestCompare_NotCrossedWhenUnderGate) but a calibrated override of 1
+	// must flip Crossed to true.
+	old := map[string]string{"x.go": "package p\nfunc F(a int) {}\n"}
+	newer := map[string]string{"x.go": "package p\nfunc F(a, b int) {}\n"}
+	r := CompareWithThresholds(old, newer, map[string]int{"params": 1})
+	reg, ok := hasReg(r, "F", "params")
+	if !ok {
+		t.Fatalf("expected params regression, got: %+v", r.Regressions)
+	}
+	if !reg.Crossed {
+		t.Errorf("2 params crosses the calibrated gate (1) — Crossed should be true: %+v", reg)
+	}
+	if r.Crossed != 1 {
+		t.Errorf("Report.Crossed count: want 1, got %d", r.Crossed)
+	}
+}
+
+func TestCompareWithThresholds_RaisedGateNoLongerCrosses(t *testing.T) {
+	// params 5 -> 6 crosses the conventional gate (5, see
+	// TestCompare_CrossedWhenOverGate) but a calibrated override of 10
+	// must keep Crossed false.
+	old := map[string]string{"x.go": "package p\nfunc F(a, b, c, d, e int) {}\n"}
+	newer := map[string]string{"x.go": "package p\nfunc F(a, b, c, d, e, f int) {}\n"}
+	r := CompareWithThresholds(old, newer, map[string]int{"params": 10})
+	reg, ok := hasReg(r, "F", "params")
+	if !ok {
+		t.Fatalf("expected params regression, got: %+v", r.Regressions)
+	}
+	if reg.Crossed {
+		t.Errorf("6 params is under the calibrated gate (10) — Crossed should be false: %+v", reg)
+	}
+	if r.Crossed != 0 {
+		t.Errorf("Report.Crossed count: want 0, got %d", r.Crossed)
+	}
+}
+
+func TestCompareWithThresholds_NilOverridesMatchesCompare(t *testing.T) {
+	old := map[string]string{"x.go": "package p\nfunc F(a, b, c, d, e int) {}\n"}
+	newer := map[string]string{"x.go": "package p\nfunc F(a, b, c, d, e, f int) {}\n"}
+	a := Compare(old, newer)
+	b := CompareWithThresholds(old, newer, nil)
+	if a.Crossed != b.Crossed || len(a.Regressions) != len(b.Regressions) {
+		t.Errorf("nil overrides should behave identically to Compare: %+v vs %+v", a, b)
+	}
+	if len(a.Regressions) > 0 && a.Regressions[0].Crossed != b.Regressions[0].Crossed {
+		t.Errorf("nil overrides diverged on Crossed: %+v vs %+v", a.Regressions[0], b.Regressions[0])
+	}
+}
+
+func TestCompareWithThresholds_UnknownMetricIgnored(t *testing.T) {
+	old := map[string]string{"x.go": "package p\nfunc F() {}\n"}
+	newer := map[string]string{"x.go": "package p\nfunc F(a int) {}\n"}
+	// "bogus" isn't a real metric key; it must not panic or affect params handling.
+	r := CompareWithThresholds(old, newer, map[string]int{"bogus": 99})
+	if _, ok := hasReg(r, "F", "params"); !ok {
+		t.Fatalf("expected params regression unaffected by unknown override key, got: %+v", r.Regressions)
+	}
+}

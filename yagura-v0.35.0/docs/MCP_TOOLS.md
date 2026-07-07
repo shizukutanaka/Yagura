@@ -897,6 +897,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 |---|---|---|
 | `new` (object) | ★ | current file set (path→content) |
 | `old` (object) | ★ | baseline file set (path→content) |
+| `thresholds` (object) |  | optional per-metric Crossed-gate overrides (complexity/params/returns/func_lines), e.g. from calibrate's suggested_threshold; omit to use conventional defaults |
 
 ---
 

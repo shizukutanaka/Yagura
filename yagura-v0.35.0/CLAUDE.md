@@ -316,7 +316,12 @@ cortex flywheel 4 段階すべてを単体で機械化:
   (単一情報源)。品質ラチェット = `regress --old DIR --new DIR --strict` で Crossed があれば
   CI fail。CLI `regress --base <git-rev> --strict`(v0.84: old 側を `git archive`+stdlib
   archive/tar で git revision から直接読む。`yagura regress --base origin/main --strict` が
-  CI 一行ゲートに)/ `--old DIR`、MCP `yagura_regress`★ v0.83
+  CI 一行ゲートに)/ `--old DIR`、MCP `yagura_regress`★ v0.83。v0.104.0 で calibrate
+  feedback loop(v0.103.0)との整合性を解消: `CompareWithThresholds(old,new,overrides)`
+  を追加(`Compare` はこれの nil-overrides ラッパー)、CLI は `<new>/.yagura/thresholds.json`
+  を他 4 レンズと同じ規約で自動検出、MCP は任意の `thresholds` パラメータを受付
+  (client 明示、ファイルシステム access なし)——v0.103.0 が閉じ残していた「calibrate
+  対象 4 metric のうち regress だけ校正値を無視する」不整合を解消★ v0.104
 - `internal/deadcode` — 自 package 内で参照されない unexported 宣言を検出
   (ソクラテス新視点、apidoc の非公開側の双対)。Go コンパイラが弾かない package
   レベル未使用 func/type/const/var。unexported = 閉じた世界なので保守的かつ安全に
@@ -379,6 +384,14 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - sort 順、tie-break が決定論的
 - audit log は時系列順
 - regression test で出力比較が安定
+
+### HTTP security headers(v0.104.0〜)
+- 全レスポンス(dashboard HTML / JSON API / MCP / metrics / health)に
+  `withSecurityHeaders` middleware(`cmd/yagura/main.go`)経由で
+  `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` /
+  `Content-Security-Policy` を一律付与。frontend(dashboard)と backend
+  (API/MCP)がセキュリティ姿勢で乖離しないための単一の座。HSTS は意図的に
+  未設定(loopback-default、ADR-0004、TLS 終端は前段が担う想定)。
 
 ## Workflows (典型的な開発フロー)
 

@@ -1300,13 +1300,19 @@ func buildRegressTool(d Deps) *Tool {
 					"additionalProperties": map[string]any{"type": "string"},
 					"description":          "current file set (path→content)",
 				},
+				"thresholds": map[string]any{
+					"type":                 "object",
+					"additionalProperties": map[string]any{"type": "integer"},
+					"description":          "optional per-metric Crossed-gate overrides (complexity/params/returns/func_lines), e.g. from calibrate's suggested_threshold; omit to use conventional defaults",
+				},
 			},
 			"required": []string{"old", "new"},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
 			var in struct {
-				Old map[string]string `json:"old"`
-				New map[string]string `json:"new"`
+				Old        map[string]string `json:"old"`
+				New        map[string]string `json:"new"`
+				Thresholds map[string]int    `json:"thresholds"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return nil, &ToolError{Code: "invalid_input", Cause: err}
@@ -1314,7 +1320,7 @@ func buildRegressTool(d Deps) *Tool {
 			if len(in.Old) == 0 || len(in.New) == 0 {
 				return nil, &ToolError{Code: "invalid_input", Message: "both 'old' and 'new' file sets are required"}
 			}
-			rep := regress.Compare(in.Old, in.New)
+			rep := regress.CompareWithThresholds(in.Old, in.New, in.Thresholds)
 			return rep, nil
 		},
 	}
