@@ -176,7 +176,7 @@ func New(reg *registry.Registry, logger *slog.Logger) (*Handler, error) {
 // serveAlertDetail は /dashboard/alerts を捌く(health banner のドリルダウン、read-only)。
 // provider 未設定 / sweep 前 / alert 0 件のいずれでも 404 ではなく案内文 + 戻りリンクを返す。
 func (h *Handler) serveAlertDetail(w http.ResponseWriter, r *http.Request) {
-	data := map[string]any{}
+	data := map[string]any{"Nonce": NonceFromContext(r.Context())}
 	if h.health != nil {
 		if alerts, at, ok := h.health.PortfolioAlerts(); ok {
 			data["Found"] = true
@@ -196,7 +196,7 @@ func (h *Handler) serveAlertDetail(w http.ResponseWriter, r *http.Request) {
 // 案内文 + dashboard への戻りリンクを返す(非 CLI ユーザの行き止まり回避)。
 func (h *Handler) serveActivityDetail(w http.ResponseWriter, r *http.Request) {
 	slug := r.URL.Query().Get("slug")
-	data := map[string]any{"Slug": slug}
+	data := map[string]any{"Slug": slug, "Nonce": NonceFromContext(r.Context())}
 
 	var detail ActivityDetail
 	var ok bool
@@ -267,6 +267,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"FailingCI":   failingCI,
 		"Stale":       stale,
 		"Projects":    projects,
+		"Nonce":       NonceFromContext(r.Context()),
 	}
 	// v0.35: per-project agent activity (Activity column). 活動のある project だけ載せる。
 	data["Activity"] = h.buildActivityMap(projects)
@@ -640,7 +641,7 @@ const activityHTMLTemplate = `<!DOCTYPE html>
 <title>Activity — {{.DisplayName}} — Yagura</title>
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="/dashboard/icon.svg">
-<style>
+<style nonce="{{.Nonce}}">
 :root{color-scheme:dark}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#c9d1d9;margin:0;padding:24px;line-height:1.5}
 a{color:#58a6ff;text-decoration:none}a:hover{text-decoration:underline}
@@ -709,7 +710,7 @@ const alertsHTMLTemplate = `<!DOCTYPE html>
 <title>Alerts — Yagura</title>
 <link rel="manifest" href="/dashboard/manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="/dashboard/icon.svg">
-<style>
+<style nonce="{{.Nonce}}">
 :root{color-scheme:dark}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#c9d1d9;margin:0;padding:24px;line-height:1.5}
 a{color:#58a6ff;text-decoration:none}a:hover{text-decoration:underline}
@@ -768,7 +769,7 @@ tr.done{opacity:.45}
   {{end}}
   </tbody>
 </table>
-<script>
+<script nonce="{{.Nonce}}">
 (function(){
   var msg=document.getElementById('amsg');
   function call(id,action,btn){
@@ -814,7 +815,7 @@ const htmlTemplate = `<!DOCTYPE html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Yagura">
-<style>
+<style nonce="{{.Nonce}}">
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
 body { background: #0d1117; color: #e6edf3; padding: 24px; }
@@ -1102,10 +1103,10 @@ a:focus-visible {
   {{end}}
   </main>
 
-  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.105.0</footer>
+  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.106.0</footer>
 </div>
-<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/dashboard/sw.js',{scope:'/dashboard'}).catch(function(){});}</script>
-<script>
+<script nonce="{{.Nonce}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/dashboard/sw.js',{scope:'/dashboard'}).catch(function(){});}</script>
+<script nonce="{{.Nonce}}">
 (function(){
   var f=document.getElementById('addproj-form'); if(!f)return;
   var msg=document.getElementById('addproj-msg');

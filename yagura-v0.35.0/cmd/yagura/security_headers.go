@@ -1,21 +1,39 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/shizukutanaka/yagura/internal/dashboard"
 )
 
-// securityCSP is the Content-Security-Policy applied to every response.
-// The dashboard renders a small number of inline <style>/<script> blocks
-// and no inline event handlers (verified), so 'unsafe-inline' for
-// style-src/script-src is the pragmatic baseline here; a future pass can
-// move to nonces. connect-src 'self' covers the dashboard's SSE stream;
-// manifest-src 'self' covers the PWA manifest; form-action 'self' covers
-// the register-project form.
-const securityCSP = "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; " +
+// securityCSPTemplate is the Content-Security-Policy applied to every
+// response, with %s placeholders for the per-request nonce (v0.106.0 —
+// replaces the earlier 'unsafe-inline' baseline). The dashboard's inline
+// <style>/<script> blocks carry a matching nonce attribute
+// (internal/dashboard's WithNonce/NonceFromContext); no inline event
+// handlers exist (verified), so nonce-gated style-src/script-src covers
+// every inline block without weakening the policy to 'unsafe-inline'.
+// connect-src 'self' covers the dashboard's SSE stream; manifest-src
+// 'self' covers the PWA manifest; form-action 'self' covers the
+// register-project form.
+const securityCSPTemplate = "default-src 'none'; style-src 'nonce-%[1]s'; script-src 'nonce-%[1]s'; " +
 	"img-src 'self' data:; connect-src 'self'; manifest-src 'self'; " +
 	"frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+
+// generateNonce returns a fresh base64-encoded 16-byte CSP nonce.
+// crypto/rand.Read's error is ignored per this repo's existing convention
+// (internal/sbom.randomUUIDv4) — on all supported platforms it does not
+// fail in practice.
+func generateNonce() string {
+	var b [16]byte
+	rand.Read(b[:]) //nolint:errcheck
+	return base64.RawURLEncoding.EncodeToString(b[:])
+}
 
 // withSecurityHeaders is a commercial-grade baseline applied uniformly to
 // every response on the daemon's HTTP surface (dashboard HTML, JSON API,
@@ -23,15 +41,18 @@ const securityCSP = "default-src 'none'; style-src 'unsafe-inline'; script-src '
 // backend (API/MCP) never drift out of sync on security posture. HSTS is
 // deliberately omitted: this daemon is loopback-default (ADR-0004) and
 // typically has no TLS termination in front of it, so pinning HTTPS would
-// break the common case.
+// break the common case. Generates a fresh nonce per request and injects
+// it into the request context (dashboard.WithNonce) so the dashboard's
+// templates can render the matching attribute.
 func withSecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nonce := generateNonce()
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", securityCSP)
-		next.ServeHTTP(w, r)
+		h.Set("Content-Security-Policy", fmt.Sprintf(securityCSPTemplate, nonce))
+		next.ServeHTTP(w, r.WithContext(dashboard.WithNonce(r.Context(), nonce)))
 	})
 }
 

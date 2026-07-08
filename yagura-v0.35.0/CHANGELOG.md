@@ -4,6 +4,71 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.106.0] - 2026-07-08
+
+### Theme — "commercial-grade hardening pass 3: CSP nonces replace 'unsafe-inline'"
+
+Continuing the hardening series (v0.104.0 introduced the CSP; both v0.104.0
+and v0.105.0 carried "CSP nonce upgrade" in their "What's not yet"). The
+dashboard's `style-src`/`script-src` directives used `'unsafe-inline'` as a
+pragmatic v0.104.0 baseline — a real step up from no CSP at all, but still
+permits *any* inline script to execute, including one an attacker managed
+to inject. Nonces close that gap: only the specific inline blocks the
+server itself rendered (and tagged with the request's one-time nonce) are
+allowed to run.
+
+#### Added — per-request CSP nonce, threaded from middleware to templates
+
+- `internal/dashboard`: new `WithNonce(ctx, nonce) context.Context` /
+  `NonceFromContext(ctx) string` — a context-based handoff so
+  `cmd/yagura`'s middleware (which owns the CSP header) and
+  `internal/dashboard`'s templates (which render the matching attribute)
+  agree on one value per request without a wrong-layer dependency.
+- All 6 inline `<style>`/`<script>` blocks across the dashboard's 3
+  templates (main dashboard, alert detail, activity detail) now render
+  `nonce="{{.Nonce}}"`.
+- `cmd/yagura/security_headers.go`: `generateNonce()` produces a fresh
+  16-byte `crypto/rand` value (base64url) per request; `withSecurityHeaders`
+  sets `style-src 'nonce-<value>'; script-src 'nonce-<value>'` (replacing
+  `'unsafe-inline'`) and injects the same value into the request context via
+  `dashboard.WithNonce` before calling the next handler.
+- 8 new tests: 5 in `internal/dashboard` (context round-trip, empty when
+  absent, and one render test per template confirming every inline block
+  carries the nonce and no bare `<style>`/`<script>` tag remains), 3 in
+  `cmd/yagura` (no `unsafe-inline` remains, nonces differ per request, the
+  context value the downstream handler sees matches the header value).
+
+#### Verification
+
+- `go test -race ./...` — all packages green, 8 new tests + zero
+  regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l .` clean on all touched
+  files
+- Live-daemon dogfood: fetched `/dashboard`, `/dashboard/alerts`,
+  `/dashboard/activity?slug=x` and confirmed, within each single response,
+  the CSP header's nonce exactly matches every inline `<style>`/`<script>`
+  tag's `nonce=` attribute (3/2/1 occurrences respectively, matching each
+  template's known inline-block count) and zero bare tags remain; also
+  confirmed two separate requests get different nonces and the dashboard
+  page still renders its normal markup
+- Reproducible build verified
+
+#### Counts
+
+- MCP tools: 101 (unchanged)
+- Internal packages: 86 (unchanged — extends `dashboard`/`cmd/yagura`, no
+  new package)
+- Consecutive reproducible releases: 101 → **102** (v0.6 → v0.106.0)
+
+#### What's not yet
+
+- Dashboard dark-mode theming, the polyglot lens strategic question, and
+  the W1 `go/types` ceiling remain open.
+- "Commercial-grade, frontend to backend" remains a standing directive.
+  Three passes in (headers, hooks auth/body-limit, CSP nonces) — no further
+  concrete backend/frontend gaps are known at this time; the next pass
+  would need a fresh audit.
+
 ## [v0.105.0] - 2026-07-08
 
 ### Theme — "commercial-grade hardening pass 2: /hooks/* authentication + request body bound"

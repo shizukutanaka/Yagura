@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.105.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Commercial-grade hardening pass 2:** `/hooks/claude-code` and `/hooks/agent` now require the same Bearer token as `/mcp` and the HTTP API — they previously had no authentication at all, despite the receiver's own doc comment claiming one. Also bounded the hooks request body to 1 MiB (`413` on overflow), matching the limits already enforced on `/mcp` and the HTTP API. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.106.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Commercial-grade hardening pass 3:** the dashboard's Content-Security-Policy now uses a fresh per-request nonce for its inline `<style>`/`<script>` blocks instead of `'unsafe-inline'` — only the specific inline blocks the server itself rendered can execute, closing the CSP-hardening gap flagged since v0.104.0. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-101 consecutive releases (v0.6 → v0.105.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+102 consecutive releases (v0.6 → v0.106.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

@@ -387,11 +387,19 @@ cortex flywheel 4 段階すべてを単体で機械化:
 
 ### HTTP security headers(v0.104.0〜)
 - 全レスポンス(dashboard HTML / JSON API / MCP / metrics / health)に
-  `withSecurityHeaders` middleware(`cmd/yagura/main.go`)経由で
+  `withSecurityHeaders` middleware(`cmd/yagura/security_headers.go`)経由で
   `X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy` /
   `Content-Security-Policy` を一律付与。frontend(dashboard)と backend
   (API/MCP)がセキュリティ姿勢で乖離しないための単一の座。HSTS は意図的に
   未設定(loopback-default、ADR-0004、TLS 終端は前段が担う想定)。
+- v0.106.0 で CSP の `style-src`/`script-src` を `'unsafe-inline'` から
+  per-request nonce へ移行。`withSecurityHeaders` が `crypto/rand` で毎リクエスト
+  nonce を生成し、`dashboard.WithNonce` で request context に注入。
+  `internal/dashboard` の 3 テンプレート(dashboard/alerts/activity)6 箇所の
+  inline `<style>`/`<script>` は `dashboard.NonceFromContext(r.Context())` を
+  `Nonce` として template data に渡し、`nonce="{{.Nonce}}"` で描画。新しい
+  inline block を足す場合は必ず nonce 属性を付けること(さもないと CSP に
+  ブロックされる)。
 
 ### 外部到達可能な write endpoint は auth + body 上限を必須とする(v0.105.0〜)
 - `/mcp`(`internal/mcp/server.go`)・HTTP API(`cmd/yagura/httpapi.go`)・
