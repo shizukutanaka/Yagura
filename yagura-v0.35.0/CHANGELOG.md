@@ -4,6 +4,68 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.107.0] - 2026-07-08
+
+### Theme — "commercial-grade hardening pass 4: background-task panic recovery"
+
+Continuing the hardening series (v0.104.0–v0.106.0 covered the HTTP
+surface: headers, hooks auth/body-limit, CSP nonces). This pass looks past
+HTTP entirely: `net/http`'s server already recovers from a panic in any
+single request handler without crashing the process, and MCP tool calls
+have their own explicit `recover()` (`internal/mcp/server.go`) — but 4
+long-running background goroutines in `cmd/yagura/main.go` had **no**
+panic recovery at all. A bare `go func(){ for { ... } }()` goroutine that
+panics takes the entire process down with it — MCP, dashboard, and HTTP
+API included — a blast radius wildly disproportionate to a bug in a
+low-value periodic maintenance task.
+
+#### Fixed — panic recovery for all long-running background tickers
+
+Affected: the portfolio gauge updater (30s), audit-log pruner (24h),
+disk-cache pruner (1h), and rate-limiter GC (5min, 3 independent limiters).
+
+- Added `runSafely(logger, task string, fn func())` (`cmd/yagura/safego.go`),
+  mirroring the panic-recovery-plus-structured-logging pattern already
+  used for MCP tool calls: `recover()`, log the task name + panic value +
+  stack trace via `slog`, then return normally instead of propagating.
+- Wrapped every periodic invocation (both the immediate warm-up call and
+  the ticker-driven repeat) across all 4 background tasks. The 3
+  rate-limiter GCs are wrapped independently, so a panic in one doesn't
+  prevent the other two from running.
+- 2 new tests (`cmd/yagura/safego_test.go`): a panicking task doesn't
+  propagate past `runSafely` (and logs the task name + panic value), and a
+  non-panicking task still runs normally with no spurious log output.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, 2 new tests + zero
+  regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l .` clean on all touched
+  files
+- Live-daemon smoke test: confirmed the daemon starts, `/healthz` and
+  `/dashboard` respond normally, no spurious panic-log noise, and SIGTERM
+  still shuts down cleanly with the new wiring in place. (Injecting an
+  actual panic into a running binary isn't practical without temporarily
+  modifying source; the recovery path itself is covered by the two unit
+  tests above, the same tier of testing the existing MCP panic recovery
+  relies on.)
+- Reproducible build verified
+
+#### Counts
+
+- MCP tools: 101 (unchanged)
+- Internal packages: 86 (unchanged — extends `cmd/yagura`, no new package)
+- Consecutive reproducible releases: 102 → **103** (v0.6 → v0.107.0)
+
+#### What's not yet
+
+- Dashboard dark-mode theming, the polyglot lens strategic question, and
+  the W1 `go/types` ceiling remain open.
+- "Commercial-grade, frontend to backend" remains a standing directive.
+  Four passes in (headers, hooks auth/body-limit, CSP nonces, background
+  panic recovery) — no further concrete gaps are known at this time; the
+  next pass would need a fresh audit.
+
 ## [v0.106.0] - 2026-07-08
 
 ### Theme — "commercial-grade hardening pass 3: CSP nonces replace 'unsafe-inline'"

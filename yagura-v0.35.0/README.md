@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.106.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Commercial-grade hardening pass 3:** the dashboard's Content-Security-Policy now uses a fresh per-request nonce for its inline `<style>`/`<script>` blocks instead of `'unsafe-inline'` — only the specific inline blocks the server itself rendered can execute, closing the CSP-hardening gap flagged since v0.104.0. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.107.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Commercial-grade hardening pass 4:** every long-running background goroutine (portfolio gauges, audit-log pruning, disk-cache pruning, rate-limiter GC) now recovers from panics instead of taking the entire daemon down with it — the same protection MCP tool calls already had. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-102 consecutive releases (v0.6 → v0.106.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+103 consecutive releases (v0.6 → v0.107.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

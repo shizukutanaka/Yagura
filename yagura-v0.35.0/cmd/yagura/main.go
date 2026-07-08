@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.106.0"
+	version     = "0.107.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -496,13 +496,13 @@ func run() error {
 			projActive.Set(int64(active))
 			projFailingCI.Set(int64(failing))
 		}
-		updateGauges() // immediate
+		runSafely(logger, "portfolio-gauges", updateGauges) // immediate
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				updateGauges()
+				runSafely(logger, "portfolio-gauges", updateGauges)
 			}
 		}
 	}()
@@ -547,7 +547,7 @@ func run() error {
 				})
 			}
 		}
-		runPrune()
+		runSafely(logger, "audit-prune", runPrune)
 		go func() {
 			ticker := time.NewTicker(24 * time.Hour)
 			defer ticker.Stop()
@@ -556,7 +556,7 @@ func run() error {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					runPrune()
+					runSafely(logger, "audit-prune", runPrune)
 				}
 			}
 		}()
@@ -585,7 +585,7 @@ func run() error {
 					case <-ctx.Done():
 						return
 					case <-ticker.C:
-						mcpServer.Cache().PruneExpiredDisk()
+						runSafely(logger, "cache-prune", mcpServer.Cache().PruneExpiredDisk)
 					}
 				}
 			}()
@@ -796,9 +796,10 @@ func run() error {
 		for {
 			select {
 			case <-ticker.C:
-				sbomLimiter.GC()
-				ghaAuditLimiter.GC()
-				pinDriftLimiter.GC()
+				// 各 GC を個別に保護: 1 つが panic しても残り 2 つは実行される。
+				runSafely(logger, "sbom-limiter-gc", func() { sbomLimiter.GC() })
+				runSafely(logger, "gha-audit-limiter-gc", func() { ghaAuditLimiter.GC() })
+				runSafely(logger, "pin-drift-limiter-gc", func() { pinDriftLimiter.GC() })
 			case <-ctx.Done():
 				return
 			}

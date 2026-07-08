@@ -412,6 +412,16 @@ cortex flywheel 4 段階すべてを単体で機械化:
   5 MiB、`/hooks/*` 1 MiB)。新しい write endpoint を足す際はこの 2 点
   (auth + body 上限)を両方満たすこと。
 
+### 長寿命 background goroutine は panic recovery 必須(v0.107.0〜)
+- `net/http` は 1 リクエストの handler panic をプロセス全体には波及させない
+  (標準ライブラリの挙動)。MCP tool call も `internal/mcp/server.go` で
+  独自に `recover()` している。しかし daemon の生存期間ずっと動く
+  `go func(){ for { ... } }()` 形の background goroutine(gauge 更新・
+  audit prune・cache prune・rate-limiter GC 等)は無防備だと 1 回の panic で
+  daemon 全体(MCP/dashboard/HTTP API 込み)を道連れにする。
+  `cmd/yagura/safego.go` の `runSafely(logger, task, fn)` で全ての周期
+  呼び出し(起動直後の warm-up 呼び出しも含む)をラップすること。
+
 ## Workflows (典型的な開発フロー)
 
 ### 実装の進め方 — test-first(TDD を標準動作にする)
