@@ -4,6 +4,91 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.105.0] - 2026-07-08
+
+### Theme — "commercial-grade hardening pass 2: /hooks/* authentication + request body bound"
+
+Continuing the hardening directive from v0.104.0. Set out to audit
+rate-limit (`internal/httplimit`) coverage across routes (v0.104.0's own
+"what's not yet" item) and found something more serious along the way: the
+`/hooks/claude-code` and `/hooks/agent` webhook endpoints had **no
+authentication at all**, despite `internal/hookreceiver`'s own package doc
+comment claiming "Bearer token で簡易認証" (simple Bearer-token auth) — an
+intent-vs-implementation gap, not a documented design choice.
+
+#### Fixed — `/hooks/*` now requires the same Bearer token as `/mcp` and the HTTP API
+
+- Added `requireBearerToken(token string, h http.HandlerFunc) http.HandlerFunc`
+  (`cmd/yagura/security_headers.go`), mirroring the constant-time-compare
+  pattern already used by `internal/mcp/server.go`'s `authorized` and
+  `httpapi.go`'s `authMiddleware`.
+- Wired at both hook registration sites in `cmd/yagura/main.go`, reusing
+  `cfg.MCPToken` — the same single source of truth `httpapi.go` already
+  reuses. An empty token means auth is not enforced, preserving the
+  existing loopback-default convention (ADR-0004) for users who don't set
+  `YAGURA_MCP_TOKEN`.
+- 5 new tests (`cmd/yagura/hooks_auth_test.go`): empty-token pass-through,
+  missing header, wrong token, correct token, and an end-to-end check
+  through a real `hookreceiver.Handle`.
+- Dogfooded against a live daemon: unauthenticated request → 401, wrong
+  token → 401, correct token → 200; a daemon started without
+  `YAGURA_MCP_TOKEN` still accepts unauthenticated hook posts (no
+  regression for the common case).
+
+#### Fixed — `/hooks/*` request body is now bounded
+
+While fixing the auth gap, found the sibling issue: `hookreceiver.Handle`
+decoded `req.Body` directly with no size limit, unlike `/mcp` (1 MiB via
+`io.LimitReader`) and the HTTP API (5 MiB). An externally-reachable
+endpoint with an unbounded JSON decode is a memory-exhaustion DoS vector.
+
+- Wrapped `req.Body` with `http.MaxBytesReader(w, req.Body,
+  maxHookBodyBytes)` (1 MiB, matching `/mcp`'s limit — hook events are
+  small JSON payloads even with `tool_input`/`tool_response` attached).
+- A body over the limit now returns `413 Payload Too Large` (detected via
+  `errors.As` against `*http.MaxBytesError`), distinct from the existing
+  `400` for genuinely malformed JSON.
+- 2 new tests in `internal/hookreceiver/receiver_test.go`: oversized body
+  → 413, normal-sized body still accepted (regression guard). Dogfooded
+  against a live daemon with a 2 MB payload → confirmed 413.
+
+#### Rate-limit audit (no action needed)
+
+`internal/httplimit` already covers the three GitHub-PAT-consuming routes
+(`/sbom`, `/gha-audit`, `/pin-drift`) by original design intent (DoS +
+token-exhaustion protection). `/mcp` and `/hooks/*` were never intended to
+carry the same per-route token-bucket limiting — they're the primary,
+typically-single-caller integration surfaces, not CI-triggered fan-out
+endpoints. No gap found here beyond the auth/body-size issues above.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, 7 new tests + zero
+  regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l .` clean on all touched
+  files
+- Live-daemon dogfood (see above) for both fixes, plus a no-token-configured
+  daemon to confirm the default (unauthenticated) case is unchanged
+- Reproducible build verified
+
+#### Counts
+
+- MCP tools: 101 (unchanged)
+- Internal packages: 86 (unchanged — extends `hookreceiver`/`cmd/yagura`,
+  no new package)
+- Consecutive reproducible releases: 100 → **101** (v0.6 → v0.105.0)
+
+#### What's not yet
+
+- CSP nonce upgrade for the dashboard's inline `<style>`/`<script>` blocks
+  (carried from v0.104.0).
+- Dashboard dark-mode theming, the polyglot lens strategic question, and
+  the W1 `go/types` ceiling remain open.
+- "Commercial-grade, frontend to backend" remains a standing directive —
+  this is pass 2. No further concrete backend gaps are known at this time;
+  the next candidate pass would need a fresh audit (dashboard UX polish,
+  or revisiting the CSP nonce upgrade).
+
 ## [v0.104.0] - 2026-07-07
 
 ### Theme — "commercial-grade hardening pass 1: unified HTTP security headers + regress calibration consistency"

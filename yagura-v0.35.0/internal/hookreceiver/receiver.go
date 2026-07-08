@@ -43,6 +43,11 @@ import (
 	"github.com/shizukutanaka/yagura/internal/agentevent"
 )
 
+// maxHookBodyBytes は Handle が受け付ける POST body の上限(v0.105.0)。
+// /mcp(internal/mcp/server.go: maxBodyBytes = 1 MiB)と同じ桁——hook event は
+// tool_input/tool_response を含んでも通常小さい JSON なので同水準で十分。
+const maxHookBodyBytes = 1 * 1024 * 1024
+
 // Event は Claude Code が送ってくる hook event の正規化形式。
 //
 // 公式 schema (https://code.claude.com/docs/en/hooks) の field を抜き出し、
@@ -240,11 +245,19 @@ func (r *Receiver) Handle(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// body を上限で切る(/mcp・HTTP API と同様、外部到達可能な endpoint での
+	// 無制限読込は memory-exhaustion DoS の温床)。
+	req.Body = http.MaxBytesReader(w, req.Body, maxHookBodyBytes)
 	// raw payload を保存しておく(parsing 失敗時も生 JSON を JSONL に残す)
 	var raw map[string]json.RawMessage
 	dec := json.NewDecoder(req.Body)
 	dec.UseNumber()
 	if err := dec.Decode(&raw); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -1,6 +1,10 @@
 package main
 
-import "net/http"
+import (
+	"crypto/subtle"
+	"net/http"
+	"strings"
+)
 
 // securityCSP is the Content-Security-Policy applied to every response.
 // The dashboard renders a small number of inline <style>/<script> blocks
@@ -29,4 +33,30 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 		h.Set("Content-Security-Policy", securityCSP)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireBearerToken guards h with the same Bearer-token check already used
+// by /mcp (internal/mcp/server.go) and the HTTP API (httpapi.go's
+// authMiddleware) — /hooks/claude-code and /hooks/agent previously had no
+// auth check at all despite hookreceiver's own package doc claiming one
+// (v0.105.0 fix). An empty token means auth is not enforced, consistent
+// with the existing loopback-default convention (ADR-0004).
+func requireBearerToken(token string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if token == "" {
+			h(w, r)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		// HasPrefix が偽でも常に ConstantTimeCompare まで走らせ、タイミング攻撃を防ぐ
+		// (/mcp・HTTP API と同じ規約)。
+		received := strings.TrimPrefix(auth, prefix)
+		if !strings.HasPrefix(auth, prefix) ||
+			subtle.ConstantTimeCompare([]byte(received), []byte(token)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h(w, r)
+	}
 }

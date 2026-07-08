@@ -393,6 +393,17 @@ cortex flywheel 4 段階すべてを単体で機械化:
   (API/MCP)がセキュリティ姿勢で乖離しないための単一の座。HSTS は意図的に
   未設定(loopback-default、ADR-0004、TLS 終端は前段が担う想定)。
 
+### 外部到達可能な write endpoint は auth + body 上限を必須とする(v0.105.0〜)
+- `/mcp`(`internal/mcp/server.go`)・HTTP API(`cmd/yagura/httpapi.go`)・
+  `/hooks/*`(`internal/hookreceiver` + `cmd/yagura/security_headers.go` の
+  `requireBearerToken`)は全て同じ `cfg.MCPToken` を Bearer 認証で検証
+  (constant-time compare、空 token なら認証なし)。v0.105.0 で
+  `/hooks/claude-code` / `/hooks/agent` が無認証だった不整合(受信側の
+  doc comment は認証ありと主張していたが実装が伴っていなかった)を解消。
+- 同様に body size も 3 endpoint 群で上限必須(`/mcp` 1 MiB、HTTP API
+  5 MiB、`/hooks/*` 1 MiB)。新しい write endpoint を足す際はこの 2 点
+  (auth + body 上限)を両方満たすこと。
+
 ## Workflows (典型的な開発フロー)
 
 ### 実装の進め方 — test-first(TDD を標準動作にする)

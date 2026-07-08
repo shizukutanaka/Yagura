@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.104.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Commercial-grade hardening pass 1:** every HTTP response (dashboard, JSON API, MCP, metrics, health) now carries a uniform security-header set (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Content-Security-Policy`) via one middleware, closing a gap where `nosniff` was set on exactly one page and no response anywhere set a CSP. Also closed a consistency gap the v0.103.0 calibration feedback loop left behind: `regress` — the quality-ratchet lens comparing the same 4 metrics old→new — now honors `.yagura/thresholds.json` too. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.105.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Commercial-grade hardening pass 2:** `/hooks/claude-code` and `/hooks/agent` now require the same Bearer token as `/mcp` and the HTTP API — they previously had no authentication at all, despite the receiver's own doc comment claiming one. Also bounded the hooks request body to 1 MiB (`413` on overflow), matching the limits already enforced on `/mcp` and the HTTP API. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-100 consecutive releases (v0.6 → v0.104.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+101 consecutive releases (v0.6 → v0.105.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

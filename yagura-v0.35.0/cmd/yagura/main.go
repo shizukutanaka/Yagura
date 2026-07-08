@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.104.0"
+	version     = "0.105.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -733,12 +733,13 @@ func run() error {
 	// v0.31.0: Claude Code HTTP hooks receiver (Feb 2026 GA)
 	// PreToolUse / PostToolUse / Stop / SubagentStop 等を localhost に POST してくる
 	// observation mode: 全 event を JSONL persist、空 response で agent 継続
+	// v0.105.0: /mcp・HTTP API と同じ MCPToken Bearer 認証を適用(以前は無認証だった)。
 	if hookReceiver != nil {
-		mux.HandleFunc("/hooks/claude-code", hookReceiver.Handle)
+		mux.HandleFunc("/hooks/claude-code", requireBearerToken(cfg.MCPToken, hookReceiver.Handle))
 		// v0.35: agent-agnostic alias. Any agent (Gemini CLI / Codex / OTel /
 		// generic) can POST its lifecycle events here; the receiver normalizes
 		// non-Claude-Code payloads via internal/agentevent.
-		mux.HandleFunc("/hooks/agent", hookReceiver.Handle)
+		mux.HandleFunc("/hooks/agent", requireBearerToken(cfg.MCPToken, hookReceiver.Handle))
 	}
 
 	// v0.31.0: MCP 2026 spec .well-known metadata endpoint
