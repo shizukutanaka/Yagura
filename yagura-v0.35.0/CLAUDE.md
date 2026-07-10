@@ -421,6 +421,13 @@ cortex flywheel 4 段階すべてを単体で機械化:
   daemon 全体(MCP/dashboard/HTTP API 込み)を道連れにする。
   `cmd/yagura/safego.go` の `runSafely(logger, task, fn)` で全ての周期
   呼び出し(起動直後の warm-up 呼び出しも含む)をラップすること。
+- v0.108.0: これら background goroutine が listen する `ctx` の `cancel()` は
+  shutdown signal 受信直後(drain sleep / scanner stop / HTTP shutdown の
+  *前*)に呼ぶこと。関数末尾の `defer cancel()` だけに頼ると、shutdown
+  シーケンス(最大 15 秒)のほぼ全期間 background task が動き続け、
+  graceful-stop が事実上無意味になる(プロセス終了直前に cancel されても
+  もう手遅れ)。`context.CancelFunc` は冪等なので、明示呼び出し + defer の
+  二重掛けで問題ない。
 
 ## Workflows (典型的な開発フロー)
 

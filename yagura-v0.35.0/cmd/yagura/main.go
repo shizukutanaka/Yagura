@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.107.0"
+	version     = "0.108.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -865,6 +865,15 @@ func run() error {
 	case sig := <-sigCh:
 		logger.Info("signal received, shutting down", "signal", sig.String())
 	}
+
+	// v0.108.0: background goroutine の ctx はここで即座に cancel する。
+	// 以前は defer cancel()(関数末尾、5 秒 drain + 最大 10 秒 HTTP shutdown の
+	// *後*)にのみ頼っていたため、gauge 更新・audit prune・cache prune・
+	// rate-limiter GC は shutdown シーケンスのほぼ全期間 ticker のまま動き続け、
+	// ctx.Done() による graceful-stop は事実上プロセス終了直前の無意味な形骸化
+	// だった。ここで明示的に cancel することで background task は即座に停止する。
+	// defer cancel() は残す(context.CancelFunc は冪等、早期 return 経路の保険)。
+	cancel()
 
 	// readiness を false にして 5 秒 drain
 	ready.Store(false)

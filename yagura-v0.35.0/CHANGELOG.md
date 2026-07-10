@@ -4,6 +4,64 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.108.0] - 2026-07-10
+
+### Theme — "commercial-grade hardening pass 5: cancel background tasks when shutdown begins, not when it ends"
+
+v0.107.0 gave the daemon's 4 long-running background goroutines (portfolio
+gauges, audit-log pruner, disk-cache pruner, rate-limiter GC) a graceful
+`ctx.Done()` exit path and panic recovery. Reviewing that same shutdown
+sequence surfaced a companion timing bug: `ctx`'s `cancel()` was only ever
+invoked via a `defer` registered at daemon startup (`cmd/yagura/main.go`),
+meaning it fired at the very *end* of `run()` — after the 5-second
+readiness-drain sleep and the up-to-10-second `srv.Shutdown()` HTTP grace
+period had *already completed*. For the entire duration of that shutdown
+sequence, all 4 background goroutines kept running on their normal ticker
+schedules; `ctx.Done()` only closed in the last few nanoseconds before the
+function returned and the process exited. The graceful-stop mechanism
+existed in the code but did nothing useful — the goroutines were about to
+be killed by process exit anyway by the time it fired.
+
+#### Fixed — cancel background-task context immediately on shutdown signal
+
+- Moved the explicit `cancel()` call to fire immediately after the
+  shutdown signal is received/logged, *before* the drain sleep, scanner
+  stop, and HTTP shutdown sequence — so background maintenance tasks stop
+  promptly instead of continuing to run through most of shutdown.
+- The original `defer cancel()` is kept as a safety net for early-return
+  error paths (e.g. the `httpErrCh` branch); `context.CancelFunc` is
+  idempotent, so calling it twice is harmless.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, zero regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l .` clean
+- This specific timing behavior isn't unit-testable without a larger
+  refactor of `run()` — the existing test suite already documents this
+  limitation (`cmd/yagura/main_test.go`'s `TestDispatch_DaemonBootAndShutdown`
+  comment). Verified instead via a live-daemon dogfood: started the daemon,
+  sent `SIGTERM`, and confirmed the same clean shutdown log sequence
+  (signal received → readiness=false, draining → stopping scanner →
+  stopped cleanly) with exit code 0 and no behavior change in the observable
+  shutdown contract — only the internal cancellation timing improved.
+- Reproducible build verified
+
+#### Counts
+
+- MCP tools: 101 (unchanged)
+- Internal packages: 86 (unchanged — a one-call reordering in `cmd/yagura`,
+  no new package)
+- Consecutive reproducible releases: 103 → **104** (v0.6 → v0.108.0)
+
+#### What's not yet
+
+- Dashboard dark-mode theming, the polyglot lens strategic question, and
+  the W1 `go/types` ceiling remain open.
+- "Commercial-grade, frontend to backend" remains a standing directive.
+  Five passes in (headers, hooks auth/body-limit, CSP nonces, background
+  panic recovery, shutdown timing) — no further concrete gaps are known at
+  this time; the next pass would need a fresh audit.
+
 ## [v0.107.0] - 2026-07-08
 
 ### Theme — "commercial-grade hardening pass 4: background-task panic recovery"
