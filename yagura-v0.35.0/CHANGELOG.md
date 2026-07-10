@@ -4,6 +4,65 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.109.0] - 2026-07-10
+
+### Theme — "commercial-grade hardening pass 6: v0.107.0's panic recovery was scoped too narrowly"
+
+A fresh audit re-checked v0.107.0's own work and found its scope was
+incomplete. That release added panic recovery to the 4 background
+goroutines written inline in `cmd/yagura/main.go` — but two more
+long-running goroutines live in a separate package, `internal/scanner`,
+started via `go s.run(ctx)` inside `Scanner.Start`/`SecurityScanner.Start`,
+and neither had any `recover()` either. These are actually higher-risk
+than what v0.107.0 already covered: `Scanner.run` calls `ScanAll`, which
+makes real per-project GitHub API calls; `SecurityScanner.run` calls
+`runOnce`, which makes real per-project OSV/Scorecard API calls — both
+parse external responses, a much more plausible panic surface than the
+simple in-memory bookkeeping the 4 already-protected tasks perform.
+
+#### Fixed — panic recovery for the scanner package's own goroutines
+
+- Added a package-local `runSafely(logger, task string, fn func())`
+  (`internal/scanner/safe.go`) — the same recover-plus-structured-logging
+  pattern as `cmd/yagura/safego.go`, duplicated rather than imported
+  because `cmd/yagura` depends on `internal/scanner`, not the reverse.
+- Wrapped both immediate warm-up calls and ticker-driven repeats:
+  `Scanner.run`'s `ScanAll` invocations and `SecurityScanner.run`'s
+  `runOnce` invocations.
+- 2 new tests (`internal/scanner/safe_test.go`), identical in shape to
+  `cmd/yagura/safego_test.go`'s: a panicking task doesn't propagate (and
+  logs the task name + panic value), a non-panicking task runs normally
+  with no spurious log output.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, 2 new tests + zero
+  regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l .` clean on all touched
+  files
+- Live-daemon dogfood: confirmed both the registry scan cycle and the
+  security scan cycle still complete normally ("scanner cycle done" /
+  "security scan cycle done" both observed in the log), no panic-log
+  noise, and `SIGTERM` still shuts down cleanly with exit code 0
+- Reproducible build verified
+
+#### Counts
+
+- MCP tools: 101 (unchanged)
+- Internal packages: 86 (unchanged — extends `internal/scanner`, no new
+  package)
+- Consecutive reproducible releases: 104 → **105** (v0.6 → v0.109.0)
+
+#### What's not yet
+
+- Dashboard dark-mode theming, the polyglot lens strategic question, and
+  the W1 `go/types` ceiling remain open.
+- "Commercial-grade, frontend to backend" remains a standing directive.
+  Six passes in — this one specifically a correction to an earlier pass's
+  incomplete scope, which is itself a useful signal: audits of the
+  audit-fixing process are worth repeating, not just audits of the
+  original codebase.
+
 ## [v0.108.0] - 2026-07-10
 
 ### Theme — "commercial-grade hardening pass 5: cancel background tasks when shutdown begins, not when it ends"

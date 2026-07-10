@@ -428,6 +428,15 @@ cortex flywheel 4 段階すべてを単体で機械化:
   graceful-stop が事実上無意味になる(プロセス終了直前に cancel されても
   もう手遅れ)。`context.CancelFunc` は冪等なので、明示呼び出し + defer の
   二重掛けで問題ない。
+- v0.109.0: v0.107.0 の適用範囲は `cmd/yagura/main.go` に直接書かれた
+  goroutine のみで、`internal/scanner`(`Scanner.run`/`SecurityScanner.run`、
+  GitHub/OSV/Scorecard API を叩いて外部レスポンスをパースする分、こちらの方が
+  panic 面が大きい)を見落としていた不完全な適用だった。`internal/scanner/safe.go`
+  に同型の `runSafely` を複製(import 方向が逆なので `cmd/yagura` のものは
+  使えない)して追加済み。**教訓**: 「無防備な background goroutine」を横断的に
+  探す際は grep を単一パッケージ(`cmd/yagura`)だけで終わらせず、daemon が
+  `go xxx.Start(ctx)` のように委譲している他パッケージの内部 goroutine も
+  必ず洗うこと。
 
 ## Workflows (典型的な開発フロー)
 
