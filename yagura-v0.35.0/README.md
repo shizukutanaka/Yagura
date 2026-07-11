@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.109.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Commercial-grade hardening pass 6:** a fresh audit found v0.107.0's panic-recovery fix had incomplete scope — it covered `cmd/yagura/main.go`'s background goroutines but missed `internal/scanner`'s own (higher-risk, since they parse real GitHub/OSV/Scorecard API responses per project). Now protected too. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.110.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Research-driven security hardening:** `mcp-audit` now covers the 2026 MCP tool-poisoning taxonomy — cross-tool shadowing (duplicate tool names), HTML/markdown comment smuggling, and base64-encoded instruction payloads — closing gaps flagged by the latest MCP-security literature (MCP-38, CSA unicode-injection research), including a check the code's own header comment claimed but never implemented. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-105 consecutive releases (v0.6 → v0.109.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+106 consecutive releases (v0.6 → v0.110.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

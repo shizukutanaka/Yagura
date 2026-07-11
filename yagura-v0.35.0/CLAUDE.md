@@ -76,7 +76,13 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - `internal/workspace` — session save/load
 - `internal/harness` — .claude/ + MCP 監査(skill/subagent/workflow/settings/agent-config/plugin/mcp)。
   `AuditClaudeMd` は CLAUDE.md 構造監査(canonical 4 セクション/命令数/Lost in the Middle)、
-  CLI `claudemd-audit`、MCP `yagura_claudemd_audit`★ v0.102
+  CLI `claudemd-audit`、MCP `yagura_claudemd_audit`★ v0.102。
+  `AuditMCPConfig`(mcp_audit.go)は .mcp.json / tools list の tool-poisoning 監査。
+  v0.110.0 で 2026 の脅威タクソノミー(MCP-38 arXiv 2603.18063、CSA unicode-injection)に
+  整合: instruction-override / data-exfil / zero-width 隠し文字 / HTML・markdown コメント
+  smuggling / base64 隠しペイロード(injectscan と同じ decode-then-rescan gate)/
+  cross-tool shadowing(同名 tool 上書き — v0.110.0 まで header comment だけが主張して
+  実装が無かった intent-vs-impl ギャップを解消)。CLI `mcp-audit`、MCP `yagura_mcp_audit`★ v0.35(taxonomy★ v0.110)
 
 ### Reasoning / multi-AI (★ v0.35)
 - `internal/agentparallel` — 複数 AI への deterministic な並列 dispatch planner(LPT)

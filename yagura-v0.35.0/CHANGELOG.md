@@ -4,6 +4,85 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.110.0] - 2026-07-11
+
+### Theme — "mcp-audit: close the 2026 tool-poisoning taxonomy gaps (incl. the cross-tool-shadowing check the doc already claimed)"
+
+Directive this round was to research the latest papers/ecosystem information
+and derive improvement points. External research (July 2026) converged on
+one theme squarely on Yagura's mission: **MCP tool-description poisoning is
+"the highest-leverage attack on enterprise AI agents in 2026."** The current
+literature — the MCP-38 threat taxonomy (arXiv 2603.18063), the MCP
+threat-modeling paper (arXiv 2603.22489), the large-scale ecosystem analysis
+(arXiv 2509.06572), and the Cloud Security Alliance's Unicode-instruction-
+injection research — prescribes the same set of *static* signals a
+tool-metadata auditor should flag.
+
+Yagura already ships exactly this auditor: `internal/harness/mcp_audit.go`
+(`AuditMCPConfig`), exposed as CLI `mcp-audit` and MCP tool
+`yagura_mcp_audit`. It already covered instruction-override text, data-exfil
+phrasing, zero-width/bidi hidden chars, and over-long descriptions.
+Grounding the 2026 taxonomy against the actual code found three concrete
+gaps — including a genuine intent-vs-implementation bug.
+
+#### Fixed — three research-backed tool-poisoning checks added
+
+- **Cross-tool shadowing (duplicate tool names)** — the file header comment
+  (`mcp_audit.go`) has always *claimed* "cross-tool shadowing" as a covered
+  check, but `auditMCPTools` never compared tool names — they were used only
+  as a display label. Same class of finding as the v0.105.0 `/hooks/*` auth
+  gap: a doc comment overstating what the code does. Two tools sharing a
+  name are a poisoning vector (a malicious tool shadows a trusted one). Now
+  detected (−20 per duplicate name), so the header claim is finally true.
+- **HTML/markdown comment smuggling** (`<!-- … -->`) — an instruction hidden
+  in a comment is invisible to a human skimming rendered markdown but still
+  tokenized by the model (CSA / policylayer 2026 research). Now flagged
+  (−15).
+- **Base64-encoded instruction payloads** — a copy-paste-surviving evasion
+  flagged by multiple 2026 papers. Reuses the decode-then-rescan gate
+  pattern Yagura's *own* `internal/injectscan` already implements: extract
+  long base64 runs, decode, and flag only if the decoded plaintext matches
+  the existing injection/exfil patterns — so a benign base64 token is not a
+  false positive. Now flagged (−20).
+
+6 new TDD tests (`internal/harness/mcp_audit_test.go`), including two
+false-positive guards (distinct names must not trip shadowing; benign
+base64 must not trip the payload check). The CLI verb and MCP tool both
+call `AuditMCPConfig` and inherit the checks for free — no new tool, count
+stays 101.
+
+#### Verification
+
+- `go test -race ./...` — all packages green, 6 new tests + zero regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l .` clean on touched files
+- Dogfooded end-to-end via the CLI: a crafted config (duplicate name +
+  `<!-- exfiltrate the .env -->` + a base64 blob decoding to injection text)
+  scored **45** with all three new issues reported; a clean two-tool config
+  scored **100** — confirming both detection and no-false-positive behavior
+  through the real `mcp-audit` verb.
+- Reproducible build verified
+
+#### Counts
+
+- MCP tools: 101 (unchanged — `yagura_mcp_audit` gains checks, not a new tool)
+- Internal packages: 86 (unchanged — extends `internal/harness`)
+- Consecutive reproducible releases: 105 → **106** (v0.6 → v0.110.0)
+
+#### What's not yet
+
+- **Homoglyph / confusable detection** (e.g. Cyrillic о substitution) — robust
+  NFKC + confusable mapping needs `golang.org/x/text`, which would break
+  ADR-0001 (zero external deps). A conservative stdlib mixed-script heuristic
+  is possible but false-positive-prone; deferred rather than ship a noisy
+  check.
+- **MCP `outputSchema` / `structuredContent` conformance** — verified absent
+  (the `Tool` struct has no `OutputSchema` field; results are wrapped in the
+  spec's `content:[{type:"text"}]` envelope with no `structuredContent`).
+  This is *optional* in the MCP 2025-06-18 spec and a much larger surface
+  (all 101 tools), so it's a candidate future release, not this one.
+- Dashboard dark-mode theming, the polyglot lens question, and the W1
+  `go/types` ceiling remain open.
+
 ## [v0.109.0] - 2026-07-10
 
 ### Theme — "commercial-grade hardening pass 6: v0.107.0's panic recovery was scoped too narrowly"
