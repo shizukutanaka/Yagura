@@ -2,6 +2,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -290,12 +291,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Method {
 	case "initialize":
-		// Mihari と同じ最小 initialize 応答
+		// v0.111.0: 実 daemon version(SetVersion 注入)を返す(以前は "0.1.0"
+		// ハードコードで嘘をついていた)。protocolVersion は structuredContent を
+		// 実装した 2025-06-18 を advertise(以前は 2 年前の 2024-11-05)。
 		writeJSONRPCResult(w, req.ID, map[string]any{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": "2025-06-18",
 			"serverInfo": map[string]any{
 				"name":    "yagura",
-				"version": "0.1.0",
+				"version": version(),
 			},
 			"capabilities": map[string]any{"tools": map[string]any{}},
 		})
@@ -468,11 +471,20 @@ func (s *Server) handleToolsCall(ctx context.Context, w http.ResponseWriter,
 	// v0.17.0: stats 計測。content wrapper も含めた JSON 全体のサイズで記録
 	// (LLM が受け取る実体に近い計測)。
 	s.recordStats(name, len(args), len(resultJSON), false, time.Now())
-	writeJSONRPCResult(w, id, map[string]any{
+	// MCP convention: tool result is wrapped in `content` array.
+	out := map[string]any{
 		"content": []map[string]any{
 			{"type": "text", "text": string(resultJSON)},
 		},
-	})
+	}
+	// v0.111.0: MCP 2025-06-18 の structuredContent。client が JSON を text
+	// から再パースせず直接 consume できる。spec は object を要求するので、
+	// result が JSON object の時だけ付与(array/scalar は text block のみ)。
+	// 既に marshal 済みの resultJSON を再利用(二重 marshal しない)。
+	if bytes.HasPrefix(bytes.TrimSpace(resultJSON), []byte("{")) {
+		out["structuredContent"] = json.RawMessage(resultJSON)
+	}
+	writeJSONRPCResult(w, id, out)
 }
 
 func writeJSONRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {

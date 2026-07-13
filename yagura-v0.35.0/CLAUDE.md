@@ -444,6 +444,18 @@ cortex flywheel 4 段階すべてを単体で機械化:
   `go xxx.Start(ctx)` のように委譲している他パッケージの内部 goroutine も
   必ず洗うこと。
 
+### MCP tools/call レスポンスは structuredContent を持つ、handshake は正直(v0.111.0〜)
+- `internal/mcp/server.go` の `handleToolsCall` は tool の返り値が JSON object に
+  marshal される場合(`{`で始まる場合)、従来の `content:[{type:"text",text:<JSON文字列>}]`
+  に加えて MCP 2025-06-18 の `structuredContent`(パース済み JSON object)を併記する。
+  配列/スカラーを返す handler(現状の 101 tool には無いが、将来追加され得る)は
+  `structuredContent` を省略(spec が object を要求するため)。新しい tool の handler が
+  何を返しても、object を返す限り自動的にこの恩恵を受ける——個別対応不要。
+- `initialize` の `serverInfo.version` は `mcp.version()`(`SetVersion` で注入された実際の
+  running version)を返す。`protocolVersion` は `"2025-06-18"`。どちらも v0.111.0 以前は
+  ハードコードされた嘘の値(`"0.1.0"` / `"2024-11-05"`)を返していた——`/hooks` 認証や
+  cross-tool-shadowing と同じ「doc/spec が主張する動作と実装が食い違う」クラスの発見。
+
 ## Workflows (典型的な開発フロー)
 
 ### 実装の進め方 — test-first(TDD を標準動作にする)

@@ -4,6 +4,85 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.111.0] - 2026-07-13
+
+### Theme — "MCP protocol conformance & honesty pass: structuredContent + real serverInfo.version + current protocolVersion"
+
+v0.110.0's own "What's not yet" flagged the missing `structuredContent` /
+`outputSchema` conformance gap as the next candidate. Reading the exact
+`tools/call` response builder and `initialize` handshake code
+(`internal/mcp/server.go`) turned up a cohesive release: the structuredContent
+gap, plus two genuine staleness bugs in the handshake — the same
+intent-vs-implementation class this project keeps finding (the fake `/hooks`
+auth doc in v0.105.0, the unimplemented cross-tool-shadowing claim in
+v0.110.0).
+
+#### Fixed
+
+- **`tools/call` responses now carry `structuredContent`** — previously every
+  tool result was wrapped only as `content:[{type:"text", text:<JSON-string>}]`:
+  the actual structured object was marshalled and stuffed as a *string* inside
+  a text block, forcing clients to re-parse JSON out of text. The MCP
+  2025-06-18 spec's optional sibling field `structuredContent` (a JSON object
+  clients SHOULD consume directly) is now added whenever the tool result
+  marshals to a JSON object — `content` stays untouched for back-compat. Audited
+  all handler return paths: no real (non-test) tool handler returns a bare
+  array or scalar at the top level, so all 101 tools get `structuredContent`
+  in practice; the object-only gate exists for spec-correctness and
+  forward-compatibility with any future tool that legitimately returns an
+  array.
+- **`serverInfo.version` was hardcoded `"0.1.0"`** in the `initialize`
+  handshake while the daemon reports its real version everywhere else. The
+  package already had a version-injection seam (`mcp.SetVersion` /
+  `mcp.version()`, used by `tools_guides.go` and `tools_hooks.go`) — the
+  handshake simply never used it. Now echoes the real running version.
+- **`protocolVersion` was `"2024-11-05"`**, 2+ years stale and predating the
+  `structuredContent` feature this release implements. Now advertises
+  `"2025-06-18"`, the spec version whose feature is actually supported. No
+  negotiation logic added — this just stops declaring a version we don't
+  implement.
+
+4 new TDD tests (`internal/mcp/structuredcontent_test.go`): an
+object-returning tool keeps `content` and gains a deep-equal
+`structuredContent`; an in-test fake tool returning `[]int` and one returning
+a bare string both correctly omit `structuredContent`; and the `initialize`
+handshake echoes an injected sentinel version and `2025-06-18` instead of the
+old hardcoded values.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — all packages green, 4 new tests + zero
+  regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l` clean on touched files
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001)
+- Live-daemon dogfood via `curl` against `/mcp`: `initialize` returns
+  `protocolVersion:"2025-06-18"` and `serverInfo.version` matching the running
+  binary (not `0.1.0`); `tools/call` for `yagura_stats` returns both
+  `content[0].text` (JSON string, unchanged) and a `structuredContent` object
+  deep-equal to it.
+
+#### Counts
+
+- MCP tools: 101 (unchanged — no new tool, existing tools gain a response
+  field)
+- Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 106 → **107** (v0.6 → v0.111.0)
+
+#### What's not yet
+
+- **Per-tool `outputSchema` declarations** — the `Tool` struct still has no
+  `OutputSchema` field. `structuredContent` already delivers the consumable
+  value (typed object instead of string-wrapped JSON) without requiring a
+  101-tool schema-authoring pass; a future release could add schemas
+  incrementally per topic file.
+- Homoglyph/confusable detection (zero-dep blocked, carried from v0.110.0),
+  dashboard dark-mode theming, and the polyglot lens question remain open.
+
+#### Sources
+
+- MCP specification, 2025-06-18 revision — `structuredContent` /
+  `outputSchema` (modelcontextprotocol.io)
+
 ## [v0.110.0] - 2026-07-11
 
 ### Theme — "mcp-audit: close the 2026 tool-poisoning taxonomy gaps (incl. the cross-tool-shadowing check the doc already claimed)"
