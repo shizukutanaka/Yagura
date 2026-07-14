@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/shizukutanaka/yagura/internal/dashboard"
@@ -53,6 +54,51 @@ func withSecurityHeaders(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Security-Policy", fmt.Sprintf(securityCSPTemplate, nonce))
 		next.ServeHTTP(w, r.WithContext(dashboard.WithNonce(r.Context(), nonce)))
+	})
+}
+
+// originAllowed reports whether a request's Origin header is safe to accept.
+//
+// A same-machine, non-browser MCP client (CLI, SDK, curl) never sends the
+// Origin header at all, so an absent Origin is the normal, expected case and
+// is allowed. A *present* Origin is only accepted if its host is loopback
+// (localhost/127.0.0.1/::1) — anything else means a web page running in the
+// operator's own browser is driving the request: the classic DNS-rebinding /
+// browser-to-localhost attack against this daemon's no-token loopback-trust
+// mode (ADR-0004), which was never accounted for. "null" (the Origin
+// serialization of a sandboxed iframe or data: URL) is treated as untrusted,
+// not as absent — url.Parse("null") yields an empty Hostname(), which
+// naturally falls through to the reject path below.
+func originAllowed(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	switch u.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	default:
+		return false
+	}
+}
+
+// restrictOrigin rejects browser-originated cross-origin requests before
+// they reach the mux, mitigating DNS rebinding against the no-token
+// loopback-trust mode (ADR-0004; docs/security-spec.md T13). It is a
+// transport-level gate, not a credential check, so it applies uniformly
+// regardless of whether YAGURA_MCP_TOKEN is configured. Compose it inside
+// withSecurityHeaders (not outside) so a rejected request's response still
+// carries the same security header baseline as every other response.
+func restrictOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !originAllowed(r.Header.Get("Origin")) {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

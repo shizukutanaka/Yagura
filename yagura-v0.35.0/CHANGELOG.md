@@ -4,6 +4,100 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.112.0] - 2026-07-14
+
+### Theme — "MCP transport hardening: Origin header validation (DNS-rebinding mitigation)"
+
+Continuing the improvement loop, a fan-out audit (four independent sweeps —
+MCP spec conformance, deferred-roadmap re-verification, intent-vs-
+implementation gap hunting, and self-dogfooding the project's own quality
+lenses — each adversarially re-verified against the actual current code)
+converged on the highest-value confirmed gap: ADR-0004's no-token
+loopback-trust mode never validated the `Origin` header, leaving the
+daemon exposed to the classic DNS-rebinding / browser-to-localhost attack —
+a hostile web page open in the operator's own browser can silently `fetch()`
+`127.0.0.1:8090/mcp` and drive `tools/call` against every tool Yagura
+exposes. Same-origin policy stops the page from *reading* the response, but
+nothing stopped the *request* from executing server-side. ADR-0004 and
+`docs/security-spec.md`'s STRIDE table asserted loopback-bind-implies-safe
+as an invariant with no corresponding runtime check — the same
+intent-vs-implementation class of finding this project keeps turning up
+(the fake `/hooks` auth doc in v0.105.0, the unimplemented cross-tool-
+shadowing claim in v0.110.0, the hardcoded fake handshake version in
+v0.111.0).
+
+#### Fixed
+
+- **Origin header allow-list, applied uniformly to the whole HTTP surface.**
+  New `originAllowed(origin string) bool` (`cmd/yagura/security_headers.go`):
+  an absent `Origin` (every non-browser MCP client — CLI, SDKs, curl — never
+  sends it) is allowed; a present `Origin` is allowed only if its host is
+  loopback (`localhost`/`127.0.0.1`/`::1`); anything else — including the
+  `"null"` origin of a sandboxed iframe or `data:` URL — is rejected. New
+  `restrictOrigin` middleware enforces this and is composed *inside* the
+  existing `withSecurityHeaders` seam
+  (`withSecurityHeaders(restrictOrigin(mux))`, `cmd/yagura/main.go`), so it
+  protects every route this daemon serves — dashboard, `/mcp`, `/hooks/*`,
+  the HTTP API, `/metrics` — through one seam rather than a fix scoped to
+  `/mcp` alone. Scoping it to only `/mcp` would have repeated the exact
+  narrow-fix mistake this project already corrected once for panic recovery
+  (v0.107.0 → v0.109.0). Applies regardless of whether `YAGURA_MCP_TOKEN` is
+  configured — it's a transport-level gate, not a credential check.
+- New `docs/adr/0007-origin-header-validation.md` records the decision and
+  alternatives considered (Unix domain socket transport — stronger but
+  deferred per ADR-0004; requiring a token even on loopback — rejected as
+  reversing ADR-0004's zero-config default).
+- `docs/security-spec.md`: new STRIDE row T13 (DNS rebinding / browser-to-
+  localhost) and a new Tier 4 control entry.
+
+9 new TDD tests (`cmd/yagura/security_headers_test.go`): table-driven
+`originAllowed` coverage (absent/loopback/foreign/`"null"` origins),
+`restrictOrigin` middleware behavior, and a composition test proving a
+rejected (403) response still carries the same security-header baseline as
+every other response.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — all packages green, 9 new tests + zero
+  regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l` clean on touched files
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001,
+  `net/url` is stdlib)
+- Live-daemon dogfood via `curl -H "Origin: https://evil.example"` against
+  `/mcp` confirmed 403; the same request with no `Origin` header, and with
+  `Origin: http://127.0.0.1:<port>`, both succeeded as before
+
+#### Counts
+
+- MCP tools: 101 (unchanged — this is a transport-level HTTP concern, not a
+  tool)
+- Internal packages: 86 (unchanged — `cmd/yagura` is not an internal
+  package)
+- Consecutive reproducible releases: 107 → **108** (v0.6 → v0.112.0)
+
+#### What's not yet
+
+- **Unix domain socket transport** — would eliminate browser-reachability
+  entirely (browsers cannot open Unix sockets) rather than filtering it;
+  considered in ADR-0004 and still deferred because it complicates the
+  dashboard's HTTP browser client. Origin validation is the pragmatic
+  interim control within the existing TCP-loopback transport.
+- Per-tool `outputSchema` declarations, ToolAnnotations
+  (readOnlyHint/destructiveHint/idempotentHint), MCP Resources capability,
+  and `tools/list` pagination were all identified by this round's discovery
+  sweep as genuine, still-open MCP spec-conformance gaps — strong
+  candidates for a future release, but this release's scope was kept to the
+  single highest-value security finding.
+- Homoglyph/confusable detection (zero-dep blocked, carried since v0.110.0)
+  and dashboard dark-mode theming remain open.
+
+#### Sources
+
+- MCP specification, 2025-06-18 revision (modelcontextprotocol.io)
+- DNS rebinding / browser-to-localhost attack pattern (well-established web
+  security literature; the same class of finding OWASP and multiple
+  localhost-server CVEs have flagged for other loopback-bound dev tools)
+
 ## [v0.111.0] - 2026-07-13
 
 ### Theme — "MCP protocol conformance & honesty pass: structuredContent + real serverInfo.version + current protocolVersion"

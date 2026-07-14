@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.111.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **MCP protocol conformance pass:** `tools/call` responses now carry the MCP 2025-06-18 `structuredContent` field alongside the back-compat text block, and the `initialize` handshake reports the real running version and current protocol instead of stale hardcoded values (`"0.1.0"` / `"2024-11-05"`). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.112.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **MCP transport hardening:** an Origin header allow-list now guards every route (dashboard, `/mcp`, `/hooks/*`, HTTP API, `/metrics`) against DNS-rebinding / browser-to-localhost attacks in the no-token loopback-trust mode ([ADR-0007](docs/adr/0007-origin-header-validation.md)) — absent or loopback `Origin` is allowed, anything else is rejected with 403. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-107 consecutive releases (v0.6 → v0.111.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+108 consecutive releases (v0.6 → v0.112.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
@@ -317,6 +317,7 @@ Self-check: `yagura_harness_coverage` reports this matrix at runtime.
 - Bearer-token auth is constant-time-compared to prevent timing leaks.
 - Audit log is hash-chained (each entry includes SHA-256 of the previous).
 - Bound to `127.0.0.1` by default; binding a public interface without `YAGURA_AUTH_TOKEN` is refused at startup.
+- Origin header allow-list on every route (loopback or absent `Origin` only) mitigates DNS-rebinding / browser-to-localhost attacks against the no-token loopback mode ([ADR-0007](docs/adr/0007-origin-header-validation.md)).
 - Threat model: [docs/security-spec.md](docs/security-spec.md).
 - Report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
 

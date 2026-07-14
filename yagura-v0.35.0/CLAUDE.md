@@ -444,6 +444,19 @@ cortex flywheel 4 段階すべてを単体で機械化:
   `go xxx.Start(ctx)` のように委譲している他パッケージの内部 goroutine も
   必ず洗うこと。
 
+### Origin header を全 route で検証する(v0.112.0〜、DNS rebinding 対策)
+- ADR-0004 の「無 token + loopback bind」時の安全性は「同一マシンの非ブラウザ
+  プロセスしか叩けない」という前提だったが、ブラウザの JS は same-origin policy に
+  阻まれず loopback へ *送信* できる(レスポンスを *読む* ことだけ阻まれる)——
+  操作系ツールへの `tools/call` は response を読めなくても実行されてしまう
+  DNS-rebinding / browser-to-localhost 攻撃が可能だった(ADR-0007)。
+  `cmd/yagura/security_headers.go` の `originAllowed`/`restrictOrigin` が
+  `Origin` header 無し(非ブラウザ client)/ loopback host のみ許可し、それ以外
+  (`"null"` 含む)を 403 で拒否する。`withSecurityHeaders(restrictOrigin(mux))`
+  (`cmd/yagura/main.go`)という単一 seam で dashboard/`/mcp`/`/hooks/*`/HTTP API/
+  `/metrics` 全 route に一律適用——auth+body 上限ルール(v0.105.0〜)と同じく、
+  新しい write endpoint を足す際にこの単一 seam の *外側* に置いてはいけない。
+
 ### MCP tools/call レスポンスは structuredContent を持つ、handshake は正直(v0.111.0〜)
 - `internal/mcp/server.go` の `handleToolsCall` は tool の返り値が JSON object に
   marshal される場合(`{`で始まる場合)、従来の `content:[{type:"text",text:<JSON文字列>}]`
