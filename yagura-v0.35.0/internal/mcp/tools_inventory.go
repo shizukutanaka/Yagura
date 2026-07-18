@@ -37,7 +37,9 @@ type todayItem = today.Item
 
 func buildListTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_list",
+		Name:        "yagura_list",
+		Title:       "List Projects",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] List projects (compact). Optional limit caps rows.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -109,7 +111,9 @@ func parseLimitArg(args json.RawMessage) (int, error) {
 
 func buildGetTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_get",
+		Name:        "yagura_get",
+		Title:       "Get Project",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Get project by slug.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -142,7 +146,9 @@ func buildGetTool(d Deps) *Tool {
 
 func buildSearchTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_search",
+		Name:        "yagura_search",
+		Title:       "Search Projects",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Search projects: tag/lang/stage/text (AND).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -203,7 +209,9 @@ func buildSearchTool(d Deps) *Tool {
 
 func buildTodayTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_today",
+		Name:        "yagura_today",
+		Title:       "Top Projects Today",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Top projects today by score.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -243,7 +251,9 @@ func buildTodayTool(d Deps) *Tool {
 
 func buildRegisterTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_register",
+		Name:        "yagura_register",
+		Title:       "Register Project",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Register project.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -315,7 +325,9 @@ func buildRegisterTool(d Deps) *Tool {
 
 func buildUnregisterTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_unregister",
+		Name:        "yagura_unregister",
+		Title:       "Unregister Project",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Unregister project (hard delete).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -381,7 +393,9 @@ func applyUpdatePriority(cur *project.Project, priority *int) *ToolError {
 
 func buildUpdateTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_update",
+		Name:        "yagura_update",
+		Title:       "Update Project",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Update project manual fields. Omit field = unchanged.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -482,7 +496,9 @@ func applyUpdateFields(cur *project.Project, in updateFields) *ToolError {
 
 func buildStatsTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_stats",
+		Name:        "yagura_stats",
+		Title:       "Portfolio Stats",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Portfolio counts/totals/averages.",
 		InputSchema: map[string]any{
 			"type":       "object",

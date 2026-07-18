@@ -28,8 +28,8 @@ import (
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/globalcheck"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
-	"github.com/shizukutanaka/yagura/internal/lensoverlap"
 	"github.com/shizukutanaka/yagura/internal/ifacebloat"
+	"github.com/shizukutanaka/yagura/internal/lensoverlap"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/nestdepth"
@@ -56,6 +56,8 @@ import (
 func buildQualityCheckTool(d Deps, cache qualitycheck.CacheLike) *Tool {
 	return &Tool{
 		Name:        "yagura_quality_check",
+		Title:       "Check Code Quality",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Code lint: as any, ts-ignore, TODO. 3 severity tiers.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -161,6 +163,8 @@ func qualityResultBase(res qualitycheck.Result) map[string]any {
 func buildAIVerifyTool(d Deps, cache aiverify.CacheLike) *Tool {
 	return &Tool{
 		Name:        "yagura_ai_verify",
+		Title:       "AI Code Risk Audit",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] AI code risk audit. 6 categories: auth/billing/data/external/crypto/secret. 2x multiplier inside AI-marker zones.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -324,6 +328,8 @@ func aiVerifyResultBase(res aiverify.Result) map[string]any {
 func buildTestAuditTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_test_audit",
+		Title:       "Audit Test Coverage",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Source-test coverage detection. Go/TS/JS/Python/Rust/Java filename + Rust inline #[cfg(test)] + Python doctest.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -374,6 +380,8 @@ func buildTestAuditTool(d Deps) *Tool {
 func buildAssertCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_assert_check",
+		Title:       "Test Assertion Density",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Test assertion density analysis. Detects hollow test files (zero assertions), reports avg density per test function.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -418,6 +426,8 @@ func buildAssertCheckTool(d Deps) *Tool {
 func buildErrPolicyTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_err_policy",
+		Title:       "Error Handling Policy Check",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Error-context discipline (Go). Wrap ratio (fmt.Errorf %w vs naked return err) + blank-discard (`_ = call()`) detection.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -461,6 +471,8 @@ func buildErrPolicyTool(d Deps) *Tool {
 func buildComplexityTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_complexity",
+		Title:       "Cyclomatic Complexity Check",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Cyclomatic complexity (Go, gocyclo-compatible). Per-function McCabe score; flags functions over threshold (default 10).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -511,6 +523,8 @@ func buildComplexityTool(d Deps) *Tool {
 func buildParamCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_param_check",
+		Title:       "Check Parameter Count",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Long-parameter-list smell (Go, Fowler). Per-function param count; flags functions over threshold (default 5).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -561,6 +575,8 @@ func buildParamCheckTool(d Deps) *Tool {
 func buildFlagArgTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_flag_arg",
+		Title:       "Flag Argument Smell Check",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Boolean flag-argument smell (Go, Fowler). Detects functions with bool parameters that encode hidden control-flow branches. A bool arg that selects behavior ('if verbose', 'if dryRun') is opaque at call sites; consider splitting into two clearly named functions.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -610,6 +626,8 @@ func buildFlagArgTool(d Deps) *Tool {
 func buildReturnCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_return_check",
+		Title:       "Check Return Count",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Many-return-values smell (Go). Counts return values per function; flags functions over threshold (default 3). Complements param_check (input width) with output width — together they form a complete function-signature profile.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -659,6 +677,8 @@ func buildReturnCheckTool(d Deps) *Tool {
 func buildCouplingTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_coupling",
+		Title:       "Package Coupling Analysis",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Package import coupling (Go). Fan-in/out + instability (Ce/(Ca+Ce)) + Stable Dependencies Principle violations.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -712,6 +732,8 @@ func buildCouplingTool(d Deps) *Tool {
 func buildAPIDocTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_api_doc",
+		Title:       "API Documentation Check",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Exported-API doc discipline (Go). Documented ratio + undocumented exported funcs/types/consts/vars/methods.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -755,6 +777,8 @@ func buildAPIDocTool(d Deps) *Tool {
 func buildDeadCodeTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_dead_code",
+		Title:       "Dead Code Detection",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Dead unexported declarations (Go). Package-level funcs/types/consts/vars never referenced within their package.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -797,6 +821,8 @@ func buildDeadCodeTool(d Deps) *Tool {
 func buildRecvCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_recv_check",
+		Title:       "Check Receiver Consistency",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Method receiver consistency (Go). Inconsistent receiver names, mixed value/pointer receivers, un-idiomatic names (this/self).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -837,6 +863,8 @@ func buildRecvCheckTool(d Deps) *Tool {
 func buildCodeHealthTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_code_health",
+		Title:       "Composite Code Health Grade",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Composite maintainability grade (Go). Per-package A-F from complexity/apidoc/deadcode/recvcheck/assertcheck/astcheck.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -871,6 +899,8 @@ func buildCodeHealthTool(d Deps) *Tool {
 func buildASTCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_ast_check",
+		Title:       "AST Structural Audit",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Go AST structural audit. os.Exit in library, empty != nil branch, defer in loop, err-string compare, parse errors.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -912,6 +942,8 @@ func buildASTCheckTool(d Deps) *Tool {
 func buildErrDiscardTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_err_discard",
+		Title:       "Error Discard Detection",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Error-discard smell: call sites where a returned error is silently ignored",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -957,6 +989,8 @@ func buildErrDiscardTool(d Deps) *Tool {
 func buildDepRankTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_dep_rank",
+		Title:       "Package Dependency Rank",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Package dependency rank: internal packages by import in-degree (blast radius when changed)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1000,6 +1034,8 @@ func buildDepRankTool(d Deps) *Tool {
 func buildHotspotTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_hotspot",
+		Title:       "Detect Quality Hotspots",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Convergent-signal hotspots: functions flagged by 2+ of 12 independent lenses (complexity, params, returns, cognit, nestdepth, and more)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1035,6 +1071,8 @@ func buildHotspotTool(d Deps) *Tool {
 func buildLensOverlapTool(_ Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_lens_overlap",
+		Title:       "Lens Overlap Analysis",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Meta: Jaccard overlap between hotspot's 12 lenses — high overlap flags consolidation candidates, near-zero confirms orthogonal axes",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1065,6 +1103,8 @@ func buildLensOverlapTool(_ Deps) *Tool {
 func buildNameCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_name_check",
+		Title:       "Check Name Consistency",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Name↔signature consistency: predicates (is/has) must return bool, getters/constructors must return a value",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1095,6 +1135,8 @@ func buildNameCheckTool(d Deps) *Tool {
 func buildCtxCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_ctx_check",
+		Title:       "Context Argument Discipline",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] context.Context discipline: must be first param (not in struct fields). Go convention (containedctx-style)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1125,6 +1167,8 @@ func buildCtxCheckTool(d Deps) *Tool {
 func buildErrWrapTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_err_wrap",
+		Title:       "Error Wrapping Discipline",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Error-wrapping discipline (Go 1.13): %w not %v, errors.Is over ==, errors.As over type assert (errorlint-style)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1155,6 +1199,8 @@ func buildErrWrapTool(d Deps) *Tool {
 func buildSyncCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_sync_check",
+		Title:       "Check Sync Lock Copies",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex/RWMutex/etc (copylocks-style)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1185,6 +1231,8 @@ func buildSyncCheckTool(d Deps) *Tool {
 func buildNakedRetTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_naked_ret",
+		Title:       "Check Naked Returns",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Naked-return readability: naked `return` in long named-result functions (nakedret-style, default >30 lines)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1220,6 +1268,8 @@ func buildNakedRetTool(d Deps) *Tool {
 func buildPredeclaredTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_predeclared",
+		Title:       "Check Predeclared Shadowing",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Predeclared-identifier shadowing: vars/params/types/funcs that shadow Go builtins (predeclared-style)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1256,6 +1306,8 @@ func buildPredeclaredTool(d Deps) *Tool {
 func buildCalibrateTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_calibrate",
+		Title:       "Threshold Calibration",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Threshold calibration: percentile distributions of complexity/params/returns/func-lines to set data-driven --max gates",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1286,6 +1338,8 @@ func buildCalibrateTool(d Deps) *Tool {
 func buildRegressTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_regress",
+		Title:       "Detect Quality Regressions",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Quality ratchet: compare old vs new code and report functions whose complexity/params/returns/lines regressed",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1329,6 +1383,8 @@ func buildRegressTool(d Deps) *Tool {
 func buildNestDepthTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_nest_depth",
+		Title:       "Check Nesting Depth",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Max control-flow nesting depth per function (the pyramid-of-doom signal complexity misses; guard-clause discipline)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1364,6 +1420,8 @@ func buildNestDepthTool(d Deps) *Tool {
 func buildGlobalCheckTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_global_check",
+		Title:       "Mutable Global State Check",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Mutable global state: package-level vars actually mutated somewhere (testability + data-race hazard; gochecknoglobals-style)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1394,6 +1452,8 @@ func buildGlobalCheckTool(d Deps) *Tool {
 func buildTypeAssertTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_type_assert",
+		Title:       "Check Type Assertions",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Panic-safety: single-value type assertions x.(T) that panic on mismatch (use comma-ok; forcetypeassert-style)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1424,6 +1484,8 @@ func buildTypeAssertTool(d Deps) *Tool {
 func buildCognitTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_cognit",
+		Title:       "Cognitive Complexity Check",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Cognitive complexity per function (human reading cost; nesting-weighted, switch=1; gocognit-style — complements McCabe)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1459,6 +1521,8 @@ func buildCognitTool(d Deps) *Tool {
 func buildPreallocTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_prealloc",
+		Title:       "Check Slice Preallocation",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Performance: slices grown by append in a range loop without preallocation (make([]T,0,len); prealloc-style)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1489,6 +1553,8 @@ func buildPreallocTool(d Deps) *Tool {
 func buildIfaceBloatTool(_ Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_ifacebloat",
+		Title:       "Check Interface Bloat",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Interface design: named interfaces with too many methods (Rob Pike \"bigger interface = weaker abstraction\"; interfacebloat-style)",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -1524,6 +1590,8 @@ func buildIfaceBloatTool(_ Deps) *Tool {
 func buildThelperTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_thelper",
+		Title:       "Check Test Helpers",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Test quality: test helpers (take *testing.T/B/TB) that never call t.Helper() (failures point at the helper; thelper-style)",
 		InputSchema: map[string]any{
 			"type": "object",

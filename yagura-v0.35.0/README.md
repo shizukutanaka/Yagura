@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.112.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **MCP transport hardening:** an Origin header allow-list now guards every route (dashboard, `/mcp`, `/hooks/*`, HTTP API, `/metrics`) against DNS-rebinding / browser-to-localhost attacks in the no-token loopback-trust mode ([ADR-0007](docs/adr/0007-origin-header-validation.md)) — absent or loopback `Origin` is allowed, anything else is rejected with 403. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.113.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **MCP metadata conformance:** every tool now advertises verified MCP 2025-06-18 `ToolAnnotations` (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) and a display `title` on the wire — each hint derived by reading the tool's actual handler and adversarially re-verified, so hosts can make auto-approval / confirmation-dialog decisions from typed booleans instead of parsing descriptions. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-108 consecutive releases (v0.6 → v0.112.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+109 consecutive releases (v0.6 → v0.113.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

@@ -80,6 +80,8 @@ func filterVulnsBySeverity(vulns []osv.Vuln, minSeverity string) ([]osv.Vuln, *T
 func buildVulnsTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_vulns",
+		Title:       "Query Package Vulnerabilities",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
 		Description: "[S] OSV.dev vulns by CVSS desc.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -185,6 +187,8 @@ func filterPriorityChecks(checks []scorecard.Check) []scorecard.Check {
 func buildScorecardTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_scorecard",
+		Title:       "Fetch OpenSSF Scorecard",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
 		Description: "[S] OpenSSF Scorecard fetch. priority_only=top 7 checks.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -247,6 +251,8 @@ func buildScorecardTool(d Deps) *Tool {
 func buildHealthTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_health",
+		Title:       "Security Health Summary",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Security summary: vuln + Scorecard issues. Cached.",
 		InputSchema: map[string]any{
 			"type": "object",

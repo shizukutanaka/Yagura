@@ -28,6 +28,8 @@ import (
 func buildAgentsMdTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_agents_md",
+		Title:       "Generate Agent Guide",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Generate AGENTS.md for a registered project from Plan.md + registry facts. Cross-tool: Claude Code / Codex / Cursor.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -98,7 +100,7 @@ func buildAgentsMdTool(d Deps) *Tool {
 
 // enrichFactsFromPlan は Plan.md 本文から phases / description / scope / DoD を
 // 抽出して facts に詰める。plantracker は全 ## を Phase とみなすので、真の Phase
-//("Phase"/"フェーズ" header)配下のみを phases に採用する。
+// ("Phase"/"フェーズ" header)配下のみを phases に採用する。
 func enrichFactsFromPlan(facts *agentmd.ProjectFacts, content string) {
 	state := plantracker.Parse(content)
 	for _, ph := range state.Phases {
@@ -116,6 +118,8 @@ func enrichFactsFromPlan(facts *agentmd.ProjectFacts, content string) {
 func buildFeatureListTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_feature_list",
+		Title:       "Generate Feature List",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Convert Plan.md into Anthropic-style feature-list.json for long-running agent harnesses.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -181,6 +185,8 @@ func buildFeatureListTool(d Deps) *Tool {
 func buildHarnessCoverageTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_harness_coverage",
+		Title:       "Harness Coverage Report",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Self-audit: which Fowler taxonomy quadrants does yagura cover? Returns guides/sensors × computational/inferential matrix.",
 		InputSchema: map[string]any{
 			"type":       "object",
@@ -233,7 +239,6 @@ func buildHarnessCoverageTool(d Deps) *Tool {
 		},
 	}
 }
-
 
 // extractSection は Plan.md の本文から `## <header>` 直下の段落(空行か次の
 // ## まで)を抜き出す。複数候補があれば最初に見つかった方を返す。

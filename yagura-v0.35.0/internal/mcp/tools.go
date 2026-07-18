@@ -286,6 +286,8 @@ func RegisterDefaultTools(s *Server, d Deps) {
 func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
 	return &Tool{
 		Name:        "yagura_token_stats",
+		Title:       "Token Usage Stats",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Per-tool byte counts since daemon start.",
 		InputSchema: map[string]any{
 			"type":       "object",
@@ -323,6 +325,8 @@ func buildTokenStatsTool(getStats func() []ToolStats) *Tool {
 func buildHarnessRecommendTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_harness_recommend",
+		Title:       "Recommend Harness Scaffold",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Claude Code .claude/ scaffold by slug or language.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -358,6 +362,8 @@ func buildHarnessRecommendTool(d Deps) *Tool {
 func buildSkillAuditTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_skill_audit",
+		Title:       "Audit Skill File",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] SKILL.md audit: trigger, Gotchas, length. 0-100 score + retire signal.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -384,6 +390,8 @@ func buildSkillAuditTool(d Deps) *Tool {
 func buildSubagentAuditTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_subagent_audit",
+		Title:       "Audit Subagent File",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Subagent .md audit: prompt style, tools, description.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -415,6 +423,8 @@ func buildSubagentAuditTool(d Deps) *Tool {
 func buildToolsCatalogTool(s *Server) *Tool {
 	return &Tool{
 		Name:        "yagura_tools_catalog",
+		Title:       "Tool Catalog Lookup",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Full tool details lookup. Use when compact mode hides info you need.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -478,6 +488,8 @@ func buildToolsCatalogTool(s *Server) *Tool {
 func buildDedupeStatsTool(s *Server) *Tool {
 	return &Tool{
 		Name:        "yagura_dedupe_stats",
+		Title:       "Dedupe Cache Stats",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.",
 		InputSchema: map[string]any{
 			"type":       "object",

@@ -25,6 +25,8 @@ import (
 func buildSecretScanTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_secretscan",
+		Title:       "Scan Project Secrets",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Secret scan: 14 patterns + entropy. Redacts hits.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -218,6 +220,8 @@ type SbomGenerator interface {
 func buildSbomTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_sbom",
+		Title:       "Generate SBOM",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] yagura SBOM CycloneDX 1.5. Set summary_only for compact.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -266,6 +270,8 @@ type GhaAuditor interface {
 func buildGhaAuditTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_gha_audit",
+		Title:       "Audit GitHub Actions Workflows",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] GHA workflow audit: 12 supply-chain risk patterns.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -320,6 +326,8 @@ type PinDriftChecker interface {
 func buildPinDriftTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_pin_drift",
+		Title:       "Check SHA Pin Drift",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
 		Description: "[G] GHA SHA pin verify via API. Detects drift/stale.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -387,4 +395,3 @@ func buildPinDriftTool(d Deps) *Tool {
 		},
 	}
 }
-

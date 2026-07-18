@@ -25,6 +25,8 @@ import (
 func buildSelfImproveTool(d Deps, getStats func() []ToolStats, emit func(audit.Record)) *Tool {
 	return &Tool{
 		Name:        "yagura_self_improve",
+		Title:       "Self Improvement Proposals",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: false},
 		Description: "[S] Turn harness self-metrics into ranked, gated improvement proposals (RSI, deterministic). Omit 'tools' to self-collect live stats; set record=true to append the assessment to the audit trail.",
 		InputSchema: map[string]any{
 			"type": "object",

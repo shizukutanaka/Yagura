@@ -4,6 +4,93 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.113.0] - 2026-07-17
+
+### Theme — "MCP ToolAnnotations + Title — verified behavioral hints for all 101 tools"
+
+The v0.112.0 discovery sweep flagged missing MCP 2025-06-18 `ToolAnnotations`
+(`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`) and
+`Tool.title` as a runner-up spec-conformance gap: the project's own `[G]`/`[S]`
+(Guide/Sensor) taxonomy lived only as an ad-hoc text prefix in every
+description, never reaching clients as the typed metadata MCP hosts consume
+for auto-approval and confirmation-dialog decisions. The synthesis
+deliberately deferred it because classifying ~101 tools *honestly* — not just
+copy-pasting the `[G]`/`[S]` prefix — was the hard part.
+
+This release does the honest version. Every tool's actual `Handler` body was
+read to derive its four hints (not guessed from the description), and the
+classification was adversarially re-verified per tool. That verification
+caught 5 first-pass corrections where a surface reading would have shipped a
+wrong hint — most notably `yagura_update` and `yagura_handoff`, first marked
+non-destructive, then corrected to `destructiveHint: true` because each
+overwrites the sole copy of its target (registry fields / `handoff.json`)
+with no diff, history, or backup, making the overwrite irrecoverable.
+
+#### Added
+
+- **`ToolAnnotations` struct + `Tool.Title`/`Tool.Annotations` fields**
+  (`internal/mcp/server.go`), threaded into the `tools/list` response for
+  every tool. `title` and `annotations` ship in **both** normal and compact
+  (`YAGURA_MCP_COMPACT=1`) modes — they are small structured fields clients
+  rely on regardless, unlike the verbose description/schema detail compact
+  mode strips.
+- **All 101 default-registered tools now declare a verified `Title` and
+  `ToolAnnotations`.** 94 are direct tool literals (populated per the verified
+  table); the 7 content-audit tools share one `contentAuditAnnotations` value
+  through their common `contentAuditTool` factory (all read-only, non-
+  destructive, idempotent, closed-world). Notable non-default classifications:
+  - **Open-world** (`openWorldHint: true`, 4 tools): `yagura_vulns`,
+    `yagura_scorecard`, `yagura_pin_drift` (external OSV/Scorecard/GitHub
+    APIs) and `yagura_handoff` (spawns an external agent subprocess via
+    `os/exec`).
+  - **Destructive** (8 tools): `yagura_unregister`, `yagura_update`,
+    `yagura_handoff`, `yagura_session_save`, and the file-overwriting
+    generators `yagura_agents_md` / `yagura_feature_list` / `yagura_init_sh` /
+    `yagura_progress_file` (each can clobber a hand-edited target file when
+    `write: true`).
+  - **Non-read-only / non-idempotent**: `yagura_self_improve`
+    (`record: true` appends to the audit log; each call grows the trail).
+
+A completeness guard test (`TestAllRegisteredTools_HaveAnnotationsAndTitle`)
+fails if any future tool ships without both fields, so this can't silently
+regress. 4 new TDD tests total in `internal/mcp/toolannotations_test.go`.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — all packages green, 4 new tests + zero
+  regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l` clean on touched files
+- A source-vs-table cross-check confirmed all 101 emitted classifications
+  match the verified table exactly (94 literal + 7 factory, zero mismatches)
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001 — no new
+  deps)
+- Live-daemon dogfood: `tools/list` returns `annotations` + `title` for every
+  tool; `yagura_list` (read-only) and `yagura_unregister` (destructive) match
+  the table, and compact mode still includes both fields.
+
+#### Counts
+
+- MCP tools: 101 (unchanged — existing tools gain metadata, no new tool)
+- Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 108 → **109** (v0.6 → v0.113.0)
+
+#### What's not yet
+
+- **Per-tool `outputSchema`** — the other v0.112.0-flagged runner-up; the
+  `Tool` struct still has no `OutputSchema` field. `structuredContent`
+  (v0.111.0) already delivers typed output; declared schemas would let clients
+  validate shape before calling. Candidate for a future release.
+- MCP **Resources** capability and `tools/list` **pagination** — both
+  identified by the same v0.112.0 discovery sweep, still open.
+- Homoglyph/confusable detection (zero-dep blocked) and dashboard dark-mode
+  theming remain open.
+
+#### Sources
+
+- MCP specification, 2025-06-18 revision — `ToolAnnotations` (`readOnlyHint` /
+  `destructiveHint` / `idempotentHint` / `openWorldHint`) and `title`
+  BaseMetadata (modelcontextprotocol.io)
+
 ## [v0.112.0] - 2026-07-14
 
 ### Theme — "MCP transport hardening: Origin header validation (DNS-rebinding mitigation)"

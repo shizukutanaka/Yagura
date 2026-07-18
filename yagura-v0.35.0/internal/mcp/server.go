@@ -36,12 +36,28 @@ const (
 // args は tool が期待する形に json.Unmarshal 済みの状態で来る(generic で受ける形にしないのは zero-dep 維持のため)。
 type HandlerCtx func(ctx context.Context, args json.RawMessage) (result any, err error)
 
+// ToolAnnotations carries the MCP 2025-06-18 behavioral hints so clients can
+// make UX decisions (auto-approval, confirmation dialogs, read-only badges)
+// from typed booleans instead of parsing the free-text description or the
+// ad-hoc [G]/[S] prefix. Every default-registered tool declares all four
+// fields explicitly — their values were derived by reading each tool's actual
+// Handler body, not guessed from the description — so the struct is emitted as
+// a plain object with no omitempty.
+type ToolAnnotations struct {
+	ReadOnlyHint    bool `json:"readOnlyHint"`
+	DestructiveHint bool `json:"destructiveHint"`
+	IdempotentHint  bool `json:"idempotentHint"`
+	OpenWorldHint   bool `json:"openWorldHint"`
+}
+
 // Tool は MCP に公開する単一の tool 定義。
 type Tool struct {
-	Name        string     // "yagura_list" 等
-	Description string     // Claude 等の LLM が tool 選択時に読む説明
-	InputSchema any        // JSON Schema (object literal 想定)
-	Handler     HandlerCtx // 実装
+	Name        string           // "yagura_list" 等
+	Title       string           // v0.113.0: 人間可読な表示名(MCP 2025-06-18 BaseMetadata)。空なら未宣言。
+	Description string           // Claude 等の LLM が tool 選択時に読む説明
+	InputSchema any              // JSON Schema (object literal 想定)
+	Annotations *ToolAnnotations // v0.113.0: 振る舞いヒント。nil = 未宣言(ad-hoc/test tool)。
+	Handler     HandlerCtx       // 実装
 }
 
 // Server は MCP HTTP server。Mihari と同様のパターン:
@@ -337,6 +353,16 @@ func (s *Server) handleToolsList(w http.ResponseWriter, id json.RawMessage) {
 	list := make([]map[string]any, 0, len(ordered))
 	for _, t := range ordered {
 		entry := map[string]any{"name": t.Name}
+		// v0.113.0: title + annotations are small structured fields (not the
+		// verbose description/schema detail compact mode strips), so they ship
+		// in both modes — clients rely on them for auto-approval / read-only
+		// badges regardless of compact mode.
+		if t.Title != "" {
+			entry["title"] = t.Title
+		}
+		if t.Annotations != nil {
+			entry["annotations"] = t.Annotations
+		}
 		if compact {
 			entry["description"] = compactDescription(t.Description)
 			if s, ok := t.InputSchema.(map[string]any); ok {

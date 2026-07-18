@@ -444,6 +444,20 @@ cortex flywheel 4 段階すべてを単体で機械化:
   `go xxx.Start(ctx)` のように委譲している他パッケージの内部 goroutine も
   必ず洗うこと。
 
+### 全 tool は検証済み ToolAnnotations + Title を宣言する(v0.113.0〜)
+- `internal/mcp/server.go` の `Tool` は `Title`(表示名)と `Annotations`
+  (`*ToolAnnotations`: readOnlyHint/destructiveHint/idempotentHint/openWorldHint、
+  MCP 2025-06-18)を持ち、`handleToolsList` が両方を `tools/list` に載せる
+  (compact mode でも落とさない——client の auto-approval/確認ダイアログ判断に必要な
+  小さな構造化フィールドだから)。101 tool 全てが宣言済みで、値は各 Handler の
+  実体を読んで導出・敵対的に再検証した(description の `[G]`/`[S]` prefix から推測して
+  いない)。`yagura_update`/`yagura_handoff` は「上書きが履歴なしで不可逆」ゆえ
+  destructive=true、`yagura_handoff`/`yagura_vulns`/`yagura_scorecard`/`yagura_pin_drift`
+  は外部プロセス/API に触れるため open_world=true。
+- **新 tool を足す際は Title と Annotations を必ず設定すること**。
+  `TestAllRegisteredTools_HaveAnnotationsAndTitle`(`internal/mcp/toolannotations_test.go`)が
+  未設定を検出して fail する(panic-recovery 網羅と同じ「静かな退行を防ぐ完全性ガード」)。
+
 ### Origin header を全 route で検証する(v0.112.0〜、DNS rebinding 対策)
 - ADR-0004 の「無 token + loopback bind」時の安全性は「同一マシンの非ブラウザ
   プロセスしか叩けない」という前提だったが、ブラウザの JS は same-origin policy に

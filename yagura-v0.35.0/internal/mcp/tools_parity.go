@@ -26,6 +26,8 @@ import (
 func buildCoverageTool(_ Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_coverage",
+		Title:       "Classify Path Coverage",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Blind-spot meta lens: classifies paths analyzable/uncovered/non-source. Reports both sensor-tier and Go-only AST-lens-tier ratios.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -54,6 +56,8 @@ func buildCoverageTool(_ Deps) *Tool {
 func buildDiffScanTool(_ Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_diff_scan",
+		Title:       "Scan Unified Diff",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Unified-diff delta lens: added lines, removed lines, and removed safety guards (error-check/recover/cleanup).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -86,6 +90,8 @@ func buildDiffScanTool(_ Deps) *Tool {
 func buildFlowRiskTool(_ Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_flow_risk",
+		Title:       "Analyze Flow Risk",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Temporal/flow lens: detects dangerous operation-sequence orderings (secret-read->network, fetch-untrusted->exec/write).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -124,6 +130,8 @@ func buildFlowRiskTool(_ Deps) *Tool {
 func buildCCSecurityTool(_ Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_cc_security",
+		Title:       "Audit Claude Code Security",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] Claude Code project security posture audit. Client supplies gathered facts (gitignore/CLAUDE.md/settings.json contents); server scores deterministically.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -165,6 +173,8 @@ func buildCCSecurityTool(_ Deps) *Tool {
 func buildClaudeMdAuditTool(_ Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_claudemd_audit",
+		Title:       "Audit CLAUDE.md Structure",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[Q] CLAUDE.md structural audit: canonical 4-section coverage, instruction count (Lost in the Middle), issues/suggestions.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -193,6 +203,8 @@ func buildClaudeMdAuditTool(_ Deps) *Tool {
 func buildReviewGateTool(_ Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_review_gate",
+		Title:       "Evaluate Review Gate",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] cortex flywheel Review synthesis: hard signals (secrets/critical AI risk/lint/AST-high) block; else AI-risk threshold gates review vs allow.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -219,6 +231,8 @@ func buildReviewGateTool(_ Deps) *Tool {
 func buildAlertSnapshotTool(store *alertfix.Store) *Tool {
 	return &Tool{
 		Name:        "yagura_alert_snapshot",
+		Title:       "Snapshot Alert States",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Current alert lifecycle states (active/resolved/snoozed) + stats. Optional status filter.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -264,6 +278,8 @@ func buildAlertSnapshotTool(store *alertfix.Store) *Tool {
 func buildSelfImproveHistoryTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_self_improve_history",
+		Title:       "Replay Self-Improve History",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Replay the self_improve audit trail (past RSI assessments). Optional limit to last N.",
 		InputSchema: map[string]any{
 			"type": "object",

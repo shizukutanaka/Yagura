@@ -32,6 +32,8 @@ import (
 func buildHookTimelineTool(srv *Server) *Tool {
 	return &Tool{
 		Name:        "yagura_hook_timeline",
+		Title:       "View Hook Event Timeline",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Recent Claude Code hook events for a project. Use to see what tools agents have invoked recently.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -88,6 +90,8 @@ func buildHookTimelineTool(srv *Server) *Tool {
 func buildHookStatsTool(srv *Server) *Tool {
 	return &Tool{
 		Name:        "yagura_hook_stats",
+		Title:       "View Hook Statistics",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Aggregate Claude Code hook stats per project (event counts, errors, top tools).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -136,6 +140,8 @@ func buildHookStatsTool(srv *Server) *Tool {
 func buildProgressFileTool(d Deps, srv *Server) *Tool {
 	return &Tool{
 		Name:        "yagura_progress_file",
+		Title:       "Generate Progress File",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Generate claude-progress.txt for cross-session handoff (Anthropic 2-agent harness pattern).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -306,6 +312,8 @@ func generateInitScript(target string, p initScriptParams) (initScriptResult, *T
 func buildInitShTool(d Deps) *Tool {
 	return &Tool{
 		Name:        "yagura_init_sh",
+		Title:       "Generate Init Script",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Generate init script (sh or PowerShell) for long-running agent sessions (Anthropic 2-agent harness).",
 		InputSchema: map[string]any{
 			"type": "object",

@@ -26,6 +26,8 @@ import (
 func buildAlertFixTool(d Deps, cache plantracker.CacheLike, store *alertfix.Store) *Tool {
 	return &Tool{
 		Name:        "yagura_alert_fix",
+		Title:       "Aggregate Portfolio Alerts",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Aggregate health signals across portfolio. Returns actionable alerts with suggested_tool + args.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -190,6 +192,8 @@ func filterBySeverity(r alertfix.Report, minSev string) alertfix.Report {
 func buildAlertResolveTool(store *alertfix.Store) *Tool {
 	return &Tool{
 		Name:        "yagura_alert_resolve",
+		Title:       "Manage Alert Lifecycle",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: false},
 		Description: "[G] Manage alert lifecycle: resolve/snooze/reopen. Persists to {state_dir}/alert_state.jsonl.",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -247,4 +251,3 @@ func buildAlertResolveTool(store *alertfix.Store) *Tool {
 		},
 	}
 }
-

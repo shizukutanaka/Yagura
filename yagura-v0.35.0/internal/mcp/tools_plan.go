@@ -27,6 +27,8 @@ import (
 func buildPlanStatusTool(d Deps, cache plantracker.CacheLike) *Tool {
 	return &Tool{
 		Name:        "yagura_plan_status",
+		Title:       "Plan Status",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[G] Plan.md progress for project. Parses checkboxes + required sections (目的/スコープ/フェーズ/DoD).",
 		InputSchema: map[string]any{
 			"type": "object",
@@ -90,6 +92,8 @@ func loadPlanMd(localPath string) (string, string, error) {
 func buildReleaseRadarTool(d Deps, cache plantracker.CacheLike) *Tool {
 	return &Tool{
 		Name:        "yagura_release_radar",
+		Title:       "Release Readiness Ranking",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Cross-project release readiness ranking. Aggregates Plan/CI/issues/quality/AI-risk.",
 		InputSchema: map[string]any{
 			"type": "object",

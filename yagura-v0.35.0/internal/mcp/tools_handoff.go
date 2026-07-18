@@ -31,32 +31,34 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 	"github.com/shizukutanaka/yagura/internal/handoff"
 	"github.com/shizukutanaka/yagura/internal/quotamonitor"
+	"time"
 )
 
 func buildQuotaReportTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_quota_report",
+		Name:        "yagura_quota_report",
+		Title:       "Report Agent Quota",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: false},
 		Description: "[S] Report agent quota. Triggers auto-handoff.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"agent": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"remaining_percent": map[string]any{
-					"type":        "integer",
+					"type": "integer",
 				},
 				"source": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"window_resets_at": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"weekly_resets_at": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 			},
 			"required": []string{"agent", "remaining_percent"},
@@ -93,10 +95,10 @@ func buildQuotaReportTool(d Deps) *Tool {
 			should, target, reason := d.QuotaMonitor.ShouldHandoff(agent)
 			st, _ := d.QuotaMonitor.Status(agent)
 			return map[string]any{
-				"recorded":         st,
-				"should_handoff":   should,
-				"handoff_target":   string(target),
-				"handoff_reason":   reason,
+				"recorded":       st,
+				"should_handoff": should,
+				"handoff_target": string(target),
+				"handoff_reason": reason,
 			}, nil
 		},
 	}
@@ -104,7 +106,9 @@ func buildQuotaReportTool(d Deps) *Tool {
 
 func buildAgentStatusTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_agent_status",
+		Name:        "yagura_agent_status",
+		Title:       "Get Agent Status",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Get both agents' quota state + recommended next agent.",
 		InputSchema: map[string]any{
 			"type":       "object",
@@ -123,8 +127,8 @@ func buildAgentStatusTool(d Deps) *Tool {
 				statuses[string(k)] = v
 			}
 			return map[string]any{
-				"statuses":             statuses,
-				"recommended_agent":    string(recommended),
+				"statuses":              statuses,
+				"recommended_agent":     string(recommended),
 				"recommendation_reason": reason,
 			}, nil
 		},
@@ -133,32 +137,34 @@ func buildAgentStatusTool(d Deps) *Tool {
 
 func buildSessionSaveTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_session_save",
+		Name:        "yagura_session_save",
+		Title:       "Save Handoff Session",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Save handoff context.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"workspace": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"saved_by": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"branch": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"last_commit": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"active_files": map[string]any{
-					"type":        "array",
-					"items":       map[string]any{"type": "string"},
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
 				},
 				"plan_md_step": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"open_todos": map[string]any{
-					"type":        "array",
+					"type": "array",
 					"items": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -170,7 +176,7 @@ func buildSessionSaveTool(d Deps) *Tool {
 					},
 				},
 				"free_notes": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 			},
 			"required": []string{"workspace"},
@@ -191,10 +197,10 @@ func buildSessionSaveTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "save_failed", Message: err.Error()}
 			}
 			return map[string]any{
-				"saved":      true,
-				"path":       d.HandoffStore.Path(),
-				"saved_at":   in.SavedAt,
-				"workspace":  in.Workspace,
+				"saved":     true,
+				"path":      d.HandoffStore.Path(),
+				"saved_at":  in.SavedAt,
+				"workspace": in.Workspace,
 			}, nil
 		},
 	}
@@ -202,7 +208,9 @@ func buildSessionSaveTool(d Deps) *Tool {
 
 func buildSessionLoadTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_session_load",
+		Name:        "yagura_session_load",
+		Title:       "Load Handoff Session",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Load handoff context. Null if none.",
 		InputSchema: map[string]any{
 			"type":       "object",
@@ -233,22 +241,24 @@ func buildSessionLoadTool(d Deps) *Tool {
 
 func buildHandoffTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_handoff",
+		Name:        "yagura_handoff",
+		Title:       "Execute Agent Handoff",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: true},
 		Description: "[S] Handoff: save + mark + launch target. dry_run optional.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"target": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"workspace": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"free_notes": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 				"dry_run": map[string]any{
-					"type":        "boolean",
+					"type": "boolean",
 				},
 			},
 			"required": []string{"target"},
@@ -354,13 +364,15 @@ func launchTargetAgent(ctx context.Context, d Deps, target quotamonitor.Agent, w
 
 func buildHeartbeatTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_heartbeat",
+		Name:        "yagura_heartbeat",
+		Title:       "Record Agent Heartbeat",
+		Annotations: &ToolAnnotations{ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Agent heartbeat (~5min). Detects stale agents.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"agent": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 			},
 			"required": []string{"agent"},
@@ -394,13 +406,15 @@ func buildHeartbeatTool(d Deps) *Tool {
 
 func buildQuotaForecastTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_quota_forecast",
+		Name:        "yagura_quota_forecast",
+		Title:       "Forecast Quota Depletion",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Empty-time linreg forecast. Needs ≥3 samples.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"agent": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 			},
 			"required": []string{"agent"},
@@ -442,13 +456,15 @@ func buildQuotaForecastTool(d Deps) *Tool {
 
 func buildUsageSummaryTool(d Deps) *Tool {
 	return &Tool{
-		Name: "yagura_usage_summary",
+		Name:        "yagura_usage_summary",
+		Title:       "Get Usage Summary",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
 		Description: "[S] Agent usage summary + sparkline. Both agents by default.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"agent": map[string]any{
-					"type":        "string",
+					"type": "string",
 				},
 			},
 		},
