@@ -4,6 +4,80 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.114.0] - 2026-07-18
+
+### Theme — "MCP Resources capability: read-only registry as browsable, cacheable resources"
+
+The v0.112.0 discovery sweep flagged the missing MCP **Resources** capability
+as a genuine gap: Yagura's read-only portfolio state (the registry) was
+reachable only through `tools/call`, the same RPC shape as mutating action
+tools — clients had no way to browse or cache it via the spec's dedicated
+read-only primitive. This release adds Resources, scoped to the registry as a
+cohesive first slice.
+
+#### Added
+
+- **`resources` capability + `resources/list` / `resources/read` handlers**
+  (`internal/mcp/server.go`). New `Resource` / `ResourceContents` types and a
+  `ResourceSource` interface (`ListResources` / `ReadResource`); the capability
+  is advertised in `initialize` **only when a source is wired**
+  (`SetResourceSource`) — honest capability declaration, consistent with this
+  project's intent-vs-implementation discipline. `subscribe` / `listChanged`
+  are unsupported and left as `{}` rather than declaring flags we don't honor.
+- **Registry-backed resource source** (`internal/mcp/resources.go`,
+  `NewRegistryResourceSource`), wired into the daemon (`cmd/yagura/main.go`).
+  Exposes:
+  - `yagura://registry` — snapshot of every project (`count` + `projects`)
+  - `yagura://project/{slug}` — one project's registry facts as JSON
+  `resources/list` enumerates the collection plus one resource per registered
+  project (slug-sorted, deterministic); `resources/read` returns
+  `application/json` text contents. Unknown URIs return JSON-RPC error
+  `-32002` (resource not found), never a panic.
+
+The registry stays the single source of truth: Resources is a read-only view
+over the same data `yagura_list` / `yagura_get` expose, giving clients the
+browse/cache modality without a second data plane. The trust base is
+unchanged — Resources are read-only, no new write path.
+
+6 new TDD tests (`internal/mcp/resources_test.go`): capability presence gated
+on a wired source, collection-plus-per-project listing, project and collection
+reads, and the unknown-URI error path.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — all packages green, 6 new tests + zero
+  regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l` clean on touched files
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001 — only
+  `encoding/json` + registry, no new deps)
+- Live-daemon dogfood: `initialize` advertises `resources: {}` alongside
+  `tools: {}`; after registering a project, `resources/list` returns
+  `yagura://registry` + `yagura://project/breeze`; `resources/read` returns the
+  project JSON; an unknown URI returns error `-32002`.
+
+#### Counts
+
+- MCP tools: 101 (unchanged — Resources is a distinct primitive, not a tool)
+- Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 109 → **110** (v0.6 → v0.114.0)
+
+#### What's not yet
+
+- **Resource templates** (`resourceTemplates` for parameterized URIs) and
+  `resources/subscribe` + `notifications/resources/list_changed` — the current
+  transport is one-shot POST/JSON with no server-initiated messages, so
+  subscribe/list-changed are deferred with the streaming-transport question.
+- Resources for other read-only surfaces (Plan.md, audit log, CHANGELOG) —
+  the registry is the first slice; more can follow the same `ResourceSource`
+  seam.
+- Per-tool `outputSchema` and `tools/list` pagination — the remaining
+  v0.112.0-flagged spec-conformance candidates, still open.
+
+#### Sources
+
+- MCP specification, 2025-06-18 revision — Resources (`resources/list`,
+  `resources/read`, `capabilities.resources`) (modelcontextprotocol.io)
+
 ## [v0.113.0] - 2026-07-17
 
 ### Theme — "MCP ToolAnnotations + Title — verified behavioral hints for all 101 tools"

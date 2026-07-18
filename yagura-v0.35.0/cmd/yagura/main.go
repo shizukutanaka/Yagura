@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "0.113.0"
+	version     = "0.114.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -680,6 +680,10 @@ func run() error {
 		WorkspaceRoot: wsRoot,       // v0.14.0: auto-detected from .git ancestry
 		StateDir:      cfg.StateDir, // v0.102.0: yagura_self_improve_history
 	})
+	// v0.114.0: expose the read-only registry as MCP Resources (yagura://registry
+	// + yagura://project/{slug}) so clients can browse/cache portfolio state via
+	// the Resources primitive, not only tools/call.
+	mcpServer.SetResourceSource(mcp.NewRegistryResourceSource(reg))
 	logger.Info("mcp server initialized",
 		"tools", mcpServer.ToolNames(),
 		"auth", cfg.MCPToken != "")

@@ -444,6 +444,18 @@ cortex flywheel 4 段階すべてを単体で機械化:
   `go xxx.Start(ctx)` のように委譲している他パッケージの内部 goroutine も
   必ず洗うこと。
 
+### registry を MCP Resources として公開する(v0.114.0〜)
+- `internal/mcp/server.go` の `ResourceSource` interface(`ListResources`/`ReadResource`)+
+  `SetResourceSource` で読み取り専用リソースを注入でき、`resources/list`/`resources/read`
+  ハンドラと `initialize` の `resources` capability(**source が注入された時のみ** advertise)
+  を提供する。`internal/mcp/resources.go` の `NewRegistryResourceSource(reg)` が registry を
+  `yagura://registry`(全 project スナップショット)+ `yagura://project/{slug}`(単一 project)
+  として公開し、`cmd/yagura/main.go` が daemon に wire する。tool(yagura_list/yagura_get)と
+  同じデータの read-only ビューであり、trust base は不変(write path を増やさない)。
+- **新しい read-only サーフェスを Resources 化する際は同じ seam を使う**: `ResourceSource` を
+  実装して `SetResourceSource` で注入するだけ。subscribe/listChanged は未対応(one-shot
+  POST transport ゆえ server 発の通知が出せない)——非対応フラグを capability に捏造しないこと。
+
 ### 全 tool は検証済み ToolAnnotations + Title を宣言する(v0.113.0〜)
 - `internal/mcp/server.go` の `Tool` は `Title`(表示名)と `Annotations`
   (`*ToolAnnotations`: readOnlyHint/destructiveHint/idempotentHint/openWorldHint、

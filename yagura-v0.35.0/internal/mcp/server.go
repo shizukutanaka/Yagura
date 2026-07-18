@@ -93,6 +93,43 @@ type Server struct {
 
 	// v0.31.0: Claude Code HTTP hooks receiver
 	hookReceiver *hookreceiver.Receiver
+
+	// v0.114.0: MCP Resources source. nil = resources capability not advertised.
+	resourceSource ResourceSource
+}
+
+// Resource は MCP resources/list が返す 1 エントリのメタデータ(MCP 2025-06-18)。
+type Resource struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MIMEType    string `json:"mimeType,omitempty"`
+}
+
+// ResourceContents は resources/read が返す 1 コンテンツ(text 種のみ対応)。
+type ResourceContents struct {
+	URI      string `json:"uri"`
+	MIMEType string `json:"mimeType,omitempty"`
+	Text     string `json:"text"`
+}
+
+// ResourceSource は読み取り専用リソースの供給元。tool と違い副作用なし・URI 指定で
+// 直接読める MCP の Resources primitive を backing する。registry など動的な集合を
+// 都度列挙できるよう List は呼び出し時評価。
+type ResourceSource interface {
+	// ListResources は現在利用可能な全リソースのメタデータを返す(deterministic order)。
+	ListResources() []Resource
+	// ReadResource は uri のコンテンツを返す。未知 uri は ok=false。
+	ReadResource(uri string) (ResourceContents, bool)
+}
+
+// SetResourceSource はリソース供給元を注入する(v0.114.0)。
+// nil を渡すと resources capability は advertise されなくなる。
+func (s *Server) SetResourceSource(src ResourceSource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resourceSource = src
 }
 
 // ToolStats は単一 tool の累積使用量を表す。
@@ -298,6 +335,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Params  struct {
 			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
+			URI       string          `json:"uri"` // v0.114.0: resources/read
 		} `json:"params"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -310,21 +348,74 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// v0.111.0: 実 daemon version(SetVersion 注入)を返す(以前は "0.1.0"
 		// ハードコードで嘘をついていた)。protocolVersion は structuredContent を
 		// 実装した 2025-06-18 を advertise(以前は 2 年前の 2024-11-05)。
+		caps := map[string]any{"tools": map[string]any{}}
+		// v0.114.0: resources source が注入されている時のみ resources capability を
+		// 宣言する(honesty: 実装が伴う capability だけを advertise)。subscribe /
+		// listChanged は未対応なので {} のまま(非対応フラグを捏造しない)。
+		s.mu.RLock()
+		hasResources := s.resourceSource != nil
+		s.mu.RUnlock()
+		if hasResources {
+			caps["resources"] = map[string]any{}
+		}
 		writeJSONRPCResult(w, req.ID, map[string]any{
 			"protocolVersion": "2025-06-18",
 			"serverInfo": map[string]any{
 				"name":    "yagura",
 				"version": version(),
 			},
-			"capabilities": map[string]any{"tools": map[string]any{}},
+			"capabilities": caps,
 		})
 	case "tools/list":
 		s.handleToolsList(w, req.ID)
 	case "tools/call":
 		s.handleToolsCall(r.Context(), w, req.ID, req.Params.Name, req.Params.Arguments)
+	case "resources/list":
+		s.handleResourcesList(w, req.ID)
+	case "resources/read":
+		s.handleResourcesRead(w, req.ID, req.Params.URI)
 	default:
 		writeJSONRPCError(w, req.ID, -32601, "method not found", nil)
 	}
+}
+
+// handleResourcesList は resources/list を捌く。source 未設定なら method not found
+// (capability を宣言していないので呼ばれない想定だが防御的に返す)。
+func (s *Server) handleResourcesList(w http.ResponseWriter, id json.RawMessage) {
+	s.mu.RLock()
+	src := s.resourceSource
+	s.mu.RUnlock()
+	if src == nil {
+		writeJSONRPCError(w, id, -32601, "resources not supported", nil)
+		return
+	}
+	list := src.ListResources()
+	if list == nil {
+		list = []Resource{}
+	}
+	writeJSONRPCResult(w, id, map[string]any{"resources": list})
+}
+
+// handleResourcesRead は resources/read を捌く。未知 uri は -32002(resource not
+// found、MCP 慣行の resource-specific code)。
+func (s *Server) handleResourcesRead(w http.ResponseWriter, id json.RawMessage, uri string) {
+	s.mu.RLock()
+	src := s.resourceSource
+	s.mu.RUnlock()
+	if src == nil {
+		writeJSONRPCError(w, id, -32601, "resources not supported", nil)
+		return
+	}
+	if uri == "" {
+		writeJSONRPCError(w, id, -32602, "uri is required", nil)
+		return
+	}
+	contents, ok := src.ReadResource(uri)
+	if !ok {
+		writeJSONRPCError(w, id, -32002, "resource not found: "+uri, nil)
+		return
+	}
+	writeJSONRPCResult(w, id, map[string]any{"contents": []ResourceContents{contents}})
 }
 
 // handleToolsList returns the tools/list response, honoring opt-in compact mode.
