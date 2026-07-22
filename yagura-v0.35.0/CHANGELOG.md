@@ -4,6 +4,75 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.115.0] - 2026-07-22
+
+### Theme — "Dashboard light/dark theming — respect prefers-color-scheme"
+
+The HTML dashboard (and its two drilldown pages) was hardcoded GitHub-dark
+across all three templates. A user whose OS is set to light got a jarring
+dark page, and native form controls (the register-project inputs) rendered
+against the wrong scheme. This is the long-deferred "commercial-grade
+frontend" gap: a professional tool should follow the viewer's
+`prefers-color-scheme`, not force one theme.
+
+#### Added / Changed
+
+- **All dashboard colors are now CSS custom properties** (`internal/dashboard/
+  dashboard.go`). A `:root` block defines 23 variables whose **dark defaults
+  are the exact previous hex values** — so dark-preference users see a
+  pixel-identical page — and a `@media (prefers-color-scheme: light)` block
+  overrides them with GitHub Primer-light values. `color-scheme: light dark`
+  is declared so native controls, scrollbars, and form inputs adapt. Applied
+  consistently to all three `<style>` blocks (dashboard, activity, alerts).
+- **Structural + semantic colors both flip**: surfaces, text, borders, muted/
+  faint text, links, and the danger/warn/ok/accent semantic colors all switch
+  to Primer-light equivalents (e.g. danger `#f85149`→`#cf222e`, accent
+  `#58a6ff`→`#0969da`) so contrast stays AA-grade on white. The agent-panel
+  badges and stale-stripe pattern were included (5 additional vars). The
+  20%-alpha stage-badge tints (`#…33`) were deliberately left literal — they
+  read correctly on both schemes.
+- **`theme-color` meta** is now a media-qualified pair (`#ffffff` for light,
+  `#0d1117` for dark) so browser chrome follows the scheme.
+
+3 new TDD assertions (`internal/dashboard/theme_test.go`) pin the
+scheme declaration, the `prefers-color-scheme:light` override, variable-driven
+structural colors, the preserved dark defaults, the agent-panel vars, and the
+light theme-color meta — guarding against a half-converted (partly-dark)
+regression.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — all packages green, new dashboard tests +
+  zero regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l` clean on touched files
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001 — CSS
+  only, no deps)
+- **Visual verification with Chromium/Playwright**: the live dashboard was
+  screenshotted at 1280×900 in both `colorScheme: 'light'` and `'dark'`. Dark
+  is unchanged from before; light renders a clean white-surface theme with
+  AA-contrast text, readable stage badges, and correctly-tinted agent cards.
+
+#### Counts
+
+- MCP tools: 101 (unchanged)
+- Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 110 → **111** (v0.6 → v0.115.0)
+
+#### What's not yet
+
+- **Manual theme toggle** (override the OS preference from the UI) — the CSS
+  is now fully variable-driven, so a future toggle is just a
+  `:root[data-theme=…]` override + a small nonce'd localStorage snippet.
+- Per-tool `outputSchema` and `tools/list` pagination — the remaining
+  MCP spec-conformance candidates, still open.
+
+#### Docs
+
+- New `docs/instructions-opus-sonnet.md` — a handoff instruction document so
+  future Claude Opus / Sonnet sessions can continue this improvement loop in
+  house style (immutable rules, the release recipe, Opus-vs-Sonnet task split,
+  the traps hit this session, and the prioritized backlog).
+
 ## [v0.114.0] - 2026-07-18
 
 ### Theme — "MCP Resources capability: read-only registry as browsable, cacheable resources"

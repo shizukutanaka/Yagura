@@ -444,6 +444,17 @@ cortex flywheel 4 段階すべてを単体で機械化:
   `go xxx.Start(ctx)` のように委譲している他パッケージの内部 goroutine も
   必ず洗うこと。
 
+### dashboard は prefers-color-scheme に追従する(v0.115.0〜)
+- `internal/dashboard/dashboard.go` の 3 テンプレート(dashboard/activity/alerts)は
+  色をハードコードせず `:root` の CSS 変数(23 個)経由で描画する。dark 既定値は
+  従来の GitHub-dark と完全一致(dark ユーザは変化なし)、`@media (prefers-color-scheme:
+  light)` が Primer-light 値で上書きする。`color-scheme:light dark` を宣言済みで
+  native control も追従する。
+- **新しい dashboard の色は必ず CSS 変数を使うこと**(生 hex を足すと light テーマで
+  ダークのまま残り半端になる)。新 inline `<style>/<script>` の nonce 属性ルールは不変。
+  手動テーマトグルを足す場合は CSS は変数化済みなので `:root[data-theme=…]` override +
+  nonce 付き localStorage スニペットだけで済む。
+
 ### registry を MCP Resources として公開する(v0.114.0〜)
 - `internal/mcp/server.go` の `ResourceSource` interface(`ListResources`/`ReadResource`)+
   `SetResourceSource` で読み取り専用リソースを注入でき、`resources/list`/`resources/read`
