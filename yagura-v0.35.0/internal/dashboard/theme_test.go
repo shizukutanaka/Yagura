@@ -60,6 +60,32 @@ func TestDashboard_ThemeAware(t *testing.T) {
 	}
 }
 
+// TestDashboard_ManualThemeToggle verifies the user can override the OS
+// preference: forced-theme CSS overrides, a persisted pre-paint script, and a
+// visible toggle control are all present.
+func TestDashboard_ManualThemeToggle(t *testing.T) {
+	body := renderDashboard(t)
+	for _, want := range []string{
+		`:root[data-theme="light"]`, // forced light overrides OS/media
+		`:root[data-theme="dark"]`,  // forced dark overrides OS/media
+		"data-theme",                // pre-paint + toggle set the attribute
+		"yagura-theme",              // localStorage key persists the choice
+		`id="theme-toggle"`,         // visible control
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("theme toggle piece missing: %q", want)
+		}
+	}
+	// the pre-paint script must set data-theme from localStorage before body paint
+	if !strings.Contains(body, "localStorage.getItem('yagura-theme')") {
+		t.Errorf("pre-paint theme script missing")
+	}
+	// no stray hardcoded structural hex should remain inline on the header timestamp
+	if strings.Contains(body, "color:#8b949e;font-size:12px") {
+		t.Errorf("header timestamp still uses a hardcoded muted hex instead of var(--muted)")
+	}
+}
+
 // TestDashboard_NoBareStructuralHexInBody guards against a half-converted
 // theme: the body/table structural backgrounds must go through variables, not
 // a hardcoded dark hex that would stay dark under a light preference.

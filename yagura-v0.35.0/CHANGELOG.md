@@ -4,6 +4,63 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.116.0] - 2026-07-22
+
+### Theme — "Dashboard manual theme toggle — override the OS preference, persisted"
+
+v0.115.0 made the dashboard follow the viewer's `prefers-color-scheme`. This
+completes the theming story: a user can now **override** that OS preference
+from the UI and have the choice persist across pages and sessions — the
+commercial-grade expectation (light-mode OS but you want the dashboard dark,
+or vice-versa).
+
+#### Added
+
+- **Forced-theme CSS overrides** (`internal/dashboard/dashboard.go`): since
+  v0.115.0 made every color a CSS variable, forcing a theme is just
+  `:root[data-theme="light"]{…}` / `:root[data-theme="dark"]{…}` blocks that
+  re-declare the palette and win over both `:root` and the
+  `@media (prefers-color-scheme)` query by specificity. Added to all three
+  templates so the stored choice applies everywhere.
+- **Pre-paint persistence script** (nonce'd, in `<head>` of every page): reads
+  `localStorage['yagura-theme']` and sets `data-theme` on `<html>` before the
+  body paints — no theme flash on navigation.
+- **Visible toggle control** in the dashboard header (a `◐` button): cycles
+  auto → the opposite of the current effective theme, writes the choice to
+  `localStorage`, and applies it immediately. Follows the OS until first click.
+- Fixed one stray inline `color:#8b949e` on the header timestamp that the
+  v0.115.0 variable conversion missed (it was an inline `style=` attribute,
+  outside the `<style>` block) → now `var(--muted)`.
+
+3 new TDD assertions (`internal/dashboard/theme_test.go`) pin the forced-theme
+override blocks, the persistence key + pre-paint script, the visible toggle,
+and the removal of the stray inline hex.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — all packages green, new assertions + zero
+  regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l` clean on touched files
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001)
+- **Visual verification with Chromium/Playwright**: with `localStorage`
+  pre-seeded, the live dashboard was screenshotted forcing **light while the OS
+  was set to dark**, and **dark while the OS was set to light** — both
+  confirmed the `data-theme` override wins over the media query. The nonce'd
+  scripts run under the existing strict CSP (no `unsafe-inline`) without
+  violations.
+
+#### Counts
+
+- MCP tools: 101 (unchanged)
+- Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 111 → **112** (v0.6 → v0.116.0)
+
+#### What's not yet
+
+- Per-tool `outputSchema` and `tools/list` pagination remain the open MCP
+  spec-conformance candidates (pagination deferred as it would break
+  non-paginating clients if applied unconditionally).
+
 ## [v0.115.0] - 2026-07-22
 
 ### Theme — "Dashboard light/dark theming — respect prefers-color-scheme"

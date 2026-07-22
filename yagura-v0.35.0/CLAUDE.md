@@ -444,6 +444,16 @@ cortex flywheel 4 段階すべてを単体で機械化:
   `go xxx.Start(ctx)` のように委譲している他パッケージの内部 goroutine も
   必ず洗うこと。
 
+### dashboard は手動テーマトグルで OS 設定を上書きできる(v0.116.0〜)
+- `:root[data-theme="light"]` / `:root[data-theme="dark"]`(全 3 テンプレート)が
+  `@media (prefers-color-scheme)` より詳細度で勝ち、OS 設定を強制上書きする。
+  `<head>` の nonce 付き pre-paint スクリプトが `localStorage['yagura-theme']` を読んで
+  body 描画前に `data-theme` を設定(テーマちらつき防止)。header の `◐` ボタン
+  (nonce 付き click handler)が auto→反対テーマを切替えて localStorage に永続化する。
+- 新しいトグル/永続化ロジックを足す場合も **inline script は nonce 必須**(既存の
+  service-worker/toggle スクリプトと同様)。CSS は変数化済みなので新テーマ軸は
+  attribute selector の追加で済む。
+
 ### dashboard は prefers-color-scheme に追従する(v0.115.0〜)
 - `internal/dashboard/dashboard.go` の 3 テンプレート(dashboard/activity/alerts)は
   色をハードコードせず `:root` の CSS 変数(23 個)経由で描画する。dark 既定値は

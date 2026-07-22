@@ -644,6 +644,9 @@ const activityHTMLTemplate = `<!DOCTYPE html>
 <style nonce="{{.Nonce}}">
 :root{color-scheme:light dark;--bg:#0d1117;--surface:#161b22;--text:#e6edf3;--muted:#8b949e;--faint:#6e7681;--border:#30363d;--border-subtle:#21262d;--accent:#58a6ff;--accent-bar:#1f6feb;--danger:#f85149;--warn:#d29922;--ok:#3fb950;--danger-fg:#ffa198;--warn-fg:#e3b341;--danger-bg:#2d1213;--warn-bg:#2b2412;--btn:#238636;--btn-hover:#2ea043;--stripe:#1a1f26;--ok-bg:#1a4730;--warn-bg-strong:#4a3617;--danger-bg-strong:#4a1a1a;--neutral-bg:#2d333b}
 @media (prefers-color-scheme:light){:root{--bg:#ffffff;--surface:#f6f8fa;--text:#1f2328;--muted:#59636e;--faint:#818b98;--border:#d0d7de;--border-subtle:#d8dee4;--accent:#0969da;--accent-bar:#0969da;--danger:#cf222e;--warn:#9a6700;--ok:#1a7f37;--danger-fg:#cf222e;--warn-fg:#7d4e00;--danger-bg:#ffebe9;--warn-bg:#fff8c5;--btn:#1f883d;--btn-hover:#1a7f37;--stripe:#eaeef2;--ok-bg:#dafbe1;--warn-bg-strong:#fff8c5;--danger-bg-strong:#ffebe9;--neutral-bg:#eaeef2}}
+:root[data-theme="dark"]{--bg:#0d1117;--surface:#161b22;--text:#e6edf3;--muted:#8b949e;--faint:#6e7681;--border:#30363d;--border-subtle:#21262d;--accent:#58a6ff;--accent-bar:#1f6feb;--danger:#f85149;--warn:#d29922;--ok:#3fb950;--danger-fg:#ffa198;--warn-fg:#e3b341;--danger-bg:#2d1213;--warn-bg:#2b2412;--btn:#238636;--btn-hover:#2ea043;--stripe:#1a1f26;--ok-bg:#1a4730;--warn-bg-strong:#4a3617;--danger-bg-strong:#4a1a1a;--neutral-bg:#2d333b}
+:root[data-theme="light"]{--bg:#ffffff;--surface:#f6f8fa;--text:#1f2328;--muted:#59636e;--faint:#818b98;--border:#d0d7de;--border-subtle:#d8dee4;--accent:#0969da;--accent-bar:#0969da;--danger:#cf222e;--warn:#9a6700;--ok:#1a7f37;--danger-fg:#cf222e;--warn-fg:#7d4e00;--danger-bg:#ffebe9;--warn-bg:#fff8c5;--btn:#1f883d;--btn-hover:#1a7f37;--stripe:#eaeef2;--ok-bg:#dafbe1;--warn-bg-strong:#fff8c5;--danger-bg-strong:#ffebe9;--neutral-bg:#eaeef2}
+
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:24px;line-height:1.5}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 h1{font-size:20px;margin:0 0 4px}
@@ -666,6 +669,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 .tag{background:var(--border-subtle);border-radius:10px;padding:1px 8px;font-size:12px;margin-right:4px}
 .empty{color:var(--faint);font-style:italic}
 </style>
+<script nonce="{{.Nonce}}">(function(){try{var t=localStorage.getItem('yagura-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 </head>
 <body>
 <a class="back" href="/dashboard">&larr; Portfolio dashboard</a>
@@ -714,6 +718,9 @@ const alertsHTMLTemplate = `<!DOCTYPE html>
 <style nonce="{{.Nonce}}">
 :root{color-scheme:light dark;--bg:#0d1117;--surface:#161b22;--text:#e6edf3;--muted:#8b949e;--faint:#6e7681;--border:#30363d;--border-subtle:#21262d;--accent:#58a6ff;--accent-bar:#1f6feb;--danger:#f85149;--warn:#d29922;--ok:#3fb950;--danger-fg:#ffa198;--warn-fg:#e3b341;--danger-bg:#2d1213;--warn-bg:#2b2412;--btn:#238636;--btn-hover:#2ea043;--stripe:#1a1f26;--ok-bg:#1a4730;--warn-bg-strong:#4a3617;--danger-bg-strong:#4a1a1a;--neutral-bg:#2d333b}
 @media (prefers-color-scheme:light){:root{--bg:#ffffff;--surface:#f6f8fa;--text:#1f2328;--muted:#59636e;--faint:#818b98;--border:#d0d7de;--border-subtle:#d8dee4;--accent:#0969da;--accent-bar:#0969da;--danger:#cf222e;--warn:#9a6700;--ok:#1a7f37;--danger-fg:#cf222e;--warn-fg:#7d4e00;--danger-bg:#ffebe9;--warn-bg:#fff8c5;--btn:#1f883d;--btn-hover:#1a7f37;--stripe:#eaeef2;--ok-bg:#dafbe1;--warn-bg-strong:#fff8c5;--danger-bg-strong:#ffebe9;--neutral-bg:#eaeef2}}
+:root[data-theme="dark"]{--bg:#0d1117;--surface:#161b22;--text:#e6edf3;--muted:#8b949e;--faint:#6e7681;--border:#30363d;--border-subtle:#21262d;--accent:#58a6ff;--accent-bar:#1f6feb;--danger:#f85149;--warn:#d29922;--ok:#3fb950;--danger-fg:#ffa198;--warn-fg:#e3b341;--danger-bg:#2d1213;--warn-bg:#2b2412;--btn:#238636;--btn-hover:#2ea043;--stripe:#1a1f26;--ok-bg:#1a4730;--warn-bg-strong:#4a3617;--danger-bg-strong:#4a1a1a;--neutral-bg:#2d333b}
+:root[data-theme="light"]{--bg:#ffffff;--surface:#f6f8fa;--text:#1f2328;--muted:#59636e;--faint:#818b98;--border:#d0d7de;--border-subtle:#d8dee4;--accent:#0969da;--accent-bar:#0969da;--danger:#cf222e;--warn:#9a6700;--ok:#1a7f37;--danger-fg:#cf222e;--warn-fg:#7d4e00;--danger-bg:#ffebe9;--warn-bg:#fff8c5;--btn:#1f883d;--btn-hover:#1a7f37;--stripe:#eaeef2;--ok-bg:#dafbe1;--warn-bg-strong:#fff8c5;--danger-bg-strong:#ffebe9;--neutral-bg:#eaeef2}
+
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:24px;line-height:1.5}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 h1{font-size:20px;margin:0 0 4px}
@@ -739,6 +746,7 @@ code{background:var(--surface);border:1px solid var(--border);border-radius:4px;
 #amsg{margin-top:10px;color:var(--muted);font-size:12px;min-height:1em}
 tr.done{opacity:.45}
 </style>
+<script nonce="{{.Nonce}}">(function(){try{var t=localStorage.getItem('yagura-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 </head>
 <body>
 <a class="back" href="/dashboard">&larr; Portfolio dashboard</a>
@@ -821,6 +829,9 @@ const htmlTemplate = `<!DOCTYPE html>
 <style nonce="{{.Nonce}}">
 :root{color-scheme:light dark;--bg:#0d1117;--surface:#161b22;--text:#e6edf3;--muted:#8b949e;--faint:#6e7681;--border:#30363d;--border-subtle:#21262d;--accent:#58a6ff;--accent-bar:#1f6feb;--danger:#f85149;--warn:#d29922;--ok:#3fb950;--danger-fg:#ffa198;--warn-fg:#e3b341;--danger-bg:#2d1213;--warn-bg:#2b2412;--btn:#238636;--btn-hover:#2ea043;--stripe:#1a1f26;--ok-bg:#1a4730;--warn-bg-strong:#4a3617;--danger-bg-strong:#4a1a1a;--neutral-bg:#2d333b}
 @media (prefers-color-scheme:light){:root{--bg:#ffffff;--surface:#f6f8fa;--text:#1f2328;--muted:#59636e;--faint:#818b98;--border:#d0d7de;--border-subtle:#d8dee4;--accent:#0969da;--accent-bar:#0969da;--danger:#cf222e;--warn:#9a6700;--ok:#1a7f37;--danger-fg:#cf222e;--warn-fg:#7d4e00;--danger-bg:#ffebe9;--warn-bg:#fff8c5;--btn:#1f883d;--btn-hover:#1a7f37;--stripe:#eaeef2;--ok-bg:#dafbe1;--warn-bg-strong:#fff8c5;--danger-bg-strong:#ffebe9;--neutral-bg:#eaeef2}}
+:root[data-theme="dark"]{--bg:#0d1117;--surface:#161b22;--text:#e6edf3;--muted:#8b949e;--faint:#6e7681;--border:#30363d;--border-subtle:#21262d;--accent:#58a6ff;--accent-bar:#1f6feb;--danger:#f85149;--warn:#d29922;--ok:#3fb950;--danger-fg:#ffa198;--warn-fg:#e3b341;--danger-bg:#2d1213;--warn-bg:#2b2412;--btn:#238636;--btn-hover:#2ea043;--stripe:#1a1f26;--ok-bg:#1a4730;--warn-bg-strong:#4a3617;--danger-bg-strong:#4a1a1a;--neutral-bg:#2d333b}
+:root[data-theme="light"]{--bg:#ffffff;--surface:#f6f8fa;--text:#1f2328;--muted:#59636e;--faint:#818b98;--border:#d0d7de;--border-subtle:#d8dee4;--accent:#0969da;--accent-bar:#0969da;--danger:#cf222e;--warn:#9a6700;--ok:#1a7f37;--danger-fg:#cf222e;--warn-fg:#7d4e00;--danger-bg:#ffebe9;--warn-bg:#fff8c5;--btn:#1f883d;--btn-hover:#1a7f37;--stripe:#eaeef2;--ok-bg:#dafbe1;--warn-bg-strong:#fff8c5;--danger-bg-strong:#ffebe9;--neutral-bg:#eaeef2}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
 body { background: var(--bg); color: var(--text); padding: 24px; }
@@ -877,6 +888,9 @@ tr:hover td { background: var(--surface); }
 .tags { font-size: 11px; }
 .tag { display: inline-block; background: var(--border-subtle); color: var(--muted); padding: 1px 6px; border-radius: 3px; margin-right: 4px; font-family: monospace; }
 footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--faint); font-size: 12px; text-align: center; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.theme-toggle { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; width: 32px; height: 32px; cursor: pointer; font-size: 15px; line-height: 1; padding: 0; }
+.theme-toggle:hover { border-color: var(--accent); }
 .empty { text-align: center; padding: 40px; color: var(--muted); }
 .empty code { background: var(--border-subtle); padding: 2px 8px; border-radius: 3px; }
 .addproj { margin-bottom: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
@@ -970,13 +984,17 @@ a:focus-visible {
 .agent-recommend strong { color: var(--accent); font-family: monospace; }
 .agent-recommend small { color: var(--faint); }
 </style>
+<script nonce="{{.Nonce}}">(function(){try{var t=localStorage.getItem('yagura-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 </head>
 <body>
 <a href="#main" class="skip-link">Skip to main content</a>
 <div class="wrap">
   <header>
     <h1>櫓 Yagura <span class="meta">Portfolio Dashboard</span></h1>
-    <span style="color:#8b949e;font-size:12px" aria-label="Page generated at">{{fmtTime .Now}}</span>
+    <div class="header-right">
+      <span style="color:var(--muted);font-size:12px" aria-label="Page generated at">{{fmtTime .Now}}</span>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle light/dark theme" title="Toggle light/dark theme (follows your OS by default)">◐</button>
+    </div>
   </header>
 
   <main id="main">
@@ -1108,9 +1126,10 @@ a:focus-visible {
   {{end}}
   </main>
 
-  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.115.0</footer>
+  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.116.0</footer>
 </div>
 <script nonce="{{.Nonce}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/dashboard/sw.js',{scope:'/dashboard'}).catch(function(){});}</script>
+<script nonce="{{.Nonce}}">(function(){var b=document.getElementById('theme-toggle');if(!b)return;b.addEventListener('click',function(){var cur=document.documentElement.getAttribute('data-theme');var osDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;var next=cur==='dark'?'light':cur==='light'?'dark':osDark?'light':'dark';document.documentElement.setAttribute('data-theme',next);try{localStorage.setItem('yagura-theme',next);}catch(e){}});})();</script>
 <script nonce="{{.Nonce}}">
 (function(){
   var f=document.getElementById('addproj-form'); if(!f)return;
