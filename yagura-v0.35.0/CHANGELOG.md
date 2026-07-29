@@ -4,6 +4,91 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.118.0] - 2026-07-23
+
+### Theme — "First Principles: connect the quality lenses to the portfolio layer"
+
+Directive was **First Principles Thinking で過不足機能を洗い出し改善**. Rather than
+extrapolating from the feature list, the necessary capabilities were derived from the
+product's axioms and measured against the actual code. That surfaced one large,
+**verified** structural gap.
+
+**Axioms** — (A1) a solo dev with N projects; the scarce resource is *attention*.
+(A2) an AI agent is the operator; the **LLM context window is the scarce channel**.
+(A3) determinism/auditability is the differentiator.
+
+**Derived capabilities:** C1 know all projects ✅ · C2 sense external state ✅ ·
+C3 rank where attention goes ✅ · C4 measure internal code quality ✅ ·
+**C5 feed C4 into C3 ❌** · C6 do it without burning context ⚠️.
+
+#### 不足 #1 (verified) — the portfolio ranking was blind to code quality
+`internal/alertfix` has exactly 7 signal sources (`vulns`/`plan`/`ci`/`stale`/
+`scorecard`/`open_issues`/`visibility`) — **all external sensors**. Grepping the package
+for any quality lens returned **0**. The repo's single largest engineering investment
+(~24 go/ast lenses) could not answer the product's core question: *"which of my projects
+needs attention?"* The two biggest subsystems were simply not connected.
+
+#### 矛盾 #2 (verified) — the quality tools were token sinks in a token-economy product
+Input audit: **35 of 101 tools were files-only** (the client must ship `{path: content}`
+through the LLM context), while the daemon already knows each project's `local_path` and
+could read the files for free — in a project that explicitly optimizes token economy
+(compact mode, dedupe cache, `yagura_token_stats`).
+
+#### Added — `yagura_portfolio_quality` (tool #102)
+
+- **`internal/portfolioquality`** — pure `Rank(projects, read)` walks each registered
+  project's `local_path`, runs the existing `codehealth` composite, and returns projects
+  ranked **worst-first** (score ascending, slug tie-break). Projects with no
+  `local_path`, an unreadable path, or no Go sources are reported in an explicit
+  `unscannable` list **with a reason** — never silently dropped (a project missing from
+  the ranking must never read as "clean"). Truncated walks set `incomplete` so a partial
+  scan is not mistaken for a complete one.
+- **MCP `yagura_portfolio_quality`** takes **no `files`** — it resolves everything from
+  the registry, so **zero source content crosses the context window** (fixes #2's
+  contradiction at the seam where it matters most).
+- **`internal/srcfiles`** — the capped, fail-open-aware tree walker extracted from
+  `cmd/yagura/cli.go`. Its own doc comment already demanded that new scanners reuse it,
+  but living in `cmd/yagura` made that **structurally impossible** for `internal/mcp`
+  (import direction) — which is *why* the lens tools were content-based in the first
+  place. Now both CLI and MCP share one seam (rather than duplicating it as v0.109.0's
+  `runSafely` had to). CLI behavior is unchanged: same caps (1000 files / 50 MB), same
+  skips, same truncated/unreadable semantics; the existing CLI lens tests are the
+  regression guard. The then-orphaned local `isSourceFile` was removed (`dead-code
+  --dir ./cmd` dogfoods to 0).
+
+12 new TDD tests (`internal/srcfiles`, `internal/portfolioquality`) covering caps,
+skip-dirs, worst-first ordering, unscannable reasons, incomplete propagation, empty
+registry, and deterministic tie-break.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — all packages green, 12 new tests + zero regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l` clean on touched files
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001)
+- **Live dogfood** against real trees: registered Yagura itself, a deliberately messy
+  project, and one with no `local_path`. Result ranked `messy` (grade **C**, score 71)
+  ahead of `yagura-self` (grade **A**, score 95, **90 packages / 326 files**), and
+  surfaced `nopath` as unscannable with an actionable reason — all from a request whose
+  arguments were literally `{}`.
+
+#### Counts
+
+- MCP tools: 101 → **102**
+- Internal packages: 86 → **88** (`srcfiles`, `portfolioquality`)
+- Consecutive reproducible releases: 113 → **114** (v0.6 → v0.118.0)
+
+#### What's not yet
+
+- **Converting the other 35 files-only tools to slug-aware input** — the same fix applied
+  across the lens family. Mechanical and scriptable; deliberately deferred to keep this
+  release to one theme.
+- Feeding the quality score into `alert_fix` as an 8th signal source (the natural next
+  step now that C5 has a seam).
+- Per-tool `outputSchema`; `tools/list` pagination.
+- 過剰 #3 noted but **not** actioned: 101→102 tools is itself a `tools/list` cost, but
+  `lens-overlap` measured max Jaccard 0.39 — the lenses are not redundant in findings, so
+  the fix is composition (higher-level entry points like this one), not deletion.
+
 ## [v0.117.0] - 2026-07-23
 
 ### Theme — "Resources 第2弾: Plan.md as a first-class MCP resource"

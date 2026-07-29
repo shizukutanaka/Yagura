@@ -71,10 +71,11 @@ import (
 	"github.com/shizukutanaka/yagura/internal/globalcheck"
 	"github.com/shizukutanaka/yagura/internal/harness"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
-	"github.com/shizukutanaka/yagura/internal/lensoverlap"
+	"github.com/shizukutanaka/yagura/internal/ifacebloat"
 	"github.com/shizukutanaka/yagura/internal/initps1"
 	"github.com/shizukutanaka/yagura/internal/initsh"
 	"github.com/shizukutanaka/yagura/internal/injectscan"
+	"github.com/shizukutanaka/yagura/internal/lensoverlap"
 	"github.com/shizukutanaka/yagura/internal/mcp"
 	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
@@ -101,9 +102,9 @@ import (
 	"github.com/shizukutanaka/yagura/internal/sbom"
 	"github.com/shizukutanaka/yagura/internal/secretscan"
 	"github.com/shizukutanaka/yagura/internal/sessionsummary"
+	"github.com/shizukutanaka/yagura/internal/srcfiles"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
-	"github.com/shizukutanaka/yagura/internal/ifacebloat"
 	"github.com/shizukutanaka/yagura/internal/thelper"
 	"github.com/shizukutanaka/yagura/internal/today"
 	"github.com/shizukutanaka/yagura/internal/typeassert"
@@ -3762,100 +3763,29 @@ func filterReportBySeverity(r alertfix.Report, minSev string) alertfix.Report {
 // scanResult は readSourceFiles の結果。スキャンが不完全になった理由を
 // 区別して持つ(remediation が異なるため):Truncated = 上限到達、
 // Unreadable = 存在するが読めなかったソース。どちらも非空なら呼出側が警告する。
-type scanResult struct {
-	Files      map[string]string
-	Truncated  bool     // 1000 件 / 50 MB 上限に達して打ち切った
-	Unreadable []string // ツリー内に在るが os.ReadFile が失敗したソース
-}
+// scanResult は internal/srcfiles.Result の CLI 側エイリアス。
+// v0.118.0: walker 本体は internal/srcfiles へ移設した(cmd/yagura は internal/* から
+// import できるが逆は不可能で、MCP 側が同じ caps/fail-open 規約を使えなかったため)。
+// CLI の挙動は不変——上限も skip 対象も truncated/unreadable の意味も同一。
+type scanResult = srcfiles.Result
 
-// readSourceFiles は dir を再帰的に走査し、Go/TS/JS/Python/Rust/Java の
-// ソースファイルを {relpath: content} として返す。
-// vendor/, node_modules/, .git/ はスキップ。上限 1000 件 / 50 MB。
-// スキャンが不完全(上限到達 or 読取失敗)なら scanResult のフラグで通知する。
-// これらを無視して「findings なし」を報告すると部分スキャンを完全スキャンと
-// 取り違える fail-open になるため、呼出側は必ず警告すること。
-func readSourceFiles(dir string) (scanResult, error) {
-	const maxFiles = 1000
-	const maxTotalBytes = 50 * 1024 * 1024
-	return readSourceFilesLimited(dir, maxFiles, maxTotalBytes)
-}
+// readSourceFiles は dir 配下のサポート言語ソースを既定上限で読む。
+func readSourceFiles(dir string) (scanResult, error) { return srcfiles.ReadSource(dir) }
 
-// readSourceFilesLimited は readSourceFiles の本体(上限を引数化してテスト可能に)。
-// Go/TS/JS/Python/Rust/Java のソースを対象にする。
+// readSourceFilesLimited は上限を引数化した版(テスト用)。
 func readSourceFilesLimited(dir string, maxFiles int, maxTotalBytes int64) (scanResult, error) {
-	return readFilesLimited(dir, maxFiles, maxTotalBytes, isSourceFile)
+	return srcfiles.ReadLimited(dir, maxFiles, maxTotalBytes, srcfiles.IsSourceFile)
 }
 
-// readGoFiles は dir 配下の *.go を capped+warned walker で読む(err-policy 用)。
-// readSourceFilesLimited と同じ上限・同じ不完全スキャン通知を継承する。
-func readGoFiles(dir string) (scanResult, error) {
-	const maxFiles = 1000
-	const maxTotalBytes = 50 * 1024 * 1024
-	return readFilesLimited(dir, maxFiles, maxTotalBytes, func(name string) bool {
-		return strings.HasSuffix(name, ".go")
-	})
-}
+// readGoFiles は dir 配下の *.go を読む。
+func readGoFiles(dir string) (scanResult, error) { return srcfiles.ReadGo(dir) }
 
-// readGoTestFiles は dir 配下の *_test.go を capped+warned walker で読む(assert-check 用)。
-func readGoTestFiles(dir string) (scanResult, error) {
-	const maxFiles = 1000
-	const maxTotalBytes = 50 * 1024 * 1024
-	return readFilesLimited(dir, maxFiles, maxTotalBytes, func(name string) bool {
-		return strings.HasSuffix(name, "_test.go")
-	})
-}
+// readGoTestFiles は dir 配下の *_test.go を読む。
+func readGoTestFiles(dir string) (scanResult, error) { return srcfiles.ReadGoTest(dir) }
 
-// readFilesLimited は dir を再帰的に走査し、accept(filename)==true のファイルを
-// {relpath: content} で読む共通 walker。vendor/node_modules/.git/.yagura を skip し、
-// maxFiles / maxTotalBytes の上限と、不完全スキャン(truncated / unreadable)の
-// シグナルを scanResult に記録する。新しいスキャナはこの 1 本を predicate 付きで
-// 再利用すること(独自 WalkDir を書くと caps と fail-open 警告が失われる)。
+// readFilesLimited は predicate 付き共通 walker(internal/srcfiles へ委譲)。
 func readFilesLimited(dir string, maxFiles int, maxTotalBytes int64, accept func(name string) bool) (scanResult, error) {
-	sr := scanResult{Files: make(map[string]string)}
-	var totalBytes int64
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, werr error) error {
-		if werr != nil {
-			return werr
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if name == "vendor" || name == "node_modules" || name == ".git" || name == ".yagura" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !accept(name) {
-			return nil
-		}
-		if len(sr.Files) >= maxFiles {
-			sr.Truncated = true
-			return nil
-		}
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			// 存在するソースが読めない = 検出から漏れる。fail-open を避けるため
-			// 黙殺せず記録する(readWorkflowFiles は同条件で hard-fail するが、
-			// 深いツリー walk を 1 ファイルで止めるのは過剰なので skip+report)。
-			rel, relErr := filepath.Rel(dir, path)
-			if relErr != nil {
-				rel = path
-			}
-			sr.Unreadable = append(sr.Unreadable, rel)
-			return nil
-		}
-		if totalBytes+int64(len(data)) > maxTotalBytes {
-			sr.Truncated = true
-			return nil
-		}
-		totalBytes += int64(len(data))
-		rel, relErr := filepath.Rel(dir, path)
-		if relErr != nil {
-			rel = path
-		}
-		sr.Files[rel] = string(data)
-		return nil
-	})
-	return sr, err
+	return srcfiles.ReadLimited(dir, maxFiles, maxTotalBytes, accept)
 }
 
 // warnIncompleteScan は scan が不完全な場合に stderr へ目立つ警告を出す。
@@ -3875,16 +3805,6 @@ func warnIncompleteScan(stderr io.Writer, sr scanResult, dir string) {
 			"(not scanned): %s — fix permissions/symlinks before trusting a clean verdict\n",
 			n, dir, strings.Join(shown, ", "))
 	}
-}
-
-// isSourceFile は name がサポート言語のソースファイルかを返す。
-func isSourceFile(name string) bool {
-	for _, ext := range []string{".go", ".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".java"} {
-		if strings.HasSuffix(name, ext) {
-			return true
-		}
-	}
-	return false
 }
 
 // readWorkflowFiles は dir 直下の *.yml / *.yaml を {filename: content} で読む。

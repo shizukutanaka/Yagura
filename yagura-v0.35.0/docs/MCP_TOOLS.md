@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **101 tools**.
+Generated from a live yagura — **102 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (53)
+- [Misc](#misc) (54)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -819,6 +819,18 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `content` (string) | ★ | full plugin.json or marketplace.json text |
+
+---
+
+### `yagura_portfolio_quality`
+
+[S] Rank ALL registered projects by code health (worst first). Reads local_path itself — no files needed.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `limit` (integer) |  | max ranked projects to return (default all) |
 
 ---
 

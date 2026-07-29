@@ -34,6 +34,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/nestdepth"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
+	"github.com/shizukutanaka/yagura/internal/portfolioquality"
 	"github.com/shizukutanaka/yagura/internal/prealloc"
 	"github.com/shizukutanaka/yagura/internal/predeclared"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
@@ -1614,6 +1615,51 @@ func buildThelperTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "invalid_input", Message: "files required"}
 			}
 			rep := thelper.Scan(in.Files)
+			return rep, nil
+		},
+	}
+}
+
+// buildPortfolioQualityTool は登録済み全プロジェクトのコード健全性を横断ランキングする
+// (v0.118.0)。First Principles 由来の C5 ギャップ解消: 注意配分レイヤ
+// (alert_fix/today/release_radar)は外部センサーしか見ておらず、~24 個の quality lens は
+// ポートフォリオから不可視だった。
+//
+// **files を受け取らない**のが要点: registry の local_path から daemon 自身がディスクを
+// 読むので、ソース内容は 1 バイトも LLM context を通らない(既存 lens tool 群の
+// content-based 契約が抱えていた token 経済の矛盾を解消する)。
+func buildPortfolioQualityTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_portfolio_quality",
+		Title:       "Portfolio Code Health",
+		Description: "[S] Rank ALL registered projects by code health (worst first). Reads local_path itself — no files needed.",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false},
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "max ranked projects to return (default all)"},
+			},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			if d.Registry == nil {
+				return nil, &ToolError{Code: "unavailable", Message: "registry not configured"}
+			}
+			var in struct {
+				Limit int `json:"limit"`
+			}
+			if len(args) > 0 {
+				if err := json.Unmarshal(args, &in); err != nil {
+					return nil, &ToolError{Code: "invalid_input", Cause: err}
+				}
+			}
+			projects := make([]portfolioquality.Project, 0)
+			for _, p := range d.Registry.List() {
+				projects = append(projects, portfolioquality.Project{Slug: p.Slug, LocalPath: p.LocalPath})
+			}
+			rep := portfolioquality.Rank(projects, nil)
+			if in.Limit > 0 && len(rep.Projects) > in.Limit {
+				rep.Projects = rep.Projects[:in.Limit]
+			}
 			return rep, nil
 		},
 	}

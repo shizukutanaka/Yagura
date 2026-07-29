@@ -23,7 +23,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 86 internal packages
+## Map — 88 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -341,6 +341,22 @@ cortex flywheel 4 段階すべてを単体で機械化:
   assertcheck)を package 別 grade(A-F)へ合成(ソクラテス新視点 synthesis)。
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
+
+### Portfolio-wide quality(★ v0.118.0、First Principles 由来)
+- `internal/srcfiles` — capped/fail-open-aware なソースツリー walker の**単一 seam**。
+  元は `cmd/yagura/cli.go` の `readFilesLimited` にあり doc comment 自身が「新スキャナは
+  これを再利用せよ」と要求していたが、`cmd/yagura` は `internal/*` から import できない
+  ため MCP 側が従えなかった。引き上げて CLI と MCP の双方が同じ 1 本を使う
+  (v0.109.0 の runSafely のように複製しない)。上限 1000 files / 50 MB、
+  vendor/node_modules/.git/.yagura を skip、`Incomplete()` で部分スキャンを通知。
+  **新しいディレクトリ走査は必ずこれを predicate 付きで使うこと。**
+- `internal/portfolioquality` — 登録済み全プロジェクトを `local_path` から走査して
+  `codehealth` で採点し **worst-first** に並べる。alert_fix の 7 signal が全て外部
+  センサーで、~24 個の quality lens が portfolio から不可視だった C5 ギャップを埋める。
+  `local_path` 無し/読取失敗/Go ソース無しは *理由つきで* `unscannable` に載せる
+  (ランキングから消えたプロジェクトが「きれい」と誤読されないため)。
+  MCP `yagura_portfolio_quality` は **files を受け取らない**——daemon がディスクを読むので
+  ソース内容が LLM context を 1 バイトも通らない(token 経済の矛盾解消)。★ v0.118
 
 ### Cross-tool infra
 - `internal/dedupe` — content-addressed cache (LRU + TTL) ★ v0.23

@@ -223,6 +223,7 @@ func RegisterDefaultTools(s *Server, d Deps) {
 	s.Register(buildRecvCheckTool(d))
 	// [Q] v0.36.0 — composite maintainability grade (synthesis)
 	s.Register(buildCodeHealthTool(d))
+	s.Register(buildPortfolioQualityTool(d))
 	// [S] v0.27.0 — cortex flywheel ④ Alert-Fix (rule-based recommendation hub)
 	s.Register(buildAlertFixTool(d, s.cache, s.alertStore))
 	// [G] v0.30.0 — alert lifecycle (resolve/snooze/reopen)
