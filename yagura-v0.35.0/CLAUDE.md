@@ -465,7 +465,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
   手動テーマトグルを足す場合は CSS は変数化済みなので `:root[data-theme=…]` override +
   nonce 付き localStorage スニペットだけで済む。
 
-### registry を MCP Resources として公開する(v0.114.0〜)
+### registry を MCP Resources として公開する(v0.114.0〜、Plan.md★ v0.117.0)
 - `internal/mcp/server.go` の `ResourceSource` interface(`ListResources`/`ReadResource`)+
   `SetResourceSource` で読み取り専用リソースを注入でき、`resources/list`/`resources/read`
   ハンドラと `initialize` の `resources` capability(**source が注入された時のみ** advertise)

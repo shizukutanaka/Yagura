@@ -4,6 +4,51 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.117.0] - 2026-07-23
+
+### Theme — "Resources 第2弾: Plan.md as a first-class MCP resource"
+
+v0.114.0 introduced the Resources primitive backed by the registry. This extends it to
+the other read-only artifact the portfolio layer already knows how to find: each
+project's **Plan.md**.
+
+#### Added
+
+- **`yagura://project/{slug}/plan`** (`internal/mcp/resources.go`) — the raw Plan.md
+  source as `text/markdown`. Reuses the existing `loadPlanMd` helper
+  (`tools_plan.go`), so the Plan.md / PLAN.md / plan.md resolution order is identical to
+  `yagura_plan_status`.
+- The plan resource is **listed only when the file actually exists** — `resources/list`
+  never advertises a URI that would 404, and projects without a `local_path` simply have
+  no plan resource. Reading a missing plan returns the standard `-32002` resource-not-found
+  error.
+
+This complements rather than duplicates `yagura_plan_status`: the tool returns *parsed*
+progress (checkboxes, sections, summary), the resource returns the *raw source* an agent
+can read, diff, or cache by URI.
+
+3 new TDD tests in `internal/mcp/resources_test.go` (list-includes-plan-only-when-present,
+read-returns-markdown, read-missing-errors).
+
+#### Verification
+
+- `go test -race -count=1 ./...` — all packages green, 3 new tests + zero regressions
+- `go build ./...`, `go vet ./...`, `gofmt -s -l` clean on touched files
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001)
+
+#### Counts
+
+- MCP tools: 101 (unchanged — Resources is a distinct primitive)
+- Internal packages: 86 (unchanged)
+- Consecutive reproducible releases: 112 → **113** (v0.6 → v0.117.0)
+
+#### What's not yet
+
+- Resource templates (`resourceTemplates`) would let clients discover the
+  `yagura://project/{slug}/plan` *shape* rather than enumerating instances — deferred with
+  the subscribe/streaming-transport question.
+- Per-tool `outputSchema` remains the open MCP spec-conformance candidate.
+
 ## [v0.116.0] - 2026-07-22
 
 ### Theme — "Dashboard manual theme toggle — override the OS preference, persisted"

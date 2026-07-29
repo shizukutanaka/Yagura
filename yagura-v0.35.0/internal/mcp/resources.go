@@ -22,6 +22,7 @@ import (
 const (
 	registryURI      = "yagura://registry"
 	projectURIPrefix = "yagura://project/"
+	planURISuffix    = "/plan" // yagura://project/{slug}/plan → raw Plan.md
 )
 
 // registryResourceSource は registry を backing にした ResourceSource。
@@ -60,6 +61,19 @@ func (s *registryResourceSource) ListResources() []Resource {
 			Description: "Registry facts for project " + p.Slug + ".",
 			MIMEType:    "application/json",
 		})
+		// Plan.md as a resource, but only list it when the file actually exists
+		// (so resources/list reflects genuinely readable resources, not 404s).
+		if p.LocalPath != "" {
+			if _, _, err := loadPlanMd(p.LocalPath); err == nil {
+				out = append(out, Resource{
+					URI:         projectURIPrefix + p.Slug + planURISuffix,
+					Name:        p.Slug + "/plan",
+					Title:       name + " — Plan.md",
+					Description: "Raw Plan.md source for project " + p.Slug + ".",
+					MIMEType:    "text/markdown",
+				})
+			}
+		}
 	}
 	return out
 }
@@ -80,11 +94,23 @@ func (s *registryResourceSource) ReadResource(uri string) (ResourceContents, boo
 		}
 		return ResourceContents{URI: uri, MIMEType: "application/json", Text: string(body)}, true
 	}
-	slug, ok := strings.CutPrefix(uri, projectURIPrefix)
-	if !ok || slug == "" {
+	rest, ok := strings.CutPrefix(uri, projectURIPrefix)
+	if !ok || rest == "" {
 		return ResourceContents{}, false
 	}
-	p, err := s.reg.Get(slug)
+	// yagura://project/{slug}/plan → raw Plan.md (text/markdown)
+	if slug, isPlan := strings.CutSuffix(rest, planURISuffix); isPlan && slug != "" {
+		p, err := s.reg.Get(slug)
+		if err != nil || p == nil || p.LocalPath == "" {
+			return ResourceContents{}, false
+		}
+		content, _, err := loadPlanMd(p.LocalPath)
+		if err != nil {
+			return ResourceContents{}, false
+		}
+		return ResourceContents{URI: uri, MIMEType: "text/markdown", Text: content}, true
+	}
+	p, err := s.reg.Get(rest)
 	if err != nil || p == nil {
 		return ResourceContents{}, false
 	}

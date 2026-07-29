@@ -3,6 +3,8 @@ package mcp
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -155,5 +157,61 @@ func TestResourcesRead_UnknownURI(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["error"] == nil {
 		t.Errorf("expected error for unknown uri, got: %s", w.Body.String())
+	}
+}
+
+// projectWithPlan seeds a project whose LocalPath holds a Plan.md.
+func projectWithPlan(t *testing.T, slug, planBody string) *project.Project {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Plan.md"), []byte(planBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return &project.Project{Slug: slug, Priority: 3, LocalPath: dir}
+}
+
+// TestResourcesList_IncludesPlanWhenPresent verifies a project with a Plan.md
+// gets a yagura://project/{slug}/plan resource, while one without does not.
+func TestResourcesList_IncludesPlanWhenPresent(t *testing.T) {
+	withPlan := projectWithPlan(t, "hadescribe", "# Plan\n- [x] done\n- [ ] todo\n")
+	noPlan := &project.Project{Slug: "bare", Priority: 1} // no LocalPath → no plan
+	s := serverWithRegistryResources(t, withPlan, noPlan)
+
+	res := rpc(t, s, "resources/list", "")
+	uris := map[string]bool{}
+	for _, r := range res["resources"].([]any) {
+		uris[r.(map[string]any)["uri"].(string)] = true
+	}
+	if !uris["yagura://project/hadescribe/plan"] {
+		t.Errorf("expected plan resource for project with Plan.md; got %v", uris)
+	}
+	if uris["yagura://project/bare/plan"] {
+		t.Errorf("project without a Plan.md must not list a plan resource")
+	}
+}
+
+// TestResourcesRead_Plan returns the raw Plan.md markdown.
+func TestResourcesRead_Plan(t *testing.T) {
+	body := "# Plan\n## 目的\nship it\n- [x] a\n- [ ] b\n"
+	s := serverWithRegistryResources(t, projectWithPlan(t, "hadescribe", body))
+	res := rpc(t, s, "resources/read", `{"uri":"yagura://project/hadescribe/plan"}`)
+	c := res["contents"].([]any)[0].(map[string]any)
+	if c["mimeType"] != "text/markdown" {
+		t.Errorf("plan mimeType = %v, want text/markdown", c["mimeType"])
+	}
+	if c["text"] != body {
+		t.Errorf("plan text = %q, want %q", c["text"], body)
+	}
+}
+
+// TestResourcesRead_PlanMissing errors for a project that has no Plan.md.
+func TestResourcesRead_PlanMissing(t *testing.T) {
+	s := serverWithRegistryResources(t, &project.Project{Slug: "bare", Priority: 1})
+	w := postJSON(t, s,
+		`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"yagura://project/bare/plan"}}`, "")
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["error"] == nil {
+		t.Errorf("expected error reading a missing Plan.md")
 	}
 }

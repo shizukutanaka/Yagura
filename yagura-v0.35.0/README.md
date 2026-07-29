@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.116.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Dashboard theming:** the HTML dashboard follows the viewer's `prefers-color-scheme` and now offers a manual light/dark toggle (◐) that overrides the OS preference and persists via localStorage — verified with Chromium screenshots forcing each theme against the opposite OS setting. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.117.0** — 101 MCP tools, 86 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **MCP Resources:** the read-only registry *and* each project's Plan.md are exposed as browsable, cacheable resources (`yagura://registry`, `yagura://project/{slug}`, `yagura://project/{slug}/plan`) via `resources/list` / `resources/read`. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-112 consecutive releases (v0.6 → v0.116.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+113 consecutive releases (v0.6 → v0.117.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
