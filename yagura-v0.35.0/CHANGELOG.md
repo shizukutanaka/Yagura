@@ -4,6 +4,97 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.121.0] - 2026-08-08
+
+### Theme — "Process metrics over product metrics (and a correction to our own v0.119.0)"
+
+v0.119.0 added churn, v0.120.0 added ownership, and both releases listed "combine them"
+as open. The literature does not just permit that combination — it says something
+sharper about *how* to combine them, and in doing so contradicts a design decision this
+project shipped two releases ago.
+
+#### Research basis
+
+- **Rahman & Devanbu, "How, and Why, Process Metrics Are Better", ICSE 2013.** Compares
+  process metrics (change history, contributor information) against product metrics
+  (code complexity and friends) across performance, stability, portability and
+  **stasis**. Product metrics are generally *less* useful. Stasis is the mechanism:
+  code metrics barely move between releases, so a predictor built on them keeps
+  re-flagging the same files regardless of what is actually happening.
+- **Majumder, Mody & Menzies, "Revisiting Process versus Product Metrics: a Large Scale
+  Analysis", EMSE 2022 / ICSE 2022 journal-first.** Replicates at scale — **700 GitHub
+  projects, 722,471 commits**. Best process-based learners reach **recall 98% / AUC
+  95%**; best product-based learners reach **recall 44% / AUC 54%**. An AUC of 54% is
+  barely distinguishable from a coin flip.
+
+#### The correction
+
+v0.119.0 defined `RiskScore = relative churn × complexity`. That gives a near-random
+signal equal *multiplicative* weight against a strong one. `internal/processrisk`
+therefore scores using **process metrics only** — relative churn, change count,
+ownership, minor contributors, contributor count — and **reports complexity without
+scoring it**, pinned by `TestScore_ComplexityIsReportedButNotScored`.
+
+The Tornhill hotspot formula is a legitimate published technique, so `yagura_churn_risk`
+keeps it unchanged and both tools remain available. Showing only the flattering number
+would be the dishonest move; the two rankings are meant to be compared.
+
+#### Added — `internal/processrisk` + `yagura_process_risk` (tool #105)
+
+- Signals are **rank-normalized to percentiles within the repository** before averaging,
+  so a metric cannot dominate merely because its natural units are larger (relative
+  churn ~0–6 vs contributor counts 1–20). `TestScore_RankNormalizationAvoidsArbitraryScales`
+  pins this.
+- Every ranked file carries human-readable `reasons` rather than a bare number.
+- Files with churn but no ownership record are still scored on the signals that exist,
+  never silently dropped.
+- The response embeds a `note` stating that complexity is excluded and why, so a caller
+  reading the JSON cannot mistake its absence for an oversight.
+
+**Honest limitation, stated in the package doc and the response:** the research supports
+*which signals to include*, not the weighting between them. Equal weighting across
+rank-normalized signals is this project's choice, and is labelled as such rather than
+dressed up as a research result.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 7 new tests
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001)
+- **Live dogfood on this repository (189 files ranked).** The process-only ranking puts
+  `internal/dashboard/dashboard.go` first (relative churn 1.52, **74 changes**), whereas
+  `yagura_churn_risk` puts `internal/mcp/tools.go` first because its complexity factor
+  multiplies in. Same data, different answer — a concrete demonstration of what the
+  scoring change does. Worth noting honestly: ownership is 1.00 for every file in this
+  single-author repository, so the ownership signals contribute no discrimination here
+  and the ranking is effectively driven by churn and change count.
+
+#### Fixed
+
+- Reason text rendered the top-ranked file as "in the top 0%"; percentile display now
+  floors at 1%.
+
+#### Counts
+
+- MCP tools: 104 → **105**
+- Internal packages: 90 → **91** (`processrisk`)
+- Consecutive reproducible releases: 116 → **117** (v0.6 → v0.121.0)
+
+#### What's not yet
+
+- Not yet an `alert_fix` signal source — the portfolio ranking still sees no process
+  metrics. This is now the most valuable remaining seam.
+- Weighting could be learned per repository (`internal/calibrate` already does threshold
+  learning) instead of being uniform.
+- Majumder et al. warn that metric-importance results from small studies change at
+  scale; nothing here is calibrated against a defect dataset, so these are risk
+  *indicators*, not validated predictions.
+
+#### Sources
+
+- Rahman, F. & Devanbu, P. *How, and Why, Process Metrics Are Better.* ICSE 2013, 432–441.
+- Majumder, S., Mody, P. & Menzies, T. *Revisiting Process versus Product Metrics: a
+  Large Scale Analysis.* Empirical Software Engineering, 2022. arXiv:2008.09569
+
 ## [v0.120.0] - 2026-08-08
 
 ### Theme — "Ownership: the other half of behavioral code analysis"

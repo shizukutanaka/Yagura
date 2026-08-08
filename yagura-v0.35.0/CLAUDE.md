@@ -23,7 +23,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 90 internal packages
+## Map — 91 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -341,6 +341,23 @@ cortex flywheel 4 段階すべてを単体で機械化:
   assertcheck)を package 別 grade(A-F)へ合成(ソクラテス新視点 synthesis)。
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
+
+### プロセス指標 > 製品指標(★ v0.121.0、論文由来 + 自己反証)
+- `internal/processrisk` — churn(v0.119)と ownership(v0.120)の **プロセス指標のみ**を
+  合成して順位付けする。根拠は **Rahman & Devanbu (ICSE 2013)**(製品指標は stasis =
+  リリース間で動かないため同じファイルを指し続ける)と
+  **Majumder, Mody & Menzies (EMSE 2022、700 projects / 722,471 commits)**
+  ——プロセス指標 recall 98% / **AUC 95%** に対し製品指標 recall 44% / **AUC 54%**(ほぼ偶然)。
+- **これは v0.119.0 の自己反証**: churn の `RiskScore = 相対churn × 複雑度` は、ほぼ偶然と
+  変わらない信号に乗算という同等の重みを与えていた。processrisk では複雑度を
+  **表示するが採点に使わない**(`TestScore_ComplexityIsReportedButNotScored` が固定)。
+  Tornhill hotspot は独立した公表手法なので churn 側はそのまま残し、**両方の順位を
+  見比べられるようにする**(都合のいい方だけ見せない)。
+- 各シグナルは **リポジトリ内 percentile に正規化**してから平均する(単位の大きさだけで
+  特定シグナルが支配するのを防ぐ)。**ただし重み配分は研究由来ではない**——
+  「どのシグナルを使うか」だけが研究に基づく。応答の `note` にもその旨を埋め込むこと。
+- 新しいリスク指標を足すときは、**プロセス指標か製品指標かを明示**し、製品指標を
+  採点に混ぜる場合は理由を書くこと。
 
 ### 所有権 / ownership(★ v0.120.0、論文由来)
 - `internal/ownership` — behavioral code analysis のもう半分「誰が書いたか」。

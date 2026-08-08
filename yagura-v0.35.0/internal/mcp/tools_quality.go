@@ -40,6 +40,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/portfolioquality"
 	"github.com/shizukutanaka/yagura/internal/prealloc"
 	"github.com/shizukutanaka/yagura/internal/predeclared"
+	"github.com/shizukutanaka/yagura/internal/processrisk"
 	"github.com/shizukutanaka/yagura/internal/qualitycheck"
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/regress"
@@ -1826,6 +1827,89 @@ func buildOwnershipTool(d Deps) *Tool {
 				"minor_threshold":   ownership.MinorThreshold,
 				"research_metrics":  []string{"total_contributors", "minor_contributors", "major_contributors", "ownership"},
 				"extension_metrics": []string{"ai_proportion", "human_ownership", "top_human_owner", "fully_ai_authored"},
+			}, nil
+		},
+	}
+}
+
+// buildProcessRiskTool は churn(v0.119.0)と ownership(v0.120.0)の
+// **プロセス指標のみ**を合成して順位付けする(v0.121.0)。
+//
+// 研究的根拠: Rahman & Devanbu (ICSE 2013) と Majumder/Mody/Menzies (EMSE 2022、
+// 700 プロジェクト / 722,471 コミット)——プロセス指標 AUC ~95% に対し製品指標は
+// ~54%(ほぼ偶然)。よって複雑度は **表示のみで採点に使わない**。
+// v0.119.0 の churn RiskScore(相対churn × 複雑度)への自己反証でもある。
+func buildProcessRiskTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_process_risk",
+		Title:       "Process-Metric Risk (churn + ownership)",
+		Description: "[S] Rank files by PROCESS metrics only (churn + ownership); complexity shown but not scored (product metrics ~AUC 54%). Needs only a slug.",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"slug":        map[string]any{"type": "string", "description": "registered project slug"},
+				"max_commits": map[string]any{"type": "integer", "description": "commits to walk back (default 500)"},
+				"limit":       map[string]any{"type": "integer", "description": "max files to return"},
+			},
+			"required": []string{"slug"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			if d.Registry == nil {
+				return nil, &ToolError{Code: "unavailable", Message: "registry not configured"}
+			}
+			var in struct {
+				Slug       string `json:"slug"`
+				MaxCommits int    `json:"max_commits"`
+				Limit      int    `json:"limit"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if in.Slug == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
+			}
+			p, err := d.Registry.Get(in.Slug)
+			if err != nil || p == nil {
+				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
+			}
+			if p.LocalPath == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "project has no local_path; set it with yagura_update"}
+			}
+			logOut, err := churn.ReadGitLog(ctx, p.LocalPath, in.MaxCommits)
+			if err != nil {
+				return nil, &ToolError{Code: "no_history", Message: err.Error()}
+			}
+			commits, err := churn.Parse(logOut)
+			if err != nil {
+				return nil, &ToolError{Code: "parse_failed", Cause: err}
+			}
+			sr, err := srcfiles.ReadGo(p.LocalPath)
+			if err != nil {
+				return nil, &ToolError{Code: "read_failed", Message: err.Error()}
+			}
+			sizes := make(map[string]int, len(sr.Files))
+			only := make(map[string]bool, len(sr.Files))
+			for path, content := range sr.Files {
+				sizes[path] = strings.Count(content, "\n") + 1
+				only[path] = true
+			}
+			cx := map[string]int{}
+			for _, f := range complexity.Scan(sr.Files, 10).Functions {
+				if f.Complexity > cx[f.File] {
+					cx[f.File] = f.Complexity
+				}
+			}
+			chRep := churn.Analyze(commits, sizes, cx)
+			ownRep := ownership.Analyze(commits, only)
+			rep := processrisk.Score(chRep.Files, ownRep.Files)
+			if in.Limit > 0 && len(rep.Files) > in.Limit {
+				rep.Files = rep.Files[:in.Limit]
+			}
+			return map[string]any{
+				"slug":       in.Slug,
+				"report":     rep,
+				"incomplete": sr.Incomplete(),
 			}, nil
 		},
 	}

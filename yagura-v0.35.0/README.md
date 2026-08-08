@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.120.0** — 104 MCP tools, 90 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Behavioral code analysis (research-grounded):** `yagura_churn_risk` (relative churn, Nagappan & Ball ICSE 2005) and `yagura_ownership` (Minor/Major/Total/Ownership, Bird et al. FSE 2011) add the temporal and authorship axes every earlier lens lacked — plus an explicitly-labeled AI-authorship extension. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.121.0** — 105 MCP tools, 91 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Process metrics over product metrics:** `yagura_process_risk` ranks files using churn + ownership only, deliberately excluding complexity from the score — Majumder/Mody/Menzies (EMSE 2022, 700 projects / 722k commits) measured product metrics at AUC ~54% (near-random) against ~95% for process metrics. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -193,7 +193,7 @@ normalization for programmatic use, and `/metrics` exports per-project, per-tool
 agent activity (`yagura_hook_tool_calls_total{project,tool}`, aligned to the
 OTel `gen_ai.tool.name` convention) for Prometheus/Grafana.
 
-## MCP tools (104 total)
+## MCP tools (105 total)
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback), following the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-116 consecutive releases (v0.6 → v0.120.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+117 consecutive releases (v0.6 → v0.121.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
@@ -267,7 +267,7 @@ sha256sum -c SHA256SUMS
 ```
 .
 ├── cmd/yagura/              # Entry point (single binary)
-├── internal/                # 90 packages, none exported
+├── internal/                # 91 packages, none exported
 │   ├── mcp/                 # MCP server, tool registration
 │   ├── registry/            # Project registry (JSON file per project)
 │   ├── scanner/             # Background sensor loop (24 h)
