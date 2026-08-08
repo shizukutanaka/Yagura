@@ -1,0 +1,2638 @@
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/CHANGELOG.md /home/user/Yagura/yagura-v0.35.0/CHANGELOG.md
+--- /tmp/pgA/prev/yagura-v0.35.0/CHANGELOG.md	2026-06-09 04:16:16.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/CHANGELOG.md	2026-06-09 08:47:59.404000926 +0000
+@@ -15,6 +15,49 @@
+ 
+ ### What's new
+ 
++- **claudemd-audit: CLAUDE.md の構造を決定論的に監査(汎用ハーネス強化)**
++  (`internal/harness.AuditClaudeMd` + CLI `claudemd-audit`)。Claude Code memory ガイドの
++  構造原則を lint 化:4 セクション(Why=背景/禁止理由、Map=ファイル地図、Rules=コードから
++  推論不可能なルール、Workflows=常用コマンド)の有無、H1 タイトル、命令(箇条書き/番号付き)
++  総数の予算(150-200 が上限、超過で重要ルールが埋もれる Lost in the Middle)。減点式 0-100 +
++  欠落セクション一覧 + 命令数 + remediation を返す。`## Why — 背景` のような em-dash 見出しも
++  検出。CLI は `claudemd-audit [file] --json --min-score N`(CI gate、既定 ./CLAUDE.md)。
++  既存 skill-audit / settings-audit / mcp-audit と同じ shape(Score + Issues + Suggestions)。
++  生成器 `internal/agentmd`(CLAUDE.md を作る)に対し、こちらは既存 CLAUDE.md を採点する監査器で
++  重複しない。test-first:正常 + 各異常系 10 ケースを先に固定(赤)→ 実装で緑。zero-dep。
++  新 MCP tool は追加せず(tool 数 62 維持)、新パッケージも増やさない(harness 内に追加)。
++  Synergy: cc-security がプロジェクト全体の姿勢を見るのに対し、claudemd-audit は中核設定
++  ファイル 1 枚の質を見る。両者で harness としての汎用監査カバレッジが広がる。
++  What's not yet: 「推論できることを書いていないか」の意味的判定(原理的に困難)、rules/ 分割提案。
++  Sources: Claude Code memory ガイド、CLAUDE.md 設計原則(150-200 命令上限 / Lost in the Middle)。
++- **cc-security: Claude Code プロジェクトの「最低限のセキュリティ対策」姿勢を決定論的に監査**
++  (`internal/ccsecurity` + CLI `cc-security`)。初心者向けセキュリティ対策の定番のうち、
++  ファイル構成・設定から機械判定できる部分集合を rule-based でスコア化する:
++  `.env` 等の機密ファイルをプロジェクト内に置いていないか(+ `.gitignore` 被覆)、
++  `--dangerously-skip-permissions` を settings/scripts/CLAUDE.md で使っていないか(CRITICAL)、
++  `.claude/settings.json` に permission の deny ルールがあるか、CLAUDE.md にセキュリティ
++  ルールが書かれているか、git でロールバック点を作れる状態か、MCP server を最小限に
++  しているか。減点式 0-100 スコア + practice ごとの pass/warn/fail + remediation を返す。
++  機械判定できない人手プロセス項目(学習データ off / spending limit / Plan Mode / /clear /
++  active session 確認 / 最新版維持 など 11 項目)は ManualPractices として常にガイダンス
++  提示する(「測れない=無い」ではなく「測れないが重要」)。ドメインは I/O を持たない
++  純粋関数 `Audit(Input) Report` で完全テスト可能、出力は ID 昇順で決定論的。CLI は
++  `cc-security [dir] --json --min-score N`(CI gate)。test-first:正常/各異常系 16 ケースを
++  先に固定(赤)→ 実装で緑。zero-dep(stdlib のみ)。
++  Synergy: settings-audit / mcp-audit / publicity-scan が個別 artifact を見るのに対し、
++  cc-security はプロジェクト全体の姿勢を 1 コマンドで俯瞰する上位ビュー。
++  What's not yet: 人手プロセス項目の自動判定(原理的に不可能なものが多い)、`.claudeignore`
++  解析、サブディレクトリ再帰。
++  Sources: ClaudeCode 初心者向けセキュリティ対策 18 選、Claude Code 公式 best practices。
++- **gha_audit: zizmor パリティ継続で supply-chain 検査を 11→12 に拡張(bot-conditions)**
++  (`internal/ghaaudit`)。`if: github.actor == 'dependabot[bot]'` のように `github.actor` を
++  bot login と比較する security gate を検出(zizmor: bot-conditions、MEDIUM)。`github.actor`
++  は spoof 可能なため bot 判定の信頼できる根拠にならず、特権ステップの gate に使うと bypass
++  されうる。actor が左右どちらでも(`==`/`!=`)検出し、推奨される robust signal
++  (`github.event.pull_request.user.login` / `github.event.sender.type == 'Bot'`)は flag
++  しない(false positive 削減)。`github.actor == 'octocat'`(非 bot)も対象外。tool
++  description / package doc / MCP_TOOLS.md を 12 に更新。test-first:検出 4 形 + 非 bot
++  クリーン + pull_request.user.login クリーンを先に固定(赤)→ 実装で緑。zero-dep。
+ - **fix(recovery): budget 1 で retry を返さない収束ガード(loop engineering)**
+   (`internal/recovery`)。recovery kernel は失敗を retry/replan/escalate に決定論的に
+   振り分け、budget(MaxAttempts、既定 3)を使い切ると terminal escalate/degrade する設計。
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/CLAUDE.md /home/user/Yagura/yagura-v0.35.0/CLAUDE.md
+--- /tmp/pgA/prev/yagura-v0.35.0/CLAUDE.md	2026-06-09 02:46:58.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/CLAUDE.md	2026-06-09 08:16:05.792305979 +0000
+@@ -21,7 +21,7 @@
+ - マルチエージェント orchestrator(MCP server 一品)
+ - code generation tool(yagura は audit/orchestrate のみ)
+ 
+-## Map — 50 internal packages
++## Map — 51 internal packages
+ 
+ ### Core orchestration
+ - `internal/registry` — 23+ projects の inventory CRUD
+@@ -44,6 +44,9 @@
+ - `internal/pindrift` — 依存 pin 漏れ検出
+ - `internal/aiverify` — AI 生成 code の risk pattern 検出 ★ v0.25
+ - `internal/testcoverage` — source-test 対応検出 ★ v0.26
++- `internal/ccsecurity` — Claude Code プロジェクトのセキュリティ姿勢を決定論的に監査
++  (機械判定可能な対策 = .env 同梱/危険フラグ/deny ルール/CLAUDE.md ルール/git/MCP 最小化 を
++  スコア化、人手プロセス項目はガイダンス提示。CLI `cc-security`)★ v0.36
+ 
+ ### Security sensors (observation)
+ - `internal/osv` — OSV.dev 脆弱性 API client
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/README.md /home/user/Yagura/yagura-v0.35.0/README.md
+--- /tmp/pgA/prev/yagura-v0.35.0/README.md	2026-06-08 08:38:40.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/README.md	2026-06-09 08:15:55.104306223 +0000
+@@ -10,7 +10,7 @@
+ 
+ **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
+ 
+-Status: **v0.35.0** — 62 MCP tools, 50 internal packages, CLI direct mode, 30 consecutive reproducible releases.
++Status: **v0.35.0** — 62 MCP tools, 51 internal packages, CLI direct mode, 30 consecutive reproducible releases.
+ 
+ ---
+ 
+@@ -266,7 +266,7 @@
+ ```
+ .
+ ├── cmd/yagura/              # Entry point (single binary)
+-├── internal/                # 50 packages, none exported
++├── internal/                # 51 packages, none exported
+ │   ├── mcp/                 # MCP server, tool registration
+ │   ├── registry/            # Project registry (JSON file per project)
+ │   ├── scanner/             # Background sensor loop (24 h)
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli.go
+--- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli.go	2026-06-07 23:57:43.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli.go	2026-06-09 08:45:34.000004252 +0000
+@@ -37,6 +37,7 @@
+ 	"time"
+ 
+ 	"github.com/shizukutanaka/yagura/internal/audit"
++	"github.com/shizukutanaka/yagura/internal/ccsecurity"
+ 	"github.com/shizukutanaka/yagura/internal/config"
+ 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+ 	"github.com/shizukutanaka/yagura/internal/github"
+@@ -68,7 +69,8 @@
+ 	"skill-audit": true, "workflow-audit": true, "settings-audit": true,
+ 	"agent-config-audit": true, "plugin-audit": true, "publicity-scan": true,
+ 	"mcp-audit": true, "vex-audit": true, "self-improve-history": true,
+-	"path-policy": true, "inject-scan": true,
++	"path-policy": true, "inject-scan": true, "cc-security": true,
++	"claudemd-audit": true,
+ }
+ 
+ // runCLI は direct-mode subcommand を実行し、プロセス exit code を返す。
+@@ -119,6 +121,10 @@
+ 		err = cliPathPolicy(args, stdout, stderr)
+ 	case "inject-scan":
+ 		err = cliInjectScan(args, stdout, stderr)
++	case "cc-security":
++		err = cliCCSecurity(args, stdout, stderr)
++	case "claudemd-audit":
++		err = cliClaudeMdAudit(args, stdout, stderr)
+ 	default:
+ 		fmt.Fprintf(stderr, "yagura: unknown command %q\n", verb)
+ 		return 2
+@@ -1344,6 +1350,146 @@
+ 	return minScoreGate(*minScore, scored)
+ }
+ 
++// cliCCSecurity は Claude Code を使うプロジェクトの「最低限のセキュリティ対策」
++// 姿勢を監査する。dir 配下のファイル構成・設定を集めて ccsecurity.Audit に渡す。
++// 機械判定できない人手プロセス項目はガイダンスとして併記する。
++func cliCCSecurity(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("cc-security", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	dir := fs.String("dir", ".", "project directory to audit")
++	minScore := fs.Int("min-score", 0, "exit non-zero if score < N (0=off, for CI gates)")
++	rest, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	target := *dir
++	if len(rest) > 0 {
++		target = rest[0]
++	}
++	in, err := gatherCCSecurityInput(target)
++	if err != nil {
++		return err
++	}
++	report := ccsecurity.Audit(in)
++	if *jsonOut {
++		if err := emitJSON(stdout, report); err != nil {
++			return err
++		}
++	} else {
++		humanCCSecurity(stdout, report)
++	}
++	if *minScore > 0 && report.Score < *minScore {
++		return fmt.Errorf("cc-security score %d is below --min-score %d", report.Score, *minScore)
++	}
++	return nil
++}
++
++// gatherCCSecurityInput はプロジェクト dir からセキュリティ監査に必要な事実を集める。
++// 存在しないファイルはエラーにせず欠落として扱う(他 audit と同じ graceful 挙動)。
++func gatherCCSecurityInput(dir string) (ccsecurity.Input, error) {
++	in := ccsecurity.Input{}
++
++	// .env 系ファイルの検出(dir 直下)。
++	entries, err := os.ReadDir(dir)
++	if err != nil {
++		return in, fmt.Errorf("read dir %s: %w", dir, err)
++	}
++	for _, e := range entries {
++		if e.IsDir() {
++			continue
++		}
++		name := e.Name()
++		if name == ".env" || strings.HasPrefix(name, ".env.") || strings.HasSuffix(name, ".env") {
++			in.EnvFiles = append(in.EnvFiles, name)
++		}
++	}
++	sort.Strings(in.EnvFiles)
++
++	// 主要ファイルの読み込み(best-effort)。
++	readIfExists := func(rel string) (string, bool) {
++		data, rerr := os.ReadFile(filepath.Join(dir, rel))
++		if rerr != nil {
++			return "", false
++		}
++		return string(data), true
++	}
++	if c, ok := readIfExists(".gitignore"); ok {
++		in.HasGitignore, in.Gitignore = true, c
++	}
++	if c, ok := readIfExists("CLAUDE.md"); ok {
++		in.HasClaudeMd, in.ClaudeMd = true, c
++	}
++	if c, ok := readIfExists(filepath.Join(".claude", "settings.json")); ok {
++		in.HasSettings, in.SettingsJSON = true, c
++		in.MCPServerCount = countMCPServers(c)
++	}
++	if _, ok := readIfExists("WORKLOG.md"); ok {
++		in.HasWorklog = true
++	}
++	if fi, serr := os.Stat(filepath.Join(dir, ".git")); serr == nil && fi.IsDir() {
++		in.HasGitDir = true
++	}
++
++	// --dangerously-skip-permissions 走査用に、shell / Makefile / md を集める。
++	for _, e := range entries {
++		if e.IsDir() {
++			continue
++		}
++		name := e.Name()
++		ext := strings.ToLower(filepath.Ext(name))
++		if ext == ".sh" || ext == ".bash" || name == "Makefile" || ext == ".md" {
++			if data, rerr := os.ReadFile(filepath.Join(dir, name)); rerr == nil {
++				in.ExtraText = append(in.ExtraText, ccsecurity.NamedText{Name: name, Text: string(data)})
++			}
++		}
++	}
++	return in, nil
++}
++
++// cliClaudeMdAudit は CLAUDE.md の構造(4 セクション / 命令数 / Lost in the Middle)
++// を監査する。引数省略時は ./CLAUDE.md を対象にする。
++func cliClaudeMdAudit(args []string, stdout, stderr io.Writer) error {
++	fs := newFlagSet("claudemd-audit", stderr)
++	jsonOut := fs.Bool("json", false, "JSON output")
++	file := fs.String("file", "CLAUDE.md", "path to the CLAUDE.md to audit")
++	minScore := fs.Int("min-score", 0, "exit non-zero if score < N (0=off, for CI gates)")
++	rest, err := parseArgs(fs, args)
++	if err != nil {
++		return errUsage
++	}
++	target := *file
++	if len(rest) > 0 {
++		target = rest[0]
++	}
++	data, err := os.ReadFile(target)
++	if err != nil {
++		return fmt.Errorf("read %s: %w", target, err)
++	}
++	res := harness.AuditClaudeMd(string(data))
++	if *jsonOut {
++		if err := emitJSON(stdout, res); err != nil {
++			return err
++		}
++	} else {
++		humanClaudeMdAudit(stdout, target, res)
++	}
++	if *minScore > 0 && res.Score < *minScore {
++		return fmt.Errorf("claudemd-audit score %d is below --min-score %d", res.Score, *minScore)
++	}
++	return nil
++}
++
++// countMCPServers は settings.json の mcpServers エントリ数を返す(失敗時 0)。
++func countMCPServers(settingsJSON string) int {
++	var doc struct {
++		MCPServers map[string]json.RawMessage `json:"mcpServers"`
++	}
++	if err := json.Unmarshal([]byte(settingsJSON), &doc); err != nil {
++		return 0
++	}
++	return len(doc.MCPServers)
++}
++
+ // ─── shared helpers ──────────────────────────────────────────
+ 
+ // filterProjects は stage/tag/language/query で registry を絞り込む。
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_ccsecurity_test.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_ccsecurity_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_ccsecurity_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_ccsecurity_test.go	2026-06-09 08:14:55.376307589 +0000
+@@ -0,0 +1,110 @@
++package main
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/ccsecurity"
++)
++
++// writeFile is a small helper for building a fixture project tree.
++func writeFile(t *testing.T, dir, rel, content string) {
++	t.Helper()
++	p := filepath.Join(dir, rel)
++	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestCLI_CCSecurity_CleanProject(t *testing.T) {
++	dir := t.TempDir()
++	writeFile(t, dir, "CLAUDE.md", "## セキュリティルール\n- .env を読まない\n")
++	writeFile(t, dir, ".claude/settings.json", `{"permissions":{"deny":["Read(./.env)"]}}`)
++	writeFile(t, dir, ".gitignore", ".env\n")
++	writeFile(t, dir, "WORKLOG.md", "- did stuff\n")
++	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
++		t.Fatal(err)
++	}
++
++	code, out, errOut := runCLICapture(t, "cc-security", "--dir", dir)
++	if code != 0 {
++		t.Fatalf("clean project should exit 0, got %d (stderr: %s)", code, errOut)
++	}
++	if !strings.Contains(out, "score: 100/100") {
++		t.Errorf("expected perfect score, got:\n%s", out)
++	}
++	// manual checklist is always present.
++	if !strings.Contains(out, "manual checklist") {
++		t.Errorf("manual checklist should always be shown:\n%s", out)
++	}
++}
++
++func TestCLI_CCSecurity_DetectsEnvAndDangerousFlag(t *testing.T) {
++	dir := t.TempDir()
++	writeFile(t, dir, ".env", "API_KEY=secret123\n")
++	writeFile(t, dir, "run.sh", "#!/bin/sh\nclaude --dangerously-skip-permissions\n")
++
++	code, out, _ := runCLICapture(t, "cc-security", "--dir", dir)
++	if code != 0 {
++		t.Fatalf("audit itself should exit 0 without --min-score, got %d", code)
++	}
++	if !strings.Contains(out, "P02-env-in-project") || !strings.Contains(out, "FAIL") {
++		t.Errorf("should report .env as a FAIL:\n%s", out)
++	}
++	if !strings.Contains(out, "P05-dangerous-skip") {
++		t.Errorf("should flag --dangerously-skip-permissions:\n%s", out)
++	}
++	if !strings.Contains(out, "run.sh") {
++		t.Errorf("should name run.sh as the source of the dangerous flag:\n%s", out)
++	}
++}
++
++func TestCLI_CCSecurity_JSONShape(t *testing.T) {
++	dir := t.TempDir()
++	writeFile(t, dir, ".env", "X=1\n")
++
++	code, out, _ := runCLICapture(t, "cc-security", "--dir", dir, "--json")
++	if code != 0 {
++		t.Fatalf("exit 0 expected, got %d", code)
++	}
++	var rep ccsecurity.Report
++	if err := json.Unmarshal([]byte(out), &rep); err != nil {
++		t.Fatalf("output is not valid ccsecurity.Report JSON: %v\n%s", err, out)
++	}
++	if rep.Score == 100 {
++		t.Errorf("score should be below 100 with an .env present, got %d", rep.Score)
++	}
++	if len(rep.ManualPractices) == 0 {
++		t.Error("JSON report should include manual practices")
++	}
++}
++
++func TestCLI_CCSecurity_MinScoreGate(t *testing.T) {
++	dir := t.TempDir()
++	// A bare project (no CLAUDE.md, no settings, no git, .env present) scores low.
++	writeFile(t, dir, ".env", "X=1\n")
++
++	code, _, errOut := runCLICapture(t, "cc-security", "--dir", dir, "--min-score", "90")
++	if code != 1 {
++		t.Fatalf("low score with --min-score 90 should exit 1, got %d (stderr: %s)", code, errOut)
++	}
++	if !strings.Contains(errOut, "below --min-score") {
++		t.Errorf("stderr should explain the gate failure: %s", errOut)
++	}
++}
++
++func TestCLI_CCSecurity_MissingDir(t *testing.T) {
++	code, _, errOut := runCLICapture(t, "cc-security", "--dir", filepath.Join(t.TempDir(), "does-not-exist"))
++	if code != 1 {
++		t.Fatalf("missing dir should exit 1, got %d", code)
++	}
++	if errOut == "" {
++		t.Error("expected an error message on stderr for a missing dir")
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_claudemd_test.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_claudemd_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_claudemd_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_claudemd_test.go	2026-06-09 08:46:31.616002934 +0000
+@@ -0,0 +1,81 @@
++package main
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/harness"
++)
++
++func TestCLI_ClaudeMdAudit_WellFormed(t *testing.T) {
++	dir := t.TempDir()
++	good := "# P CLAUDE.md\n\n## Why\nx\n## Map\n- a\n## Rules\n- r\n## Workflows\n- test: make test\n"
++	writeFile(t, dir, "CLAUDE.md", good)
++
++	code, out, errOut := runCLICapture(t, "claudemd-audit", "--file", filepath.Join(dir, "CLAUDE.md"))
++	if code != 0 {
++		t.Fatalf("well-formed should exit 0, got %d (stderr %s)", code, errOut)
++	}
++	if !strings.Contains(out, "score:") || !strings.Contains(out, "title: yes") {
++		t.Errorf("unexpected output:\n%s", out)
++	}
++}
++
++func TestCLI_ClaudeMdAudit_MissingSectionsJSON(t *testing.T) {
++	dir := t.TempDir()
++	writeFile(t, dir, "CLAUDE.md", "# P\n\n## Why\nx\n## Rules\n- r\n") // no Map/Workflows
++
++	code, out, _ := runCLICapture(t, "claudemd-audit", "--file", filepath.Join(dir, "CLAUDE.md"), "--json")
++	if code != 0 {
++		t.Fatalf("audit exit 0 expected, got %d", code)
++	}
++	var res harness.ClaudeMdAuditResult
++	if err := json.Unmarshal([]byte(out), &res); err != nil {
++		t.Fatalf("not valid ClaudeMdAuditResult JSON: %v\n%s", err, out)
++	}
++	if len(res.MissingSections) != 2 {
++		t.Errorf("expected 2 missing sections, got %v", res.MissingSections)
++	}
++}
++
++func TestCLI_ClaudeMdAudit_MinScoreGate(t *testing.T) {
++	dir := t.TempDir()
++	writeFile(t, dir, "CLAUDE.md", "just text, no structure\n")
++
++	code, _, errOut := runCLICapture(t, "claudemd-audit", "--file", filepath.Join(dir, "CLAUDE.md"), "--min-score", "90")
++	if code != 1 {
++		t.Fatalf("low score with --min-score 90 should exit 1, got %d", code)
++	}
++	if !strings.Contains(errOut, "below --min-score") {
++		t.Errorf("stderr should explain the gate failure: %s", errOut)
++	}
++}
++
++func TestCLI_ClaudeMdAudit_MissingFile(t *testing.T) {
++	code, _, errOut := runCLICapture(t, "claudemd-audit", "--file", filepath.Join(t.TempDir(), "nope.md"))
++	if code != 1 {
++		t.Fatalf("missing file should exit 1, got %d", code)
++	}
++	if errOut == "" {
++		t.Error("expected an error message for a missing file")
++	}
++}
++
++func TestCLI_ClaudeMdAudit_DefaultsToCLAUDEmd(t *testing.T) {
++	// Positional arg overrides the default; verify positional path works.
++	dir := t.TempDir()
++	p := filepath.Join(dir, "OTHER.md")
++	if err := os.WriteFile(p, []byte("# x\n## Why\na\n## Map\nb\n## Rules\nc\n## Workflows\nd\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	code, out, _ := runCLICapture(t, "claudemd-audit", p)
++	if code != 0 {
++		t.Fatalf("positional path should work, got exit %d", code)
++	}
++	if !strings.Contains(out, "OTHER.md") {
++		t.Errorf("output should name the audited file: %s", out)
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_format.go
+--- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format.go	2026-06-07 23:57:50.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_format.go	2026-06-09 08:45:40.856004095 +0000
+@@ -18,6 +18,7 @@
+ 	"time"
+ 
+ 	"github.com/shizukutanaka/yagura/internal/audit"
++	"github.com/shizukutanaka/yagura/internal/ccsecurity"
+ 	"github.com/shizukutanaka/yagura/internal/ghaaudit"
+ 	"github.com/shizukutanaka/yagura/internal/harness"
+ 	"github.com/shizukutanaka/yagura/internal/pathpolicy"
+@@ -557,6 +558,57 @@
+ 	}
+ }
+ 
++// ─── cc-security ─────────────────────────────────────────────
++
++func humanCCSecurity(w io.Writer, r ccsecurity.Report) {
++	fmt.Fprintf(w, "score: %d/100   checked: %d   passed: %d   warned: %d   failed: %d\n",
++		r.Score, r.Checked, r.Passed, r.Warned, r.Failed)
++	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
++	fmt.Fprintln(tw, "STATUS\tSEV\tID\tTITLE")
++	for _, p := range r.Practices {
++		sev := string(p.Severity)
++		if sev == "" {
++			sev = "-"
++		}
++		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", strings.ToUpper(string(p.Status)), sev, p.ID, p.Title)
++	}
++	_ = tw.Flush()
++	// fail / warn は detail と remediation を併記(人間が直せるように)。
++	for _, p := range r.Practices {
++		if p.Status == ccsecurity.StatusFail || p.Status == ccsecurity.StatusWarn {
++			fmt.Fprintf(w, "  %s: %s\n", p.ID, p.Detail)
++			if p.Remediation != "" {
++				fmt.Fprintf(w, "    → %s\n", p.Remediation)
++			}
++		}
++	}
++	// 機械判定できない人手プロセス項目をガイダンスとして提示。
++	if len(r.ManualPractices) > 0 {
++		fmt.Fprintln(w, "manual checklist (not machine-checked):")
++		for _, m := range r.ManualPractices {
++			fmt.Fprintf(w, "  [ ] %s  (%s)\n", m.Title, m.ID)
++		}
++	}
++}
++
++// ─── claudemd-audit ──────────────────────────────────────────
++
++func humanClaudeMdAudit(w io.Writer, path string, r harness.ClaudeMdAuditResult) {
++	fmt.Fprintf(w, "%s\n", path)
++	fmt.Fprintf(w, "score: %d/100   title: %s   sections: %s   instructions: %d\n",
++		r.Score, yesNo(r.HasTitle),
++		dash(strings.Join(r.SectionsFound, "+")), r.InstructionCount)
++	if len(r.MissingSections) > 0 {
++		fmt.Fprintf(w, "missing sections: %s\n", strings.Join(r.MissingSections, ", "))
++	}
++	for _, iss := range r.Issues {
++		fmt.Fprintf(w, "  issue: %s\n", iss)
++	}
++	for _, s := range r.Suggestions {
++		fmt.Fprintf(w, "  suggest: %s\n", s)
++	}
++}
++
+ // ─── small helpers ───────────────────────────────────────────
+ 
+ func dash(s string) string {
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format_test.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_format_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/cli_format_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/cli_format_test.go	2026-06-09 07:17:29.197483346 +0000
+@@ -0,0 +1,150 @@
++// cli_format_test.go — tests for the human-readable CLI formatters. These were
++// at 0% coverage; they are pure functions writing to an io.Writer, so each test
++// renders into a bytes.Buffer and asserts on the emitted text.
++package main
++
++import (
++	"bytes"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/harness"
++	"github.com/shizukutanaka/yagura/internal/pindrift"
++	"github.com/shizukutanaka/yagura/internal/sbom"
++)
++
++func TestShortSHA(t *testing.T) {
++	cases := []struct{ in, want string }{
++		{"", ""},
++		{"abc", "abc"},
++		{"123456789012", "123456789012"},  // exactly 12 → unchanged
++		{"1234567890123", "123456789012"}, // 13 → truncated to 12
++		{"11bd71901bbe5b1630ceea73d27597364c", "11bd71901bbe"},
++	}
++	for _, c := range cases {
++		if got := shortSHA(c.in); got != c.want {
++			t.Errorf("shortSHA(%q) = %q, want %q", c.in, got, c.want)
++		}
++	}
++}
++
++func TestDash(t *testing.T) {
++	if dash("") != "-" {
++		t.Error("empty string should render as -")
++	}
++	if dash("go1.22") != "go1.22" {
++		t.Error("non-empty string should pass through")
++	}
++}
++
++func TestYesNo(t *testing.T) {
++	if yesNo(true) != "yes" || yesNo(false) != "no" {
++		t.Error("yesNo mapping wrong")
++	}
++}
++
++func TestHumanStats(t *testing.T) {
++	var b bytes.Buffer
++	humanStats(&b, statsView{
++		Total:            5,
++		TotalOpenPRs:     2,
++		TotalOpenIssues:  3,
++		StaleActiveCount: 1,
++		AvgPriority:      2.5,
++		ByStage:          map[string]int{"active": 4, "archived": 1},
++		ByLanguage:       map[string]int{"Go": 5},
++	})
++	out := b.String()
++	for _, want := range []string{"total: 5", "open PRs: 2", "avg priority: 2.50", "by stage:", "active", "by language:", "Go"} {
++		if !strings.Contains(out, want) {
++			t.Errorf("humanStats output missing %q\n---\n%s", want, out)
++		}
++	}
++}
++
++func TestPrintCountMap_EmptyIsSilent(t *testing.T) {
++	var b bytes.Buffer
++	printCountMap(&b, "by stage", map[string]int{})
++	if b.Len() != 0 {
++		t.Errorf("empty map should print nothing, got %q", b.String())
++	}
++}
++
++func TestPrintCountMap_SortedKeys(t *testing.T) {
++	var b bytes.Buffer
++	printCountMap(&b, "by lang", map[string]int{"zeta": 1, "alpha": 2})
++	out := b.String()
++	if strings.Index(out, "alpha") > strings.Index(out, "zeta") {
++		t.Errorf("keys must be sorted (alpha before zeta): %q", out)
++	}
++}
++
++func TestHumanSbom(t *testing.T) {
++	var b bytes.Buffer
++	bom := &sbom.Bom{
++		SpecVersion: "1.5",
++		Metadata:    sbom.Metadata{},
++		Components: []sbom.Component{
++			{Name: "stdlib", Version: "go1.22"},
++		},
++	}
++	humanSbom(&b, bom)
++	out := b.String()
++	if !strings.Contains(out, "CycloneDX 1.5") {
++		t.Errorf("expected spec line, got: %s", out)
++	}
++	if !strings.Contains(out, "components:") || !strings.Contains(out, "stdlib") {
++		t.Errorf("expected component listing, got: %s", out)
++	}
++}
++
++func TestHumanSbom_NoComponents(t *testing.T) {
++	var b bytes.Buffer
++	humanSbom(&b, &sbom.Bom{SpecVersion: "1.5"})
++	// The summary line legitimately reads "components: 0"; what must be absent
++	// is the standalone listing header line ("components:\n") and any rows.
++	if strings.Contains(b.String(), "components:\n") {
++		t.Errorf("no components should omit the components: listing header, got: %s", b.String())
++	}
++}
++
++func TestHumanPinDrift(t *testing.T) {
++	var b bytes.Buffer
++	results := []pindrift.Result{
++		{
++			Pin:    pindrift.Pin{Owner: "actions", Repo: "checkout", PinnedSHA: "11bd71901bbe5b1630ceea73d27597364c9af683"},
++			Status: pindrift.StatusOK,
++			Detail: "ok",
++		},
++	}
++	humanPinDrift(&b, results)
++	out := b.String()
++	for _, want := range []string{"total_pins: 1", "actions/checkout", "11bd71901bbe", "OK"} {
++		if !strings.Contains(out, want) {
++			t.Errorf("humanPinDrift output missing %q\n---\n%s", want, out)
++		}
++	}
++	// SHA must be truncated, not full.
++	if strings.Contains(out, "11bd71901bbe5b1630") {
++		t.Errorf("SHA should be shortened in output: %s", out)
++	}
++}
++
++func TestWorkflowShape(t *testing.T) {
++	cases := []struct {
++		r    harness.WorkflowAuditResult
++		want string
++	}{
++		{harness.WorkflowAuditResult{}, "-"},
++		{harness.WorkflowAuditResult{UsesParallel: true}, "parallel"},
++		{harness.WorkflowAuditResult{UsesPipeline: true}, "pipeline"},
++		{harness.WorkflowAuditResult{HasLoop: true}, "loop"},
++		{harness.WorkflowAuditResult{UsesParallel: true, HasLoop: true}, "parallel+loop"},
++		{harness.WorkflowAuditResult{UsesParallel: true, UsesPipeline: true, HasLoop: true}, "parallel+pipeline+loop"},
++	}
++	for _, c := range cases {
++		if got := workflowShape(c.r); got != c.want {
++			t.Errorf("workflowShape(%+v) = %q, want %q", c.r, got, c.want)
++		}
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/main.go /home/user/Yagura/yagura-v0.35.0/cmd/yagura/main.go
+--- /tmp/pgA/prev/yagura-v0.35.0/cmd/yagura/main.go	2026-06-08 14:06:14.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/cmd/yagura/main.go	2026-06-09 08:45:46.536003965 +0000
+@@ -150,6 +150,8 @@
+   yagura self-improve-history              Show the recorded RSI self-assessment trajectory
+   yagura path-policy [paths…]              Gate changed paths against .yagura/paths.json (--strict for CI)
+   yagura inject-scan [path]                Scan untrusted content for indirect prompt injection (--strict)
++  yagura cc-security [dir]                 Audit a project's Claude Code security posture (--min-score for CI)
++  yagura claudemd-audit [file]             Audit CLAUDE.md structure (4 sections, instruction budget)
+   Add --json to any of the above for machine-readable output.
+   pin-drift needs YAGURA_GITHUB_TOKEN (GitHub API SHA verification).
+ 
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/docs/MCP_TOOLS.md /home/user/Yagura/yagura-v0.35.0/docs/MCP_TOOLS.md
+--- /tmp/pgA/prev/yagura-v0.35.0/docs/MCP_TOOLS.md	2026-06-08 15:19:34.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/docs/MCP_TOOLS.md	2026-06-09 04:28:32.766641610 +0000
+@@ -720,7 +720,7 @@
+ 
+ ### `yagura_gha_audit`
+ 
+-[G] GHA workflow audit: 9 supply-chain risk patterns.
++[G] GHA workflow audit: 12 supply-chain risk patterns.
+ 
+ **Arguments:**
+ 
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ccsecurity/ccsecurity.go /home/user/Yagura/yagura-v0.35.0/internal/ccsecurity/ccsecurity.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/ccsecurity/ccsecurity.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/ccsecurity/ccsecurity.go	2026-06-09 08:13:02.324310175 +0000
+@@ -0,0 +1,344 @@
++// Package ccsecurity は Claude Code を使うプロジェクトの「セキュリティ姿勢」を
++// 決定論的に監査する。
++//
++// 動機:
++//
++//	Claude Code 初心者向けの定番セキュリティ対策(機密ファイルを置かない、
++//	--dangerously-skip-permissions を使わない、permission の deny ルールを置く、
++//	CLAUDE.md にセキュリティルールを書く、git でロールバック点を作る、MCP server を
++//	最小限にする…)の多くは、プロジェクトのファイル構成・設定から機械的に判定できる。
++//	yagura の他の audit と同様、rule-based・zero-dep・deterministic に「今この
++//	プロジェクトは最低限の対策ができているか」をスコア化する。
++//
++// 設計判断:
++//   - ドメインは I/O を持たない純粋関数 Audit(Input) Report。ファイル存在の探索や
++//     読み込みは呼出側(CLI)が行い、抽出済みの事実 + 必要な本文だけを Input で渡す。
++//     これによりロジックが完全にテスト可能になり、scanner 専用の trust base も汚さない。
++//   - 機械判定できない人手プロセス項目(学習データ off / spending limit / active
++//     session 確認 / Plan Mode / /clear など)はスコアに含めず、ManualPractices として
++//     常にガイダンス提示する(「測れないから無い」ではなく「測れないが重要」)。
++//   - 出力は ID 昇順で決定論的。
++package ccsecurity
++
++import (
++	"encoding/json"
++	"fmt"
++	"regexp"
++	"sort"
++	"strings"
++)
++
++// Severity は finding の深刻度。
++type Severity string
++
++const (
++	SevCritical Severity = "CRITICAL"
++	SevHigh     Severity = "HIGH"
++	SevMedium   Severity = "MEDIUM"
++	SevLow      Severity = "LOW"
++	SevNone     Severity = "" // pass / n-a
++)
++
++// Status は 1 つの practice の判定結果。
++type Status string
++
++const (
++	StatusPass Status = "pass"
++	StatusWarn Status = "warn"
++	StatusFail Status = "fail"
++	StatusNA   Status = "n/a"
++)
++
++// Practice は機械判定した 1 項目の結果。
++type Practice struct {
++	ID          string   `json:"id"`
++	Title       string   `json:"title"`
++	Status      Status   `json:"status"`
++	Severity    Severity `json:"severity,omitempty"`
++	Detail      string   `json:"detail,omitempty"`
++	Remediation string   `json:"remediation,omitempty"`
++}
++
++// ManualPractice は機械判定できない人手プロセス項目(ガイダンス用)。
++type ManualPractice struct {
++	ID    string `json:"id"`
++	Title string `json:"title"`
++}
++
++// Report は監査結果。
++type Report struct {
++	Score           int              `json:"score"` // 0-100, 機械判定項目に対する減点式
++	Checked         int              `json:"checked"`
++	Passed          int              `json:"passed"`
++	Warned          int              `json:"warned"`
++	Failed          int              `json:"failed"`
++	Practices       []Practice       `json:"practices"`
++	ManualPractices []ManualPractice `json:"manual_practices"`
++}
++
++// NamedText は走査対象の補助ファイル(scripts / README など)。
++type NamedText struct {
++	Name string `json:"name"`
++	Text string `json:"text"`
++}
++
++// Input は監査に必要な、呼出側が収集済みの事実。
++type Input struct {
++	EnvFiles       []string    `json:"env_files,omitempty"` // プロジェクト内で見つかった .env 系ファイル名
++	HasGitignore   bool        `json:"has_gitignore"`
++	Gitignore      string      `json:"gitignore,omitempty"`
++	HasGitDir      bool        `json:"has_git_dir"`
++	HasClaudeMd    bool        `json:"has_claude_md"`
++	ClaudeMd       string      `json:"claude_md,omitempty"`
++	HasSettings    bool        `json:"has_settings"`
++	SettingsJSON   string      `json:"settings_json,omitempty"`
++	HasWorklog     bool        `json:"has_worklog"`
++	MCPServerCount int         `json:"mcp_server_count"`
++	ExtraText      []NamedText `json:"extra_text,omitempty"` // scripts / docs(危険フラグ走査用)
++}
++
++// mcpServerWarnThreshold を超える MCP server 数は「本当に全部使うか」の review nudge。
++const mcpServerWarnThreshold = 6
++
++var (
++	reDangerousSkip = regexp.MustCompile(`--dangerously-skip-permissions`)
++	// CLAUDE.md がセキュリティルールに言及しているかの緩い判定。
++	reSecurityKeyword = regexp.MustCompile(`(?i)(\.env|secret|credential|token|rm -rf|dangerously|機密|セキュリティ|security)`)
++)
++
++// Audit は Input を評価して Report を返す。純粋関数・決定論的。
++func Audit(in Input) Report {
++	score := 100
++	var ps []Practice
++
++	// ── P05: --dangerously-skip-permissions を使っていないか(最優先)──
++	if files := scanDangerousSkip(in); len(files) > 0 {
++		score -= 40
++		ps = append(ps, Practice{
++			ID: "P05-dangerous-skip", Title: "Never use --dangerously-skip-permissions",
++			Status: StatusFail, Severity: SevCritical,
++			Detail:      "found in: " + strings.Join(files, ", "),
++			Remediation: "remove the flag; approve operations individually instead",
++		})
++	} else {
++		ps = append(ps, Practice{
++			ID: "P05-dangerous-skip", Title: "Never use --dangerously-skip-permissions",
++			Status: StatusPass,
++		})
++	}
++
++	// ── P02: .env / 機密ファイルをプロジェクト内に置いていないか ──
++	if len(in.EnvFiles) > 0 {
++		score -= 25
++		ps = append(ps, Practice{
++			ID: "P02-env-in-project", Title: "Keep .env / secrets out of the project folder",
++			Status: StatusFail, Severity: SevHigh,
++			Detail:      "found: " + strings.Join(in.EnvFiles, ", "),
++			Remediation: "move secret files outside the project, or use a secret manager / env vars",
++		})
++		// P02-gitignore: .env があるなら最低限 gitignore で守られているか。
++		if envCoveredByGitignore(in.Gitignore) {
++			ps = append(ps, Practice{
++				ID: "P02-env-gitignore", Title: ".env is covered by .gitignore",
++				Status: StatusPass,
++			})
++		} else {
++			score -= 10
++			ps = append(ps, Practice{
++				ID: "P02-env-gitignore", Title: ".env is covered by .gitignore",
++				Status: StatusFail, Severity: SevMedium,
++				Detail:      "an .env file is present but .gitignore does not exclude it",
++				Remediation: "add `.env` to .gitignore (and prefer not keeping it in-project at all)",
++			})
++		}
++	} else {
++		ps = append(ps, Practice{
++			ID: "P02-env-in-project", Title: "Keep .env / secrets out of the project folder",
++			Status: StatusPass,
++		})
++	}
++
++	// ── P06: settings.json に permission の deny ルールがあるか ──
++	switch {
++	case !in.HasSettings:
++		score -= 12
++		ps = append(ps, Practice{
++			ID: "P06-permission-deny", Title: "Configure permission deny rules",
++			Status: StatusWarn, Severity: SevMedium,
++			Detail:      "no .claude/settings.json — no permission guardrails are configured",
++			Remediation: "add a settings.json with a permissions.deny list (e.g. Read(./.env), Bash(rm -rf*))",
++		})
++	case hasDenyRules(in.SettingsJSON):
++		ps = append(ps, Practice{
++			ID: "P06-permission-deny", Title: "Configure permission deny rules",
++			Status: StatusPass,
++		})
++	default:
++		score -= 8
++		ps = append(ps, Practice{
++			ID: "P06-permission-deny", Title: "Configure permission deny rules",
++			Status: StatusWarn, Severity: SevLow,
++			Detail:      "settings.json has no permissions.deny entries",
++			Remediation: "add a permissions.deny list to block secret reads and destructive commands",
++		})
++	}
++
++	// ── P07: CLAUDE.md にセキュリティルールが書かれているか ──
++	switch {
++	case !in.HasClaudeMd:
++		score -= 15
++		ps = append(ps, Practice{
++			ID: "P07-claude-md-rules", Title: "Write security rules in CLAUDE.md",
++			Status: StatusWarn, Severity: SevMedium,
++			Detail:      "no CLAUDE.md — Claude Code has no project-level security rules to follow",
++			Remediation: "add CLAUDE.md with rules (never read .env/secrets, confirm rm -rf / external curl)",
++		})
++	case reSecurityKeyword.MatchString(in.ClaudeMd):
++		ps = append(ps, Practice{
++			ID: "P07-claude-md-rules", Title: "Write security rules in CLAUDE.md",
++			Status: StatusPass,
++		})
++	default:
++		score -= 8
++		ps = append(ps, Practice{
++			ID: "P07-claude-md-rules", Title: "Write security rules in CLAUDE.md",
++			Status: StatusWarn, Severity: SevLow,
++			Detail:      "CLAUDE.md exists but mentions no security rules",
++			Remediation: "add a security section (secrets, destructive commands, external URLs)",
++		})
++	}
++
++	// ── P08: git でロールバック点を作れる状態か ──
++	if in.HasGitDir {
++		ps = append(ps, Practice{
++			ID: "P08-git-rollback", Title: "Use git for a rollback point before big changes",
++			Status: StatusPass,
++		})
++	} else {
++		score -= 5
++		ps = append(ps, Practice{
++			ID: "P08-git-rollback", Title: "Use git for a rollback point before big changes",
++			Status: StatusWarn, Severity: SevLow,
++			Detail:      "no .git — there is no commit to roll back to if a change goes wrong",
++			Remediation: "git init and commit before letting Claude Code make large changes",
++		})
++	}
++
++	// ── P12: MCP server を最小限にしているか ──
++	if in.MCPServerCount > mcpServerWarnThreshold {
++		score -= 5
++		ps = append(ps, Practice{
++			ID: "P12-mcp-minimal", Title: "Enable only the MCP servers you use",
++			Status: StatusWarn, Severity: SevLow,
++			Detail:      fmt.Sprintf("%d MCP servers configured — each widens what data is reachable", in.MCPServerCount),
++			Remediation: "remove MCP servers you are not actively using",
++		})
++	} else {
++		ps = append(ps, Practice{
++			ID: "P12-mcp-minimal", Title: "Enable only the MCP servers you use",
++			Status: StatusPass,
++		})
++	}
++
++	// ── P16: WORKLOG を残しているか(suggestion 寄り、減点は軽微なし)──
++	if in.HasWorklog {
++		ps = append(ps, Practice{
++			ID: "P16-worklog", Title: "Keep a WORKLOG of what you asked Claude Code to do",
++			Status: StatusPass,
++		})
++	} else {
++		ps = append(ps, Practice{
++			ID: "P16-worklog", Title: "Keep a WORKLOG of what you asked Claude Code to do",
++			Status: StatusWarn, Severity: SevLow,
++			Detail:      "no WORKLOG.md — harder to trace what was done if something breaks",
++			Remediation: "keep a WORKLOG.md (or detailed commit messages)",
++		})
++	}
++
++	if score < 0 {
++		score = 0
++	}
++	if score > 100 {
++		score = 100
++	}
++
++	sort.Slice(ps, func(i, j int) bool { return ps[i].ID < ps[j].ID })
++
++	r := Report{Score: score, Practices: ps, ManualPractices: manualPractices()}
++	for _, p := range ps {
++		r.Checked++
++		switch p.Status {
++		case StatusPass:
++			r.Passed++
++		case StatusWarn:
++			r.Warned++
++		case StatusFail:
++			r.Failed++
++		}
++	}
++	return r
++}
++
++// scanDangerousSkip は settings / CLAUDE.md / ExtraText から
++// --dangerously-skip-permissions を含む source 名を昇順で返す。
++func scanDangerousSkip(in Input) []string {
++	var hits []string
++	if reDangerousSkip.MatchString(in.SettingsJSON) {
++		hits = append(hits, "settings.json")
++	}
++	if reDangerousSkip.MatchString(in.ClaudeMd) {
++		hits = append(hits, "CLAUDE.md")
++	}
++	for _, t := range in.ExtraText {
++		if reDangerousSkip.MatchString(t.Text) {
++			hits = append(hits, t.Name)
++		}
++	}
++	sort.Strings(hits)
++	return hits
++}
++
++// envCoveredByGitignore は .gitignore が .env を除外しているかを緩く判定する。
++func envCoveredByGitignore(gitignore string) bool {
++	for _, line := range strings.Split(gitignore, "\n") {
++		line = strings.TrimSpace(line)
++		if line == "" || strings.HasPrefix(line, "#") {
++			continue
++		}
++		// ".env" / "*.env" / ".env*" を許容。
++		if line == ".env" || line == "*.env" || strings.HasPrefix(line, ".env") {
++			return true
++		}
++	}
++	return false
++}
++
++// hasDenyRules は settings.json の permissions.deny が非空かを返す。
++func hasDenyRules(settingsJSON string) bool {
++	var doc struct {
++		Permissions struct {
++			Deny []string `json:"deny"`
++		} `json:"permissions"`
++	}
++	if err := json.Unmarshal([]byte(settingsJSON), &doc); err != nil {
++		return false
++	}
++	return len(doc.Permissions.Deny) > 0
++}
++
++// manualPractices は機械判定できない人手プロセス項目(常にガイダンス提示)。
++func manualPractices() []ManualPractice {
++	return []ManualPractice{
++		{"P01-dedicated-folder", "Launch Claude Code only inside a dedicated project folder"},
++		{"P03-training-optout", "Turn off Claude training-data usage in privacy settings"},
++		{"P04-plan-mode", "Use Plan Mode: review the plan before executing"},
++		{"P09-untrusted-clone", "Don't run Claude Code on untrusted cloned repositories"},
++		{"P10-spending-limit", "Set a spending limit on your Anthropic API key"},
++		{"P11-no-secrets-in-chat", "Never paste passwords/API keys into the chat"},
++		{"P13-clear-context", "Use /clear to reset context, especially after sensitive work"},
++		{"P14-review-before-commit", "Visually review Claude-written code before committing"},
++		{"P15-no-raw-external-urls", "Don't paste untrusted external URLs into the prompt"},
++		{"P17-active-sessions", "Periodically review active sessions in claude.ai settings"},
++		{"P18-keep-updated", "Keep Claude Code updated to the latest version"},
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ccsecurity/ccsecurity_test.go /home/user/Yagura/yagura-v0.35.0/internal/ccsecurity/ccsecurity_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/ccsecurity/ccsecurity_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/ccsecurity/ccsecurity_test.go	2026-06-09 08:11:57.072311667 +0000
+@@ -0,0 +1,221 @@
++package ccsecurity
++
++import (
++	"strings"
++	"testing"
++)
++
++func hasPractice(rs []Practice, id string) *Practice {
++	for i := range rs {
++		if rs[i].ID == id {
++			return &rs[i]
++		}
++	}
++	return nil
++}
++
++// 完全にクリーンなプロジェクト: env なし / dangerous flag なし / CLAUDE.md に
++// セキュリティルールあり / settings に deny / git あり / WORKLOG あり。
++func cleanInput() Input {
++	return Input{
++		HasGitDir:    true,
++		HasClaudeMd:  true,
++		ClaudeMd:     "## セキュリティ最優先ルール\n- .env や secret を読まない\n- rm -rf は確認する",
++		HasSettings:  true,
++		SettingsJSON: `{"permissions":{"deny":["Read(./.env)","Bash(rm -rf*)"]}}`,
++		HasGitignore: true,
++		Gitignore:    ".env\nnode_modules/\n",
++		HasWorklog:   true,
++	}
++}
++
++func TestAudit_CleanProjectScoresHigh(t *testing.T) {
++	r := Audit(cleanInput())
++	if r.Score != 100 {
++		t.Errorf("clean project should score 100, got %d (practices: %+v)", r.Score, r.Practices)
++	}
++	if r.Failed != 0 {
++		t.Errorf("clean project should have 0 failures, got %d", r.Failed)
++	}
++	// マニュアル項目は常にガイダンスとして提示される。
++	if len(r.ManualPractices) == 0 {
++		t.Error("manual (human-process) practices must always be listed as guidance")
++	}
++}
++
++func TestAudit_EnvFileInProjectIsHighFinding(t *testing.T) {
++	in := cleanInput()
++	in.EnvFiles = []string{".env", ".env.local"}
++	r := Audit(in)
++	p := hasPractice(r.Practices, "P02-env-in-project")
++	if p == nil || p.Status != StatusFail {
++		t.Fatalf("P02 should FAIL when .env present: %+v", p)
++	}
++	if p.Severity != SevHigh {
++		t.Errorf("P02 should be HIGH, got %s", p.Severity)
++	}
++	if !strings.Contains(p.Detail, ".env.local") {
++		t.Errorf("P02 detail should name the offending files: %q", p.Detail)
++	}
++	if r.Score >= 100 {
++		t.Errorf("score should drop below 100 with an .env present, got %d", r.Score)
++	}
++}
++
++func TestAudit_EnvNotGitignoredAddsGap(t *testing.T) {
++	in := cleanInput()
++	in.EnvFiles = []string{".env"}
++	in.Gitignore = "node_modules/\n" // does NOT cover .env
++	r := Audit(in)
++	g := hasPractice(r.Practices, "P02-env-gitignore")
++	if g == nil || g.Status != StatusFail {
++		t.Fatalf("P02-env-gitignore should FAIL when .env is not ignored: %+v", g)
++	}
++}
++
++func TestAudit_EnvGitignoredNoGap(t *testing.T) {
++	in := cleanInput()
++	in.EnvFiles = []string{".env"}
++	in.Gitignore = ".env\n"
++	r := Audit(in)
++	g := hasPractice(r.Practices, "P02-env-gitignore")
++	if g == nil || g.Status != StatusPass {
++		t.Fatalf("gitignored .env should PASS the gitignore check: %+v", g)
++	}
++}
++
++func TestAudit_DangerousSkipFlagIsCritical(t *testing.T) {
++	in := cleanInput()
++	in.ExtraText = []NamedText{{Name: "run.sh", Text: "claude --dangerously-skip-permissions"}}
++	r := Audit(in)
++	p := hasPractice(r.Practices, "P05-dangerous-skip")
++	if p == nil || p.Status != StatusFail {
++		t.Fatalf("P05 should FAIL when the dangerous flag appears: %+v", p)
++	}
++	if p.Severity != SevCritical {
++		t.Errorf("P05 must be CRITICAL, got %s", p.Severity)
++	}
++	if !strings.Contains(p.Detail, "run.sh") {
++		t.Errorf("P05 detail should name the file: %q", p.Detail)
++	}
++}
++
++func TestAudit_DangerousFlagDetectedInSettingsAndClaudeMd(t *testing.T) {
++	in := cleanInput()
++	in.ClaudeMd += "\nalways pass --dangerously-skip-permissions"
++	r := Audit(in)
++	if p := hasPractice(r.Practices, "P05-dangerous-skip"); p == nil || p.Status != StatusFail {
++		t.Fatalf("P05 should catch the flag inside CLAUDE.md: %+v", p)
++	}
++}
++
++func TestAudit_MissingClaudeMdWarns(t *testing.T) {
++	in := cleanInput()
++	in.HasClaudeMd = false
++	in.ClaudeMd = ""
++	r := Audit(in)
++	p := hasPractice(r.Practices, "P07-claude-md-rules")
++	if p == nil || p.Status != StatusWarn {
++		t.Fatalf("P07 should WARN when CLAUDE.md is missing: %+v", p)
++	}
++}
++
++func TestAudit_ClaudeMdWithoutSecurityRulesWarns(t *testing.T) {
++	in := cleanInput()
++	in.ClaudeMd = "# My Project\n\nJust a description, no rules."
++	r := Audit(in)
++	p := hasPractice(r.Practices, "P07-claude-md-rules")
++	if p == nil || p.Status != StatusWarn {
++		t.Fatalf("P07 should WARN when CLAUDE.md has no security rules: %+v", p)
++	}
++}
++
++func TestAudit_NoDenyRulesWarns(t *testing.T) {
++	in := cleanInput()
++	in.SettingsJSON = `{"permissions":{"allow":["Read(*)"]}}` // allow but no deny
++	r := Audit(in)
++	p := hasPractice(r.Practices, "P06-permission-deny")
++	if p == nil || p.Status != StatusWarn {
++		t.Fatalf("P06 should WARN with no deny rules: %+v", p)
++	}
++}
++
++func TestAudit_MissingSettingsWarns(t *testing.T) {
++	in := cleanInput()
++	in.HasSettings = false
++	in.SettingsJSON = ""
++	r := Audit(in)
++	p := hasPractice(r.Practices, "P06-permission-deny")
++	if p == nil || p.Status != StatusWarn {
++		t.Fatalf("P06 should WARN with no settings at all: %+v", p)
++	}
++}
++
++func TestAudit_NoGitWarns(t *testing.T) {
++	in := cleanInput()
++	in.HasGitDir = false
++	r := Audit(in)
++	p := hasPractice(r.Practices, "P08-git-rollback")
++	if p == nil || p.Status != StatusWarn {
++		t.Fatalf("P08 should WARN with no .git: %+v", p)
++	}
++}
++
++func TestAudit_TooManyMCPServersWarns(t *testing.T) {
++	in := cleanInput()
++	in.MCPServerCount = 9
++	r := Audit(in)
++	p := hasPractice(r.Practices, "P12-mcp-minimal")
++	if p == nil || p.Status != StatusWarn {
++		t.Fatalf("P12 should WARN with many MCP servers: %+v", p)
++	}
++}
++
++func TestAudit_FewMCPServersPass(t *testing.T) {
++	in := cleanInput()
++	in.MCPServerCount = 2
++	r := Audit(in)
++	p := hasPractice(r.Practices, "P12-mcp-minimal")
++	if p == nil || p.Status != StatusPass {
++		t.Fatalf("P12 should PASS with few MCP servers: %+v", p)
++	}
++}
++
++func TestAudit_ScoreFlooredAtZero(t *testing.T) {
++	// Everything wrong: dangerous flag + env + no claude.md + no settings + no git.
++	in := Input{
++		EnvFiles:   []string{".env"},
++		ExtraText:  []NamedText{{Name: "x.sh", Text: "--dangerously-skip-permissions"}},
++		HasGitDir:  false,
++		HasWorklog: false,
++	}
++	r := Audit(in)
++	if r.Score < 0 || r.Score > 100 {
++		t.Errorf("score must be clamped to [0,100], got %d", r.Score)
++	}
++}
++
++func TestAudit_PracticesSortedByID(t *testing.T) {
++	r := Audit(cleanInput())
++	for i := 1; i < len(r.Practices); i++ {
++		if r.Practices[i-1].ID > r.Practices[i].ID {
++			t.Errorf("practices must be sorted by ID: %q before %q", r.Practices[i-1].ID, r.Practices[i].ID)
++		}
++	}
++}
++
++func TestAudit_Deterministic(t *testing.T) {
++	in := cleanInput()
++	in.EnvFiles = []string{".env"}
++	in.MCPServerCount = 9
++	a := Audit(in)
++	b := Audit(in)
++	if a.Score != b.Score || len(a.Practices) != len(b.Practices) {
++		t.Error("Audit must be deterministic for identical input")
++	}
++	for i := range a.Practices {
++		if a.Practices[i] != b.Practices[i] {
++			t.Errorf("practice %d differs across runs: %+v vs %+v", i, a.Practices[i], b.Practices[i])
++		}
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/dashboard/dashboard.go /home/user/Yagura/yagura-v0.35.0/internal/dashboard/dashboard.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/dashboard/dashboard.go	2026-06-08 09:19:53.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/dashboard/dashboard.go	2026-06-09 07:43:46.861010784 +0000
+@@ -518,6 +518,9 @@
+ }
+ 
+ func truncate(s string, n int) string {
++	if n <= 0 {
++		return "" // nothing fits — avoid r[:n-1] negative index
++	}
+ 	r := []rune(s)
+ 	if len(r) <= n {
+ 		return s
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/dashboard/dashboard_test.go /home/user/Yagura/yagura-v0.35.0/internal/dashboard/dashboard_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/dashboard/dashboard_test.go	2026-06-03 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/dashboard/dashboard_test.go	2026-06-09 07:44:13.589010173 +0000
+@@ -119,6 +119,28 @@
+ 	}
+ }
+ 
++// TestTruncate_SmallWidthsDoNotPanic pins the boundary: a non-empty string with
++// n=0 used to compute r[:n-1] = r[:-1] and panic. n<=0 must yield "" and n=1
++// must yield just the ellipsis, never panic.
++func TestTruncate_SmallWidthsDoNotPanic(t *testing.T) {
++	cases := []struct {
++		in   string
++		n    int
++		want string
++	}{
++		{"hello", 0, ""},  // n=0 → nothing fits (was a panic)
++		{"hello", -1, ""}, // negative → "" (was a panic)
++		{"hello", 1, "…"}, // only the ellipsis fits
++		{"", 0, ""},       // empty stays empty
++	}
++	for _, c := range cases {
++		got := truncate(c.in, c.n)
++		if got != c.want {
++			t.Errorf("truncate(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
++		}
++	}
++}
++
+ func TestStaleClass(t *testing.T) {
+ 	cases := []struct {
+ 		days int
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/dedupe/dedupe_test.go /home/user/Yagura/yagura-v0.35.0/internal/dedupe/dedupe_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/dedupe/dedupe_test.go	2026-06-08 14:07:14.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/dedupe/dedupe_test.go	2026-06-09 10:46:04.066665409 +0000
+@@ -1,6 +1,7 @@
+ package dedupe
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 	"os"
+ 	"sync"
+@@ -129,6 +130,21 @@
+ 	}
+ }
+ 
++// TestStats_FreshCacheHitRateIsZeroNotNaN pins the h+m==0 boundary: a cache that
++// has never been accessed must report HitRate 0, not NaN. NaN would make Stats
++// fail json.Marshal (json: unsupported value: NaN), breaking yagura_dedupe_stats
++// on every cold start.
++func TestStats_FreshCacheHitRateIsZeroNotNaN(t *testing.T) {
++	c := New(10, time.Minute)
++	s := c.Stats()
++	if s.HitRate != 0 {
++		t.Errorf("fresh cache HitRate = %v, want 0", s.HitRate)
++	}
++	if _, err := json.Marshal(s); err != nil {
++		t.Errorf("fresh Stats must be JSON-marshalable (no NaN/Inf): %v", err)
++	}
++}
++
+ func TestStats_BytesSavedAccumulates(t *testing.T) {
+ 	c := New(10, time.Minute)
+ 	c.Set("k", []byte("0123456789")) // 10 bytes
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go /home/user/Yagura/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go	2026-06-08 21:26:09.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/ghaaudit/ghaaudit.go	2026-06-09 04:27:06.042641434 +0000
+@@ -5,7 +5,7 @@
+ //   - zizmor 風の audit を zero-dep で実装(ADR-0001 維持)
+ //   - YAML 完全パースは行わず、line-based prefix + regex で必要箇所を抽出
+ //     (GHA workflow YAML は十分構造化されているので line-based で実用充分)
+-//   - 検出ルール 11 種類は OWASP / zizmor / GitHub Actions security roadmap
++//   - 検出ルール 12 種類は OWASP / zizmor / GitHub Actions security roadmap
+ //     から導出
+ //
+ // 検出ルール(2026 年現在の supply chain attack 例から逆算):
+@@ -20,6 +20,7 @@
+ //   - R9 self-hosted-runner: 隔離困難な self-hosted runner
+ //   - R10 artipacked      : actions/checkout が Git 認証情報をディスクに残す (zizmor parity)
+ //   - R11 envfile-injection: ユーザー操作値を $GITHUB_ENV / $GITHUB_OUTPUT / $GITHUB_PATH へ流す
++//   - R12 bot-conditions  : github.actor を bot login と比較する spoofable な gate (zizmor parity)
+ //
+ // 参考:
+ //   - https://github.com/zizmorcore/zizmor (Rust 実装、本実装の参考)
+@@ -214,6 +215,19 @@
+ 				Suggestion:  "Sanitize or reject user-controlled values; never echo untrusted data directly into $GITHUB_ENV/$GITHUB_OUTPUT/$GITHUB_PATH.",
+ 			})
+ 		}
++
++		// R12 bot-conditions: github.actor を bot login と比較する spoofable な gate(zizmor parity)
++		if reBotCondition.MatchString(raw) {
++			findings = append(findings, Finding{
++				RuleID:      "bot-conditions",
++				Description: "Security gate compares github.actor to a bot login — github.actor is spoofable, so this is an unreliable bot check",
++				Severity:    SeverityMedium,
++				File:        filePath,
++				Line:        lineNum,
++				Snippet:     stripped,
++				Suggestion:  "Gate on a robust signal instead, e.g. github.event.pull_request.user.login or github.event.sender.type == 'Bot'.",
++			})
++		}
+ 	}
+ 
+ 	// R3 no-permissions: workflow に top-level permissions: 無し
+@@ -332,6 +346,11 @@
+ 	// secrets.* は repo owner 管理なので対象外(false positive 削減)。
+ 	reEnvFileSink        = regexp.MustCompile(`>>\s*\$GITHUB_(ENV|OUTPUT|PATH)\b`)
+ 	reUserControlledExpr = regexp.MustCompile(`\$\{\{\s*github\.(event\.[a-zA-Z_]+|head_ref\b)`)
++
++	// R12 bot-conditions: `github.actor` を bot login(`...[bot]`)と比較する
++	// security gate(zizmor parity)。github.actor は spoof 可能なため、bot 判定の
++	// 信頼できる根拠にならない。両方の順序(actor 左/右)+ ==/!= を検出。
++	reBotCondition = regexp.MustCompile(`github\.actor\s*[=!]=\s*['"][^'"]*\[bot\]['"]|['"][^'"]*\[bot\]['"]\s*[=!]=\s*github\.actor`)
+ )
+ 
+ // reTriggerKey は trigger 名を YAML key として検出する正規表現を返す。
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go /home/user/Yagura/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go	2026-06-08 21:27:41.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/ghaaudit/ghaaudit_test.go	2026-06-09 04:25:50.130641281 +0000
+@@ -692,3 +692,35 @@
+ 		t.Error("steps.*.outputs.* must not be flagged by envfile-injection")
+ 	}
+ }
++
++// ─── R12 bot-conditions (zizmor parity) ──────────────────────
++
++func TestAuditFile_BotConditions_FlaggedActorEqualsBot(t *testing.T) {
++	for _, line := range []string{
++		`    if: github.actor == 'dependabot[bot]'`,
++		`    if: github.actor == "renovate[bot]"`,
++		`    if: 'dependabot[bot]' == github.actor`,
++		`    if: github.actor != 'dependabot[bot]'`,
++	} {
++		wf := "on: pull_request_target\npermissions: {}\njobs:\n  b:\n    runs-on: ubuntu-latest\n" + line + "\n    steps:\n      - run: echo hi\n"
++		if !hasRule(New().AuditFile("w.yml", wf), "bot-conditions") {
++			t.Errorf("expected bot-conditions finding for %q", line)
++		}
++	}
++}
++
++func TestAuditFile_BotConditions_PlainActorCheckIsClean(t *testing.T) {
++	// Comparing github.actor to a human login (no [bot]) is not this rule.
++	wf := "on: [push]\npermissions: {}\njobs:\n  b:\n    runs-on: ubuntu-latest\n    if: github.actor == 'octocat'\n    steps:\n      - run: echo hi\n"
++	if hasRule(New().AuditFile("w.yml", wf), "bot-conditions") {
++		t.Error("actor compared to a non-bot login must not trip bot-conditions")
++	}
++}
++
++func TestAuditFile_BotConditions_PRUserLoginIsClean(t *testing.T) {
++	// The recommended robust signal (pull_request.user.login) must not be flagged.
++	wf := "on: pull_request_target\npermissions: {}\njobs:\n  b:\n    runs-on: ubuntu-latest\n    if: github.event.pull_request.user.login == 'dependabot[bot]'\n    steps:\n      - run: echo hi\n"
++	if hasRule(New().AuditFile("w.yml", wf), "bot-conditions") {
++		t.Error("pull_request.user.login is the robust signal; must not be flagged")
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/claudemd_audit.go /home/user/Yagura/yagura-v0.35.0/internal/harness/claudemd_audit.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/claudemd_audit.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/claudemd_audit.go	2026-06-09 08:44:31.268005686 +0000
+@@ -0,0 +1,147 @@
++// claudemd_audit.go: CLAUDE.md の構造 heuristic 評価。
++//
++// Anthropic の Claude Code memory ガイド + 運用知見の構造ルールを lint にする:
++//
++//   - 4 セクション構造(Why / Map / Rules / Workflows)を持つ。Why=背景と禁止理由、
++//     Map=重要ファイル地図、Rules=コードから推論不可能なルール、Workflows=常用コマンド。
++//   - 命令(箇条書き / 番号付き)の総数は 150-200 が上限。超えると重要ルールが
++//     ノイズに埋もれる(Lost in the Middle)。150-200 は警告、200 超は finding。
++//   - H1 タイトルを持つ。
++//   - 大量の命令を持つのに見出し構造が無い「壁」状態を避ける。
++//
++// AuditSkill / AuditSettings / AuditWorkflow と同じ shape(Score + Issues +
++// Suggestions)。stdlib のみ(ADR-0001)。出力は決定論的(セクションは canonical 順)。
++package harness
++
++import (
++	"regexp"
++	"sort"
++	"strings"
++)
++
++// ClaudeMdAuditResult は CLAUDE.md 構造評価結果。
++//
++// Score は 0-100:
++//
++//	90+ : 4 セクション + 適切な命令量。新 Claude が迷わない。
++//	70-89: 構造はあるが欠けたセクション or 命令過多の傾向。
++//	<70 : 構造欠如 or 命令過多で重要ルールが埋もれる。
++type ClaudeMdAuditResult struct {
++	Score            int      `json:"score"`
++	HasTitle         bool     `json:"has_title"`
++	SectionsFound    []string `json:"sections_found,omitempty"`
++	MissingSections  []string `json:"missing_sections,omitempty"`
++	InstructionCount int      `json:"instruction_count"`
++	Issues           []string `json:"issues,omitempty"`
++	Suggestions      []string `json:"suggestions,omitempty"`
++}
++
++// canonicalSections は CLAUDE.md が持つべき 4 セクション(canonical 順)。
++var canonicalSections = []string{"Why", "Map", "Rules", "Workflows"}
++
++// 命令数の上限・警告閾値(Lost in the Middle 対策)。
++const (
++	instructionHardLimit = 200
++	instructionWarnLimit = 150
++)
++
++var (
++	reH1          = regexp.MustCompile(`(?m)^#\s+\S`)
++	reH2          = regexp.MustCompile(`(?m)^##\s+(.+?)\s*$`)
++	reListItem    = regexp.MustCompile(`(?m)^\s*(?:[-*]|\d+\.)\s+\S`)
++	reSectionWord = map[string]*regexp.Regexp{
++		"Why":       regexp.MustCompile(`(?i)\bwhy\b`),
++		"Map":       regexp.MustCompile(`(?i)\bmap\b`),
++		"Rules":     regexp.MustCompile(`(?i)\brules?\b`),
++		"Workflows": regexp.MustCompile(`(?i)\bworkflows?\b`),
++	}
++)
++
++// AuditClaudeMd は CLAUDE.md の content を構造 heuristic で評価する。
++func AuditClaudeMd(content string) ClaudeMdAuditResult {
++	r := ClaudeMdAuditResult{Score: 100}
++
++	if strings.TrimSpace(content) == "" {
++		return ClaudeMdAuditResult{
++			Score:  0,
++			Issues: []string{"empty CLAUDE.md — Claude Code has no project-level guidance to load"},
++			Suggestions: []string{
++				"add Why / Map / Rules / Workflows sections (see the Claude Code memory guide)",
++			},
++		}
++	}
++
++	// H1 タイトル。
++	r.HasTitle = reH1.MatchString(content)
++	if !r.HasTitle {
++		r.Score -= 10
++		r.Issues = append(r.Issues, "no H1 title — start with `# <ProjectName> CLAUDE.md`")
++	}
++
++	// H2 見出しを収集して canonical セクションを照合。
++	var headings []string
++	for _, m := range reH2.FindAllStringSubmatch(content, -1) {
++		headings = append(headings, m[1])
++	}
++	foundSet := map[string]bool{}
++	for _, sec := range canonicalSections {
++		re := reSectionWord[sec]
++		for _, h := range headings {
++			if re.MatchString(h) {
++				foundSet[sec] = true
++				break
++			}
++		}
++	}
++	for _, sec := range canonicalSections {
++		if foundSet[sec] {
++			r.SectionsFound = append(r.SectionsFound, sec)
++		} else {
++			r.MissingSections = append(r.MissingSections, sec)
++			r.Score -= 10
++			r.Issues = append(r.Issues, "missing the '"+sec+"' section — "+sectionPurpose(sec))
++		}
++	}
++
++	// 命令(箇条書き / 番号付き)数。
++	r.InstructionCount = len(reListItem.FindAllString(content, -1))
++	switch {
++	case r.InstructionCount > instructionHardLimit:
++		r.Score -= 20
++		r.Issues = append(r.Issues,
++			"over 200 instructions — split into .claude/rules/ or Skills; excess buries key rules (Lost in the Middle)")
++	case r.InstructionCount >= instructionWarnLimit:
++		r.Score -= 8
++		r.Suggestions = append(r.Suggestions,
++			"approaching the 150-200 instruction limit — keep the most important rules at the top and bottom")
++	}
++
++	// 大量命令なのに見出し構造が無い「壁」状態。
++	if len(headings) < 2 && r.InstructionCount > 40 {
++		r.Score -= 10
++		r.Issues = append(r.Issues,
++			"many instructions but almost no section structure — group them under headings")
++	}
++
++	if score := r.Score; score < 0 {
++		r.Score = 0
++	}
++
++	sort.Strings(r.MissingSections)
++	return r
++}
++
++// sectionPurpose は各 canonical セクションの役割(remediation 用)。
++func sectionPurpose(sec string) string {
++	switch sec {
++	case "Why":
++		return "background, constraints, and the reason behind prohibitions"
++	case "Map":
++		return "a map of key directories/files so a new Claude does not get lost"
++	case "Rules":
++		return "rules that cannot be inferred from code (quantified)"
++	case "Workflows":
++		return "the commands you run every time (test, build, migrate)"
++	}
++	return ""
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/claudemd_audit_test.go /home/user/Yagura/yagura-v0.35.0/internal/harness/claudemd_audit_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/claudemd_audit_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/claudemd_audit_test.go	2026-06-09 08:43:45.028006744 +0000
+@@ -0,0 +1,160 @@
++package harness
++
++import (
++	"strings"
++	"testing"
++)
++
++func cmIssue(issues []string, substr string) bool {
++	for _, i := range issues {
++		if strings.Contains(i, substr) {
++			return true
++		}
++	}
++	return false
++}
++
++// マンデート準拠の理想的な CLAUDE.md: H1 + 4 セクション + 適度な命令数。
++const goodClaudeMd = `# MyProject CLAUDE.md
++
++## Why
++このプロジェクトが存在する理由。
++
++## Map
++- src/auth/  # 認証
++- src/api/   # API
++
++## Rules
++- キャッシュ TTL は 300 秒固定
++- user_id は UUID 移行予定
++
++## Workflows
++- テスト: make test
++- ビルド: make build
++`
++
++func TestAuditClaudeMd_WellFormedScoresHigh(t *testing.T) {
++	r := AuditClaudeMd(goodClaudeMd)
++	if !r.HasTitle {
++		t.Error("H1 title should be detected")
++	}
++	if len(r.MissingSections) != 0 {
++		t.Errorf("all 4 sections present, got missing=%v", r.MissingSections)
++	}
++	if r.Score < 90 {
++		t.Errorf("well-formed CLAUDE.md should score >=90, got %d (issues %v)", r.Score, r.Issues)
++	}
++}
++
++func TestAuditClaudeMd_EmptyIsZero(t *testing.T) {
++	r := AuditClaudeMd("")
++	if r.Score != 0 {
++		t.Errorf("empty content should score 0, got %d", r.Score)
++	}
++	if !cmIssue(r.Issues, "empty") {
++		t.Errorf("empty should report an empty issue, got %v", r.Issues)
++	}
++}
++
++func TestAuditClaudeMd_DetectsFourSections(t *testing.T) {
++	r := AuditClaudeMd(goodClaudeMd)
++	for _, want := range []string{"Why", "Map", "Rules", "Workflows"} {
++		found := false
++		for _, s := range r.SectionsFound {
++			if s == want {
++				found = true
++			}
++		}
++		if !found {
++			t.Errorf("section %q should be detected, got %v", want, r.SectionsFound)
++		}
++	}
++}
++
++func TestAuditClaudeMd_SectionWithEmDashHeader(t *testing.T) {
++	// yagura 自身の "## Why — ..." 形式も検出できること。
++	content := "# P\n\n## Why — 背景\nx\n## Map — 地図\ny\n## Rules\nz\n## Workflows\nw\n"
++	r := AuditClaudeMd(content)
++	if len(r.MissingSections) != 0 {
++		t.Errorf("em-dash headers should be detected, missing=%v", r.MissingSections)
++	}
++}
++
++func TestAuditClaudeMd_MissingSectionsFlagged(t *testing.T) {
++	content := "# P\n\n## Why\nx\n## Rules\ny\n" // Map と Workflows が無い
++	r := AuditClaudeMd(content)
++	if len(r.MissingSections) != 2 {
++		t.Fatalf("expected 2 missing sections, got %v", r.MissingSections)
++	}
++	if !cmIssue(r.Issues, "Map") || !cmIssue(r.Issues, "Workflows") {
++		t.Errorf("missing Map/Workflows should be reported, got %v", r.Issues)
++	}
++	if r.Score >= 90 {
++		t.Errorf("missing 2 sections should drop score, got %d", r.Score)
++	}
++}
++
++func TestAuditClaudeMd_NoTitleWarns(t *testing.T) {
++	content := "## Why\nx\n## Map\ny\n## Rules\nz\n## Workflows\nw\n"
++	r := AuditClaudeMd(content)
++	if r.HasTitle {
++		t.Error("no H1 should set HasTitle=false")
++	}
++	if !cmIssue(r.Issues, "title") {
++		t.Errorf("missing H1 should be reported, got %v", r.Issues)
++	}
++}
++
++func TestAuditClaudeMd_InstructionCount(t *testing.T) {
++	var sb strings.Builder
++	sb.WriteString("# P\n## Why\nx\n## Map\ny\n## Rules\n")
++	for i := 0; i < 10; i++ {
++		sb.WriteString("- rule\n")
++	}
++	sb.WriteString("## Workflows\n")
++	for i := 0; i < 5; i++ {
++		sb.WriteString("1. step\n")
++	}
++	r := AuditClaudeMd(sb.String())
++	if r.InstructionCount != 15 {
++		t.Errorf("instruction count = %d, want 15 (10 bullets + 5 numbered)", r.InstructionCount)
++	}
++}
++
++func TestAuditClaudeMd_TooManyInstructionsFails(t *testing.T) {
++	var sb strings.Builder
++	sb.WriteString("# P\n## Why\na\n## Map\nb\n## Rules\n")
++	for i := 0; i < 205; i++ {
++		sb.WriteString("- rule\n")
++	}
++	sb.WriteString("## Workflows\nc\n")
++	r := AuditClaudeMd(sb.String())
++	if !cmIssue(r.Issues, "200") {
++		t.Errorf("over-200 instructions should be flagged (Lost in the Middle), got %v", r.Issues)
++	}
++	if r.Score >= 90 {
++		t.Errorf("over-limit should drop score, got %d", r.Score)
++	}
++}
++
++func TestAuditClaudeMd_ApproachingLimitWarns(t *testing.T) {
++	var sb strings.Builder
++	sb.WriteString("# P\n## Why\na\n## Map\nb\n## Rules\n")
++	for i := 0; i < 160; i++ {
++		sb.WriteString("- rule\n")
++	}
++	sb.WriteString("## Workflows\nc\n")
++	r := AuditClaudeMd(sb.String())
++	// 150-200 は警告(suggestion)だが fail ではない。
++	if len(r.Suggestions) == 0 {
++		t.Errorf("150-200 instructions should produce a suggestion, got none")
++	}
++}
++
++func TestAuditClaudeMd_Deterministic(t *testing.T) {
++	a := AuditClaudeMd(goodClaudeMd)
++	b := AuditClaudeMd(goodClaudeMd)
++	if a.Score != b.Score || strings.Join(a.MissingSections, ",") != strings.Join(b.MissingSections, ",") {
++		t.Error("AuditClaudeMd must be deterministic")
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/mcp_audit.go /home/user/Yagura/yagura-v0.35.0/internal/harness/mcp_audit.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/mcp_audit.go	2026-06-05 14:04:18.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/mcp_audit.go	2026-06-09 07:14:21.545487639 +0000
+@@ -73,7 +73,13 @@
+ 		Env     map[string]string `json:"env"`
+ 		Headers map[string]string `json:"headers"`
+ 	}
+-	_ = json.Unmarshal(top["mcpServers"], &servers)
++	if err := json.Unmarshal(top["mcpServers"], &servers); err != nil {
++		// 値はあるが object でない(string/array 等)→ 壊れた config。
++		// 「見つからない」ではなく malformed として報告する。
++		r.Score -= 10
++		r.Issues = append(r.Issues, "mcpServers is malformed — must be an object of {name: server} entries")
++		return r
++	}
+ 	if len(servers) == 0 {
+ 		r.Score -= 10
+ 		r.Issues = append(r.Issues, "no mcpServers found (not an MCP server config?)")
+@@ -121,7 +127,12 @@
+ 		Name        string `json:"name"`
+ 		Description string `json:"description"`
+ 	}
+-	_ = json.Unmarshal(top["tools"], &tools)
++	if err := json.Unmarshal(top["tools"], &tools); err != nil {
++		// 値はあるが array でない → 壊れた tools 宣言。empty と区別する。
++		r.Score -= 5
++		r.Issues = append(r.Issues, "tools is malformed — must be a JSON array of {name, description}")
++		return r
++	}
+ 	r.ToolCount = len(tools)
+ 	if r.ToolCount == 0 {
+ 		r.Score -= 5
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/mcp_audit_test.go /home/user/Yagura/yagura-v0.35.0/internal/harness/mcp_audit_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/mcp_audit_test.go	2026-06-05 14:04:46.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/mcp_audit_test.go	2026-06-09 07:13:43.997488497 +0000
+@@ -100,3 +100,31 @@
+ 		t.Errorf("invalid JSON → score 0, got %+v", r)
+ 	}
+ }
++
++// TestAuditMCP_MalformedMcpServersNotReportedAsAbsent pins that a present but
++// non-object "mcpServers" value is reported as malformed rather than the
++// misleading "no mcpServers found (not an MCP server config?)".
++func TestAuditMCP_MalformedMcpServersNotReportedAsAbsent(t *testing.T) {
++	r := AuditMCPConfig(`{"mcpServers":"oops"}`)
++	if mcpIssue(r.Issues, "no mcpServers found") {
++		t.Errorf("malformed mcpServers must not be reported as absent: %v", r.Issues)
++	}
++	if !mcpIssue(r.Issues, "malformed") {
++		t.Errorf("expected a 'malformed' issue for non-object mcpServers, got %v", r.Issues)
++	}
++}
++
++// TestAuditMCP_MalformedToolsNotReportedAsEmpty pins that a present but
++// non-array "tools" value is reported as malformed rather than "tools[] is empty".
++func TestAuditMCP_MalformedToolsNotReportedAsEmpty(t *testing.T) {
++	r := AuditMCPConfig(`{"tools":"oops"}`)
++	if r.Kind != "mcp-tools" {
++		t.Fatalf("should still detect mcp-tools branch, got %q", r.Kind)
++	}
++	if mcpIssue(r.Issues, "empty") {
++		t.Errorf("malformed tools must not be reported as empty: %v", r.Issues)
++	}
++	if !mcpIssue(r.Issues, "malformed") {
++		t.Errorf("expected a 'malformed' issue for non-array tools, got %v", r.Issues)
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit.go /home/user/Yagura/yagura-v0.35.0/internal/harness/plugin_audit.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit.go	2026-06-05 00:12:50.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/plugin_audit.go	2026-06-09 07:11:38.453491369 +0000
+@@ -125,27 +125,36 @@
+ 		r.NameValid = true
+ 	}
+ 
+-	// owner.name 必須。
++	// owner.name 必須。owner が object でない(string 等)場合は malformed として
++	// "required" とは区別する — 誤診断(値はあるのに「欠落」と言う)を避ける。
+ 	ownerName := ""
+ 	if raw, ok := top["owner"]; ok {
+ 		var o struct {
+ 			Name string `json:"name"`
+ 		}
+-		_ = json.Unmarshal(raw, &o)
+-		ownerName = o.Name
++		if err := json.Unmarshal(raw, &o); err != nil {
++			r.Score -= 15
++			r.Issues = append(r.Issues, "owner is malformed — must be an object {name, email?, url?}")
++		} else {
++			ownerName = o.Name
++		}
+ 	}
+-	if ownerName == "" {
++	if ownerName == "" && !plgIssueHas(r.Issues, "owner is malformed") {
+ 		r.Score -= 15
+ 		r.Issues = append(r.Issues, "owner.name is required")
+ 	}
+ 
++	// plugins は配列必須。配列でない(string/object 等)場合は malformed として
++	// "empty" とは区別する — 壊れている manifest を「空」と誤報しない。
+ 	var plugins []struct {
+ 		Name        string          `json:"name"`
+ 		Source      json.RawMessage `json:"source"`
+ 		Description string          `json:"description"`
+ 	}
+-	_ = json.Unmarshal(top["plugins"], &plugins)
+-	if len(plugins) == 0 {
++	if err := json.Unmarshal(top["plugins"], &plugins); err != nil {
++		r.Score -= 20
++		r.Issues = append(r.Issues, "plugins is malformed — must be a JSON array of plugin entries")
++	} else if len(plugins) == 0 {
+ 		r.Score -= 20
+ 		r.Issues = append(r.Issues, "plugins[] is empty — a marketplace lists at least one plugin")
+ 	}
+@@ -182,6 +191,17 @@
+ 
+ // ─── helpers ───
+ 
++// plgIssueHas は既出 issue に substr を含むものがあるかを返す
++// (同じ欠陥を二重報告しないためのガード)。
++func plgIssueHas(issues []string, substr string) bool {
++	for _, s := range issues {
++		if strings.Contains(s, substr) {
++			return true
++		}
++	}
++	return false
++}
++
+ // jsonString は RawMessage を string として読む(失敗時 "")。
+ func jsonString(raw json.RawMessage) string {
+ 	if len(raw) == 0 {
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit_test.go /home/user/Yagura/yagura-v0.35.0/internal/harness/plugin_audit_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/harness/plugin_audit_test.go	2026-06-05 00:12:45.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/harness/plugin_audit_test.go	2026-06-09 07:10:59.881492251 +0000
+@@ -122,3 +122,47 @@
+ 		t.Errorf("github source with repo should be clean, got %d: %v", githubOK.Score, githubOK.Issues)
+ 	}
+ }
++
++// TestAuditMarketplace_MalformedPluginsNotReportedAsEmpty pins the fix for a
++// misleading diagnosis: when "plugins" is present but is not a JSON array
++// (e.g. a string or object), the unmarshal used to be silently ignored and the
++// audit reported "plugins[] is empty" — which is wrong. A malformed plugins
++// value is a different (worse) problem than an empty array, so the issue text
++// must say it is malformed and must NOT claim the list is empty.
++func TestAuditMarketplace_MalformedPluginsNotReportedAsEmpty(t *testing.T) {
++	r := AuditPluginManifest(`{"name":"m","owner":{"name":"o"},"plugins":"oops"}`)
++	if r.Kind != "marketplace" {
++		t.Fatalf("should still detect marketplace, got %q", r.Kind)
++	}
++	if plgIssue(r.Issues, "empty") {
++		t.Errorf("malformed plugins must not be reported as empty: %v", r.Issues)
++	}
++	if !plgIssue(r.Issues, "malformed") {
++		t.Errorf("expected a 'malformed' issue for non-array plugins, got %v", r.Issues)
++	}
++}
++
++// TestAuditMarketplace_MalformedOwnerDistinctFromMissing pins that an owner
++// value that is present but not an object (e.g. a bare string) is reported as
++// malformed rather than the generic "owner.name is required".
++func TestAuditMarketplace_MalformedOwnerDistinctFromMissing(t *testing.T) {
++	r := AuditPluginManifest(`{"name":"m","owner":"someone","plugins":[{"name":"p","source":"./p"}]}`)
++	if !plgIssue(r.Issues, "owner") {
++		t.Fatalf("expected an owner-related issue, got %v", r.Issues)
++	}
++	if !plgIssue(r.Issues, "malformed") {
++		t.Errorf("expected 'malformed' owner issue (owner is a string, not an object), got %v", r.Issues)
++	}
++}
++
++// TestAuditMarketplace_MalformedSourceObjectReported pins that a plugin whose
++// source is an object but is malformed JSON-shaped (wrong types) is flagged
++// rather than silently passing.
++func TestAuditMarketplace_MalformedSourceObjectReported(t *testing.T) {
++	// source is an object but "repo" has the wrong type (number) under a github
++	// source — the object unmarshal fails and must be surfaced, not ignored.
++	r := AuditPluginManifest(`{"name":"m","owner":{"name":"o"},"plugins":[{"name":"p","source":{"source":"github","repo":12345}}]}`)
++	if !plgIssue(r.Issues, "source") {
++		t.Errorf("expected a source issue for malformed source object, got %v", r.Issues)
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/hookreceiver/receiver_test.go /home/user/Yagura/yagura-v0.35.0/internal/hookreceiver/receiver_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/hookreceiver/receiver_test.go	2026-06-08 08:56:33.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/hookreceiver/receiver_test.go	2026-06-09 07:46:40.209006819 +0000
+@@ -278,6 +278,34 @@
+ 	}
+ }
+ 
++// TestTopTools_NonPositiveNDefaultsAndDoesNotPanic guards the n<=0 contract:
++// TopTools defaults a non-positive n to 10 (so `out[:n]` never sees a negative
++// index), and with fewer tools than the default it returns the full sorted list.
++// This pins the existing guard so a future refactor can't reintroduce a
++// negative-index slice panic on either the global or per-slug path.
++func TestTopTools_NonPositiveNDefaultsAndDoesNotPanic(t *testing.T) {
++	r, _ := newRcv(t)
++	send := func(cwd, tool string) {
++		body, _ := json.Marshal(map[string]any{
++			"hook_event_name": "PreToolUse", "cwd": cwd, "tool_name": tool,
++		})
++		r.Handle(httptest.NewRecorder(), httptest.NewRequest("POST", "/h", bytes.NewReader(body)))
++	}
++	send("/home/m/breeze", "Bash")
++	send("/home/m/breeze", "Read")
++
++	// global path and per-slug path both must default n and stay panic-free.
++	if got := r.TopTools("", -1); len(got) != 2 {
++		t.Errorf("global TopTools(-1): expected full list (2), got %d", len(got))
++	}
++	if got := r.TopTools("breeze", -1); len(got) != 2 {
++		t.Errorf("per-slug TopTools(-1): expected full list (2), got %d", len(got))
++	}
++	if got := r.TopTools("", 0); len(got) != 2 {
++		t.Errorf("global TopTools(0): expected full list (2), got %d", len(got))
++	}
++}
++
+ func TestAllStats(t *testing.T) {
+ 	r, _ := newRcv(t)
+ 	body := `{"hook_event_name":"Stop","cwd":"/home/m/breeze"}`
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/server_infra_test.go /home/user/Yagura/yagura-v0.35.0/internal/mcp/server_infra_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/server_infra_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/mcp/server_infra_test.go	2026-06-09 04:53:48.725813845 +0000
+@@ -0,0 +1,203 @@
++// server_infra_test.go — tests for Server infrastructure methods and low-level helpers
++// that have 0% or <70% coverage: AllToolStats, SetAudit/emitAudit, SetAlertStore/AlertStore,
++// CacheStats nil branch, asJSONError code paths, secretScanSeverityRank default path.
++package mcp
++
++import (
++	"errors"
++	"strings"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/alertfix"
++	"github.com/shizukutanaka/yagura/internal/audit"
++	"github.com/shizukutanaka/yagura/internal/logging"
++	"github.com/shizukutanaka/yagura/internal/secretscan"
++)
++
++// errSink returns an error on every Append call (exercises emitAudit warning path).
++type errSink struct{ err error }
++
++func (f errSink) Append(_ audit.Record) error { return f.err }
++
++// captureSink collects appended records.
++type captureSink struct{ records []audit.Record }
++
++func (c *captureSink) Append(r audit.Record) error {
++	c.records = append(c.records, r)
++	return nil
++}
++
++// ─── AllToolStats ────────────────────────────────────────────────
++
++func TestAllToolStats_EmptyServer_ReturnsEmpty(t *testing.T) {
++	s := New("", logging.Discard())
++	stats := s.AllToolStats()
++	if len(stats) != 0 {
++		t.Errorf("fresh server: expected 0 stats, got %d", len(stats))
++	}
++}
++
++func TestAllToolStats_AfterToolCall_RecordsStats(t *testing.T) {
++	s, _ := newServerForTest(t, "")
++	// Call yagura_list to accumulate stats for that tool.
++	w := postJSON(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"yagura_list","arguments":{}}}`, "")
++	if w.Code != 200 {
++		t.Fatalf("tool call failed: %d %s", w.Code, w.Body.String())
++	}
++
++	stats := s.AllToolStats()
++	var got *ToolStats
++	for i := range stats {
++		if stats[i].Name == "yagura_list" {
++			got = &stats[i]
++			break
++		}
++	}
++	if got == nil {
++		t.Fatal("yagura_list not found in AllToolStats")
++	}
++	if got.Calls == 0 {
++		t.Error("Calls should be ≥1 after one HTTP tool call")
++	}
++	if got.ResponseBytes == 0 {
++		t.Error("ResponseBytes should be >0 after tool call")
++	}
++}
++
++// ─── SetAudit / emitAudit ────────────────────────────────────────
++
++func TestSetAudit_NilSink_EmitIsNoOp(t *testing.T) {
++	s := New("", logging.Discard())
++	// Default: no sink — emitAudit must not panic.
++	s.emitAudit(audit.Record{Kind: "test_noop"})
++}
++
++func TestSetAudit_WorkingSink_RecordsEvent(t *testing.T) {
++	s := New("", logging.Discard())
++	sink := &captureSink{}
++	s.SetAudit(sink)
++	s.emitAudit(audit.Record{Kind: "test_event", Actor: "cli"})
++	if len(sink.records) != 1 {
++		t.Fatalf("expected 1 record, got %d", len(sink.records))
++	}
++	if sink.records[0].Kind != "test_event" {
++		t.Errorf("record Kind = %q, want test_event", sink.records[0].Kind)
++	}
++}
++
++func TestSetAudit_FailingSink_DoesNotPanic(t *testing.T) {
++	// Exercises the "audit append failed" warning branch without crashing.
++	s := New("", logging.Discard())
++	s.SetAudit(errSink{err: errors.New("disk full")})
++	s.emitAudit(audit.Record{Kind: "test_fail"})
++}
++
++func TestSetAudit_NilClears(t *testing.T) {
++	s := New("", logging.Discard())
++	sink := &captureSink{}
++	s.SetAudit(sink)
++	s.SetAudit(nil) // clear the sink
++	s.emitAudit(audit.Record{Kind: "should_not_appear"})
++	if len(sink.records) != 0 {
++		t.Errorf("expected 0 records after SetAudit(nil), got %d", len(sink.records))
++	}
++}
++
++// ─── SetAlertStore / AlertStore ──────────────────────────────────
++
++func TestSetAlertStore_RoundTrip(t *testing.T) {
++	s := New("", logging.Discard())
++	if s.AlertStore() != nil {
++		t.Error("expected nil AlertStore on fresh server")
++	}
++
++	st, err := alertfix.NewStore(t.TempDir() + "/alerts.jsonl")
++	if err != nil {
++		t.Fatal(err)
++	}
++	s.SetAlertStore(st)
++	if s.AlertStore() != st {
++		t.Error("AlertStore() did not return the value passed to SetAlertStore()")
++	}
++
++	s.SetAlertStore(nil)
++	if s.AlertStore() != nil {
++		t.Error("expected nil after SetAlertStore(nil)")
++	}
++}
++
++// ─── CacheStats nil branch ───────────────────────────────────────
++
++func TestCacheStats_NilCache_ReturnsZeroStats(t *testing.T) {
++	s := New("", logging.Discard())
++	s.cache = nil // force nil cache (same package access)
++	stats := s.CacheStats()
++	// Zero-value Stats must be returned without panic.
++	if stats.Hits != 0 || stats.Misses != 0 {
++		t.Errorf("expected zero stats for nil cache, got %+v", stats)
++	}
++}
++
++// ─── asJSONError ─────────────────────────────────────────────────
++
++func TestAsJSONError_NonToolError_MapsToInternal(t *testing.T) {
++	// A plain error (not ToolError) must be wrapped as "internal" → -32603.
++	b := asJSONError(errors.New("something unexpected"))
++	if !strings.Contains(string(b), "-32603") {
++		t.Errorf("expected -32603 for non-ToolError, got: %s", b)
++	}
++}
++
++func TestAsJSONError_InvalidInput_Maps32602(t *testing.T) {
++	b := asJSONError(&ToolError{Code: "invalid_input", Message: "bad param"})
++	if !strings.Contains(string(b), "-32602") {
++		t.Errorf("expected -32602 for invalid_input, got: %s", b)
++	}
++}
++
++func TestAsJSONError_Internal_Maps32603(t *testing.T) {
++	b := asJSONError(&ToolError{Code: "internal", Message: "oops"})
++	if !strings.Contains(string(b), "-32603") {
++		t.Errorf("expected -32603 for internal, got: %s", b)
++	}
++}
++
++func TestAsJSONError_NotFound_Maps32001(t *testing.T) {
++	b := asJSONError(&ToolError{Code: "not_found", Message: "gone"})
++	if !strings.Contains(string(b), "-32001") {
++		t.Errorf("expected -32001 for not_found, got: %s", b)
++	}
++}
++
++func TestAsJSONError_OtherCode_Maps32000(t *testing.T) {
++	// Any code not in the switch falls through to -32000 (application-specific).
++	b := asJSONError(&ToolError{Code: "unavailable", Message: "feature off"})
++	if !strings.Contains(string(b), "-32000") {
++		t.Errorf("expected -32000 for other code, got: %s", b)
++	}
++}
++
++// ─── secretScanSeverityRank ──────────────────────────────────────
++
++func TestSecretScanSeverityRank_KnownValues(t *testing.T) {
++	cases := []struct {
++		sev  secretscan.Severity
++		want int
++	}{
++		{secretscan.SeverityCritical, 4},
++		{secretscan.SeverityHigh, 3},
++		{secretscan.SeverityMedium, 2},
++		{secretscan.SeverityLow, 1},
++	}
++	for _, c := range cases {
++		if got := secretScanSeverityRank(c.sev); got != c.want {
++			t.Errorf("rank(%s) = %d, want %d", c.sev, got, c.want)
++		}
++	}
++}
++
++func TestSecretScanSeverityRank_UnknownReturnsZero(t *testing.T) {
++	if got := secretScanSeverityRank(secretscan.Severity("UNKNOWN")); got != 0 {
++		t.Errorf("unknown severity: expected 0, got %d", got)
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/tools.go /home/user/Yagura/yagura-v0.35.0/internal/mcp/tools.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/tools.go	2026-06-09 04:05:46.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/mcp/tools.go	2026-06-09 04:27:22.958641469 +0000
+@@ -472,7 +472,7 @@
+ func buildGhaAuditTool(d Deps) *Tool {
+ 	return &Tool{
+ 		Name:        "yagura_gha_audit",
+-		Description: "[G] GHA workflow audit: 11 supply-chain risk patterns.",
++		Description: "[G] GHA workflow audit: 12 supply-chain risk patterns.",
+ 		InputSchema: map[string]any{
+ 			"type": "object",
+ 			"properties": map[string]any{
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/tools_harnessrec_test.go /home/user/Yagura/yagura-v0.35.0/internal/mcp/tools_harnessrec_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/tools_harnessrec_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/mcp/tools_harnessrec_test.go	2026-06-09 05:19:09.497199350 +0000
+@@ -0,0 +1,83 @@
++// tools_harnessrec_test.go — tests for yagura_harness_recommend handler.
++// Covers: language override, slug→language registry lookup, generic fallback,
++// and the invalid-input / no-language error paths (handler was at 8.3% coverage).
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/harness"
++	"github.com/shizukutanaka/yagura/internal/project"
++)
++
++func TestHarnessRecommend_LanguageOverride(t *testing.T) {
++	tool := buildHarnessRecommendTool(newDeps(t))
++	res := mustCall(t, tool, map[string]any{"language": "go"}).(harness.Recommendation)
++	if res.Language != "go" {
++		t.Errorf("Language = %q, want go", res.Language)
++	}
++	if res.ClaudeMd == "" {
++		t.Error("expected non-empty CLAUDE.md scaffold for go")
++	}
++}
++
++func TestHarnessRecommend_SlugLookupFromRegistry(t *testing.T) {
++	d := newDeps(t)
++	// Register a project whose language drives the recommendation.
++	if err := d.Registry.Add(sampleProject("rustproj", func(p *project.Project) { p.Language = "rust" })); err != nil {
++		t.Fatal(err)
++	}
++	tool := buildHarnessRecommendTool(d)
++	res := mustCall(t, tool, map[string]any{"slug": "rustproj"}).(harness.Recommendation)
++	if res.Language != "rust" {
++		t.Errorf("Language = %q, want rust (looked up from registry)", res.Language)
++	}
++}
++
++func TestHarnessRecommend_LanguageBeatsSlug(t *testing.T) {
++	d := newDeps(t)
++	if err := d.Registry.Add(sampleProject("goproj")); err != nil { // Go
++		t.Fatal(err)
++	}
++	tool := buildHarnessRecommendTool(d)
++	// Explicit language must win over the slug's registered language.
++	res := mustCall(t, tool, map[string]any{"slug": "goproj", "language": "python"}).(harness.Recommendation)
++	if res.Language != "python" {
++		t.Errorf("Language = %q, want python (explicit override)", res.Language)
++	}
++}
++
++func TestHarnessRecommend_UnknownLanguageGenericFallback(t *testing.T) {
++	tool := buildHarnessRecommendTool(newDeps(t))
++	res := mustCall(t, tool, map[string]any{"language": "cobol"}).(harness.Recommendation)
++	if res.Language != "cobol" {
++		t.Errorf("Language = %q, want cobol (generic fallback preserves name)", res.Language)
++	}
++}
++
++func TestHarnessRecommend_UnknownSlugNoLanguage_Errors(t *testing.T) {
++	tool := buildHarnessRecommendTool(newDeps(t))
++	// Slug not in registry and no language → invalid_input.
++	_, err := tool.Handler(context.Background(), json.RawMessage(`{"slug":"ghost"}`))
++	if !IsCode(err, "invalid_input") {
++		t.Errorf("expected invalid_input, got %v", err)
++	}
++}
++
++func TestHarnessRecommend_NeitherSlugNorLanguage_Errors(t *testing.T) {
++	tool := buildHarnessRecommendTool(newDeps(t))
++	_, err := tool.Handler(context.Background(), json.RawMessage(`{}`))
++	if !IsCode(err, "invalid_input") {
++		t.Errorf("expected invalid_input, got %v", err)
++	}
++}
++
++func TestHarnessRecommend_BadJSON_Errors(t *testing.T) {
++	tool := buildHarnessRecommendTool(newDeps(t))
++	_, err := tool.Handler(context.Background(), json.RawMessage(`{`))
++	if !IsCode(err, "invalid_input") {
++		t.Errorf("expected invalid_input, got %v", err)
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/tools_pindrift_test.go /home/user/Yagura/yagura-v0.35.0/internal/mcp/tools_pindrift_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/mcp/tools_pindrift_test.go	1970-01-01 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/mcp/tools_pindrift_test.go	2026-06-09 05:20:26.961201626 +0000
+@@ -0,0 +1,127 @@
++// tools_pindrift_test.go — tests for the yagura_pin_drift handler (was 4.5% coverage).
++// Uses a fake PinDriftChecker so no network is touched; covers the unavailable,
++// bad-json, empty-files, no-pins note, serial/parallel dispatch, and summary_only paths.
++package mcp
++
++import (
++	"context"
++	"encoding/json"
++	"testing"
++
++	"github.com/shizukutanaka/yagura/internal/pindrift"
++)
++
++// fakePinDrift records which method was used and returns one OK result per pin.
++type fakePinDrift struct {
++	serialCalls   int
++	parallelCalls int
++	lastConc      int
++}
++
++func (f *fakePinDrift) results(pins []pindrift.Pin) []pindrift.Result {
++	out := make([]pindrift.Result, 0, len(pins))
++	for _, p := range pins {
++		out = append(out, pindrift.Result{Pin: p, Status: pindrift.StatusOK, Detail: "ok"})
++	}
++	return out
++}
++
++func (f *fakePinDrift) CheckPins(_ context.Context, pins []pindrift.Pin) []pindrift.Result {
++	f.serialCalls++
++	return f.results(pins)
++}
++
++func (f *fakePinDrift) CheckPinsParallel(_ context.Context, pins []pindrift.Pin, conc int) []pindrift.Result {
++	f.parallelCalls++
++	f.lastConc = conc
++	return f.results(pins)
++}
++
++const pinnedWorkflow = "jobs:\n  build:\n    steps:\n" +
++	"      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2\n"
++
++func depsWithPinDrift(t *testing.T, f *fakePinDrift) Deps {
++	d := newDeps(t)
++	d.PinDrift = f
++	return d
++}
++
++func TestPinDrift_Unavailable_WhenNotConfigured(t *testing.T) {
++	tool := buildPinDriftTool(newDeps(t)) // d.PinDrift is nil
++	_, err := tool.Handler(context.Background(), json.RawMessage(`{"files":{"a.yml":"x"}}`))
++	if !IsCode(err, "unavailable") {
++		t.Errorf("expected unavailable, got %v", err)
++	}
++}
++
++func TestPinDrift_BadJSON(t *testing.T) {
++	tool := buildPinDriftTool(depsWithPinDrift(t, &fakePinDrift{}))
++	_, err := tool.Handler(context.Background(), json.RawMessage(`{`))
++	if !IsCode(err, "invalid_input") {
++		t.Errorf("expected invalid_input, got %v", err)
++	}
++}
++
++func TestPinDrift_EmptyFiles(t *testing.T) {
++	tool := buildPinDriftTool(depsWithPinDrift(t, &fakePinDrift{}))
++	_, err := tool.Handler(context.Background(), json.RawMessage(`{"files":{}}`))
++	if !IsCode(err, "invalid_input") {
++		t.Errorf("expected invalid_input, got %v", err)
++	}
++}
++
++func TestPinDrift_NoPinsReturnsNote(t *testing.T) {
++	f := &fakePinDrift{}
++	tool := buildPinDriftTool(depsWithPinDrift(t, f))
++	// File with no SHA-pinned uses: → note path, no checker call.
++	res := mustCall(t, tool, map[string]any{"files": map[string]string{"a.yml": "name: ci\n"}}).(map[string]any)
++	if res["note"] == nil {
++		t.Error("expected a note about no SHA-pinned uses")
++	}
++	if f.serialCalls != 0 || f.parallelCalls != 0 {
++		t.Error("checker must not be called when there are no pins")
++	}
++}
++
++func TestPinDrift_DefaultConcurrencyUsesParallel4(t *testing.T) {
++	f := &fakePinDrift{}
++	tool := buildPinDriftTool(depsWithPinDrift(t, f))
++	res := mustCall(t, tool, map[string]any{"files": map[string]string{"ci.yml": pinnedWorkflow}}).(map[string]any)
++	if f.parallelCalls != 1 || f.lastConc != 4 {
++		t.Errorf("expected one parallel call at concurrency 4, got calls=%d conc=%d", f.parallelCalls, f.lastConc)
++	}
++	if res["results"] == nil || res["summary"] == nil {
++		t.Error("expected results and summary in response")
++	}
++}
++
++func TestPinDrift_ExplicitConcurrencyParallel(t *testing.T) {
++	f := &fakePinDrift{}
++	tool := buildPinDriftTool(depsWithPinDrift(t, f))
++	mustCall(t, tool, map[string]any{"files": map[string]string{"ci.yml": pinnedWorkflow}, "concurrency": 8})
++	if f.parallelCalls != 1 || f.lastConc != 8 {
++		t.Errorf("expected parallel call at concurrency 8, got calls=%d conc=%d", f.parallelCalls, f.lastConc)
++	}
++}
++
++func TestPinDrift_NegativeConcurrencySerial(t *testing.T) {
++	f := &fakePinDrift{}
++	tool := buildPinDriftTool(depsWithPinDrift(t, f))
++	mustCall(t, tool, map[string]any{"files": map[string]string{"ci.yml": pinnedWorkflow}, "concurrency": -1})
++	if f.serialCalls != 1 || f.parallelCalls != 0 {
++		t.Errorf("negative concurrency must use serial path, got serial=%d parallel=%d", f.serialCalls, f.parallelCalls)
++	}
++}
++
++func TestPinDrift_SummaryOnly(t *testing.T) {
++	f := &fakePinDrift{}
++	tool := buildPinDriftTool(depsWithPinDrift(t, f))
++	res := mustCall(t, tool, map[string]any{
++		"files":        map[string]string{"ci.yml": pinnedWorkflow},
++		"summary_only": true,
++	})
++	// summary_only returns a pindrift.Summary, not the results map.
++	if _, ok := res.(pindrift.Summary); !ok {
++		t.Errorf("expected pindrift.Summary, got %T", res)
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/projectgraph/graph.go /home/user/Yagura/yagura-v0.35.0/internal/projectgraph/graph.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/projectgraph/graph.go	2026-06-03 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/projectgraph/graph.go	2026-06-09 08:00:31.568327346 +0000
+@@ -1,11 +1,12 @@
+ // Package projectgraph は portfolio の depends_on 関係を graph として扱う。
+ //
+ // 動機 (v0.18.0):
+-//   cortex/aircloset の "Product Graph" 構想を yagura に翻訳。
+-//   project.DependsOn は既に v0.x から存在していたが、検索可能な graph として
+-//   公開する MCP tool が無かった。
+-//   "プロジェクト X を変更したら何が影響を受けるか?" "X が依存している全 transitive deps は?"
+-//   といった問いに 1 回の MCP 呼出で答えられる土台を提供する。
++//
++//	cortex/aircloset の "Product Graph" 構想を yagura に翻訳。
++//	project.DependsOn は既に v0.x から存在していたが、検索可能な graph として
++//	公開する MCP tool が無かった。
++//	"プロジェクト X を変更したら何が影響を受けるか?" "X が依存している全 transitive deps は?"
++//	といった問いに 1 回の MCP 呼出で答えられる土台を提供する。
+ //
+ // 設計判断:
+ //   - ゼロ依存(ADR-0001)、隣接リスト map[slug][]slug の素朴実装
+@@ -83,17 +84,25 @@
+ 		g.slugs = append(g.slugs, s)
+ 	}
+ 	sort.Strings(g.slugs)
++	// dangling も (From, To) で sort して deterministic output(他の list と同様、
++	// 呼出側の project 順序に依存させない)。
++	sort.Slice(g.dangling, func(i, j int) bool {
++		if g.dangling[i].From != g.dangling[j].From {
++			return g.dangling[i].From < g.dangling[j].From
++		}
++		return g.dangling[i].To < g.dangling[j].To
++	})
+ 	return g
+ }
+ 
+ // NeighborsResult は graph_neighbors の戻り値。
+ type NeighborsResult struct {
+-	Slug              string            `json:"slug"`
+-	DirectDeps        []string          `json:"direct_deps,omitempty"`         // 直接依存先
+-	DirectDependents  []string          `json:"direct_dependents,omitempty"`   // 直接依存元
+-	TransitiveDeps    []string          `json:"transitive_deps,omitempty"`     // depth N までの全依存先
+-	TransitiveDependents []string       `json:"transitive_dependents,omitempty"` // depth N までの全依存元
+-	Depth             int               `json:"depth"`
++	Slug                 string   `json:"slug"`
++	DirectDeps           []string `json:"direct_deps,omitempty"`           // 直接依存先
++	DirectDependents     []string `json:"direct_dependents,omitempty"`     // 直接依存元
++	TransitiveDeps       []string `json:"transitive_deps,omitempty"`       // depth N までの全依存先
++	TransitiveDependents []string `json:"transitive_dependents,omitempty"` // depth N までの全依存元
++	Depth                int      `json:"depth"`
+ }
+ 
+ // Neighbors は slug から depth 階層まで graph を BFS で探索する。
+@@ -156,12 +165,12 @@
+ // 「このプロジェクトを変更したら、どこに波及するか」を提供する。
+ // AI レビュアー(cortex Auto Review 相当)が PR の影響範囲を把握するために使う。
+ type ImpactResult struct {
+-	Slug              string   `json:"slug"`
+-	DirectImpact      []string `json:"direct_impact,omitempty"`      // 直接依存元
+-	TransitiveImpact  []string `json:"transitive_impact,omitempty"`  // 全 transitive 依存元
+-	ImpactCount       int      `json:"impact_count"`
+-	HasCycle          bool     `json:"has_cycle"`
+-	CyclePath         []string `json:"cycle_path,omitempty"`
++	Slug             string   `json:"slug"`
++	DirectImpact     []string `json:"direct_impact,omitempty"`     // 直接依存元
++	TransitiveImpact []string `json:"transitive_impact,omitempty"` // 全 transitive 依存元
++	ImpactCount      int      `json:"impact_count"`
++	HasCycle         bool     `json:"has_cycle"`
++	CyclePath        []string `json:"cycle_path,omitempty"`
+ }
+ 
+ // Impact は slug を変更した時に影響を受けるプロジェクトを列挙する。
+@@ -233,15 +242,15 @@
+ 
+ // Summary は portfolio 全体の graph 統計を返す。
+ type Summary struct {
+-	NodeCount       int `json:"node_count"`
+-	EdgeCount       int `json:"edge_count"`
+-	RootCount       int `json:"root_count"`        // 誰にも依存されていない node
+-	LeafCount       int `json:"leaf_count"`        // 何にも依存しない node
+-	IsolatedCount   int `json:"isolated_count"`    // 入次数=出次数=0
+-	MaxFanOut       int `json:"max_fan_out"`       // 最大依存先数
+-	MaxFanIn        int `json:"max_fan_in"`        // 最大依存元数
+-	MostDependedOn  string `json:"most_depended_on,omitempty"`
+-	DanglingCount   int `json:"dangling_count"`
++	NodeCount      int    `json:"node_count"`
++	EdgeCount      int    `json:"edge_count"`
++	RootCount      int    `json:"root_count"`     // 誰にも依存されていない node
++	LeafCount      int    `json:"leaf_count"`     // 何にも依存しない node
++	IsolatedCount  int    `json:"isolated_count"` // 入次数=出次数=0
++	MaxFanOut      int    `json:"max_fan_out"`    // 最大依存先数
++	MaxFanIn       int    `json:"max_fan_in"`     // 最大依存元数
++	MostDependedOn string `json:"most_depended_on,omitempty"`
++	DanglingCount  int    `json:"dangling_count"`
+ }
+ 
+ // Stats は graph の集計統計を返す。
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/projectgraph/graph_test.go /home/user/Yagura/yagura-v0.35.0/internal/projectgraph/graph_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/projectgraph/graph_test.go	2026-06-03 00:00:00.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/projectgraph/graph_test.go	2026-06-09 08:00:06.072327930 +0000
+@@ -147,6 +147,34 @@
+ 	}
+ }
+ 
++// TestDangling_DeterministicOrder pins that Dangling() is sorted by (From, To)
++// regardless of input project order. Every other list Build produces (forwards,
++// reverses, slugs) is explicitly sorted; dangling must be too so the output does
++// not depend on the caller's project ordering (Deterministic output rule).
++func TestDangling_DeterministicOrder(t *testing.T) {
++	// Projects deliberately given out of slug order, each with multiple missing
++	// deps in non-sorted declaration order.
++	g := Build([]Project{
++		{Slug: "zeta", DependsOn: []string{"miss-y", "miss-x"}},
++		{Slug: "alpha", DependsOn: []string{"miss-b", "miss-a"}},
++	})
++	d := g.Dangling()
++	want := []DanglingDep{
++		{From: "alpha", To: "miss-a"},
++		{From: "alpha", To: "miss-b"},
++		{From: "zeta", To: "miss-x"},
++		{From: "zeta", To: "miss-y"},
++	}
++	if len(d) != len(want) {
++		t.Fatalf("dangling count: got %d, want %d (%+v)", len(d), len(want), d)
++	}
++	for i := range want {
++		if d[i] != want[i] {
++			t.Errorf("dangling[%d] = %+v, want %+v (full: %+v)", i, d[i], want[i], d)
++		}
++	}
++}
++
+ // ─── Stats(集計)───────────────────────────────────────────
+ 
+ func TestStats_MostDependedOn(t *testing.T) {
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go /home/user/Yagura/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go	2026-06-08 05:37:32.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/qualitycheck/qualitycheck.go	2026-06-09 07:43:51.985010667 +0000
+@@ -482,6 +482,14 @@
+ 	if len(trimmed) <= maxLen {
+ 		return trimmed
+ 	}
++	// maxLen < 3 has no room for the "..." suffix; truncate plainly instead of
++	// computing trimmed[:maxLen-3] (a negative index that would panic).
++	if maxLen <= 3 {
++		if maxLen <= 0 {
++			return ""
++		}
++		return trimmed[:maxLen]
++	}
+ 	return trimmed[:maxLen-3] + "..."
+ }
+ 
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go /home/user/Yagura/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go	2026-06-08 05:40:10.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/qualitycheck/qualitycheck_test.go	2026-06-09 07:44:13.589010173 +0000
+@@ -569,3 +569,27 @@
+ 		t.Errorf("custom rule should flag console.log: %+v", findings)
+ 	}
+ }
++
++// TestTruncateExcerpt_SmallMaxDoesNotPanic pins the boundary: when maxLen < 3
++// and the line is longer than maxLen, the old code computed trimmed[:maxLen-3]
++// which is a negative index and panics. Small maxLen must truncate without the
++// "..." suffix and never panic.
++func TestTruncateExcerpt_SmallMaxDoesNotPanic(t *testing.T) {
++	cases := []struct {
++		line   string
++		maxLen int
++		want   string
++	}{
++		{"hello world", 2, "he"},       // <3 → no ellipsis room (was a panic)
++		{"hello world", 0, ""},         // 0 → empty (was a panic)
++		{"hello world", -1, ""},        // negative → empty (was a panic)
++		{"abc", 5, "abc"},              // shorter than max → unchanged
++		{"hello world", 8, "hello..."}, // normal path: 5 chars + "..."
++	}
++	for _, c := range cases {
++		got := truncateExcerpt(c.line, c.maxLen)
++		if got != c.want {
++			t.Errorf("truncateExcerpt(%q, %d) = %q, want %q", c.line, c.maxLen, got, c.want)
++		}
++	}
++}
+diff -ruN /tmp/pgA/prev/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go /home/user/Yagura/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go
+--- /tmp/pgA/prev/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go	2026-06-08 02:09:54.000000000 +0000
++++ /home/user/Yagura/yagura-v0.35.0/internal/sessionsummary/sessionsummary_test.go	2026-06-09 10:46:14.110665817 +0000
+@@ -85,6 +85,15 @@
+ 	if s.Events != 0 || s.ToolInvocations != 0 || s.Summary == "" {
+ 		t.Errorf("empty summary: %+v", s)
+ 	}
++	// ToolInvocations==0 must leave ErrorRate at 0, not NaN. NaN would make the
++	// summary fail json.Marshal, breaking yagura_session_summary for an idle
++	// session with no tool calls.
++	if s.ErrorRate != 0 {
++		t.Errorf("empty session ErrorRate = %v, want 0 (not NaN)", s.ErrorRate)
++	}
++	if _, err := json.Marshal(s); err != nil {
++		t.Errorf("empty summary must be JSON-marshalable (no NaN/Inf): %v", err)
++	}
+ }
+ 
+ func TestSummarize_Deterministic(t *testing.T) {

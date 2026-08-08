@@ -1,0 +1,6 @@
+# Local working extract of the source. The source is delivered as
+# yagura-v0.35.0-source.tar.gz + cli-direct-mode.patch (reviewable diff),
+# NOT as committed plaintext — committing the raw tree trips the project's
+# own fake-secret test fixtures under GitHub push protection.
+/yagura-v*/
+/.claude/
