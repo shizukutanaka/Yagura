@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **103 tools**.
+Generated from a live yagura — **104 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (55)
+- [Misc](#misc) (56)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -779,6 +779,20 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `operations` (array) | ★ | operations to classify. |
+
+---
+
+### `yagura_ownership`
+
+[S] Per-file ownership: Minor/Major/Total/Ownership (Bird FSE2011, 5% threshold) + AI-authorship extension. Needs only a slug.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `limit` (integer) |  | max files to return (lowest ownership first) |
+| `max_commits` (integer) |  | commits to walk back (default 500) |
+| `slug` (string) | ★ | registered project slug |
 
 ---
 

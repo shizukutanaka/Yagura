@@ -22,7 +22,7 @@ func TestDispatch_Version(t *testing.T) {
 	if code != 0 {
 		t.Errorf("expected 0, got %d", code)
 	}
-	if !strings.Contains(out.String(), "yagura 0.119.0") {
+	if !strings.Contains(out.String(), "yagura 0.120.0") {
 		t.Errorf("expected version in stdout, got: %q", out.String())
 	}
 	if !strings.Contains(out.String(), "go") {

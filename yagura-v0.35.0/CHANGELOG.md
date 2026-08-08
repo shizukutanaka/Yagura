@@ -4,6 +4,99 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.120.0] - 2026-08-08
+
+### Theme — "Ownership: the other half of behavioral code analysis"
+
+v0.119.0 added *how much* code changes (churn). This adds *who wrote it* — the half
+the previous release explicitly listed as unbuilt.
+
+#### Research basis
+
+**Bird, Nagappan, Murphy, Gall & Devanbu, "Don't Touch My Code! Examining the Effects
+of Ownership on Software Quality", ESEC/FSE 2011 (Microsoft Research).** On Windows
+Vista and Windows 7 they show that the **number of low-expertise (minor) contributors**
+and the **proportion of ownership held by the top owner** both relate to pre-release
+faults *and* post-release failures. The four metrics are implemented exactly as defined:
+
+- **Minor** — contributors with **< 5%** of a file's commits
+- **Major** — contributors with **≥ 5%**
+- **Total** — total contributors
+- **Ownership** — proportion held by the highest contributor
+
+The 5% threshold is the paper's, and `TestMinorThresholdIsFivePercent` pins it so a
+later tweak cannot silently drift away from the cited research. Because the paper's
+finding is that *lower* ownership associates with more defects, **ranking is by
+Ownership ascending** (riskiest first).
+
+The paper's related work also notes Meneely & Williams' Linux-kernel result — a source
+file touched by more than nine developers was **16× more likely** to contain a security
+vulnerability — corroborating `Total` as an independent signal.
+
+#### Added — `internal/ownership` + `yagura_ownership` (tool #104)
+
+- `Analyze` is a **pure function** over `[]churn.Commit`. Rather than opening a second
+  git path, `churn.Commit` gained `Author`/`Email` and `churn.ReadGitLog` remains the
+  single git seam (the v0.118.0 `srcfiles` principle). The header parser stays
+  backward-compatible with the old two-field format.
+- Only files that still exist are analyzed, so deleted paths cannot skew the metrics.
+
+#### Extension beyond the paper (explicitly labeled)
+
+`AIProportion`, `HumanOwnership`, `TopHumanOwner`, `FullyAIAuthored` report how much of
+a file came from AI agents (heuristic author matching). **This is not in Bird et al. and
+carries no research backing** — it is reported in a separate `extension_metrics` list
+alongside `research_metrics` so the two are never conflated. Bird et al.'s mechanism is
+"low-expertise contributors introduce defects"; "one AI wrote everything" is a situation
+the 2011 paper never studied, and claiming its authority for that would be dishonest.
+
+The distinction is not academic. Dogfooded on this repository, **all 187 Go files score
+Ownership 1.00 with zero minor contributors** — by the paper's metrics, maximally safe.
+The extension shows why that reading is incomplete: **187/187 files are fully
+AI-authored**, with no human ever having directly authored a commit touching them.
+
+#### Fixed (both found by dogfooding v0.119.0)
+
+- **Churn measures mixed file populations.** `git log --numstat` counted churn across
+  *every* file (tarballs, CHANGELOG.md) while `totalLOC` came from Go sources only,
+  making M1 exceed 1.0 (1.371 — nonsensical for a ratio of churned to total LOC).
+  The log is now restricted to a pathspec (`*.go` by default) so numerator and
+  denominator share one file set: **M1 is now 0.7305** and `skipped` fell 16 → 0.
+- **Timeouts were reported as an empty error.** When `CommandContext` SIGKILLs git on
+  deadline, the result is an `ExitError` with empty stderr, which surfaced as the
+  useless message `git log failed: `. The timeout is now detected via `ctx.Err()` and
+  named, with a hint to lower `max_commits`; a non-empty-stderr fallback covers the
+  remaining cases. (Timeout raised 30s → 60s; the pathspec also makes the query far
+  cheaper.)
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 8 new ownership tests + existing churn tests
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001)
+- Live MCP dogfood of both tools on this repo, including the corrected M1 and the
+  fully-AI-authored finding above.
+
+#### Counts
+
+- MCP tools: 103 → **104**
+- Internal packages: 89 → **90** (`ownership`)
+- Consecutive reproducible releases: 115 → **116** (v0.6 → v0.120.0)
+
+#### What's not yet
+
+- AI-author detection is a heuristic (identity/email markers); a project using custom
+  bot identities would be misclassified. The research metrics do not depend on it.
+- Ownership is not yet an `alert_fix` signal, nor combined with churn into a single
+  risk score — the literature suggests they are complementary.
+- Bird et al. also study ownership of *dependencies* and social-network measures;
+  neither is implemented.
+
+#### Sources
+
+- Bird, C., Nagappan, N., Murphy, B., Gall, H., Devanbu, P. *Don't Touch My Code!
+  Examining the Effects of Ownership on Software Quality.* ESEC/FSE 2011.
+  https://www.microsoft.com/en-us/research/publication/dont-touch-my-code-examining-the-effects-of-ownership-on-software-quality/
+
 ## [v0.119.0] - 2026-08-08
 
 ### Theme — "The temporal dimension: research-grounded churn risk"

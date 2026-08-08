@@ -35,6 +35,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/nakedret"
 	"github.com/shizukutanaka/yagura/internal/namecheck"
 	"github.com/shizukutanaka/yagura/internal/nestdepth"
+	"github.com/shizukutanaka/yagura/internal/ownership"
 	"github.com/shizukutanaka/yagura/internal/paramcheck"
 	"github.com/shizukutanaka/yagura/internal/portfolioquality"
 	"github.com/shizukutanaka/yagura/internal/prealloc"
@@ -1747,6 +1748,84 @@ func buildChurnRiskTool(d Deps) *Tool {
 				"slug":       in.Slug,
 				"report":     rep,
 				"incomplete": sr.Incomplete(),
+			}, nil
+		},
+	}
+}
+
+// buildOwnershipTool は「誰がそのコードを書いたか」を計測する(v0.120.0)。
+//
+// 研究的根拠: Bird et al., "Don't Touch My Code!", ESEC/FSE 2011 — minor 寄与者数と
+// 最大所有者の所有割合が pre-release fault / post-release failure と関係する。
+// Minor/Major/Total/Ownership の 4 指標は論文どおり(閾値 5%)、ランキングは
+// Ownership 昇順(所有権が低いほど危険)。
+//
+// ai_proportion / human_ownership は **論文外の拡張**(ヒューリスティック判定)であり、
+// 研究の裏付けがある 4 指標とは分けて解釈すること。
+func buildOwnershipTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_ownership",
+		Title:       "Code Ownership (Bird et al. FSE 2011)",
+		Description: "[S] Per-file ownership: Minor/Major/Total/Ownership (Bird FSE2011, 5% threshold) + AI-authorship extension. Needs only a slug.",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"slug":        map[string]any{"type": "string", "description": "registered project slug"},
+				"max_commits": map[string]any{"type": "integer", "description": "commits to walk back (default 500)"},
+				"limit":       map[string]any{"type": "integer", "description": "max files to return (lowest ownership first)"},
+			},
+			"required": []string{"slug"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			if d.Registry == nil {
+				return nil, &ToolError{Code: "unavailable", Message: "registry not configured"}
+			}
+			var in struct {
+				Slug       string `json:"slug"`
+				MaxCommits int    `json:"max_commits"`
+				Limit      int    `json:"limit"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if in.Slug == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
+			}
+			p, err := d.Registry.Get(in.Slug)
+			if err != nil || p == nil {
+				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
+			}
+			if p.LocalPath == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "project has no local_path; set it with yagura_update"}
+			}
+			logOut, err := churn.ReadGitLog(ctx, p.LocalPath, in.MaxCommits)
+			if err != nil {
+				return nil, &ToolError{Code: "no_history", Message: err.Error()}
+			}
+			commits, err := churn.Parse(logOut)
+			if err != nil {
+				return nil, &ToolError{Code: "parse_failed", Cause: err}
+			}
+			// 現存する Go ファイルだけを対象にする(削除済みパスを混ぜない)
+			sr, err := srcfiles.ReadGo(p.LocalPath)
+			if err != nil {
+				return nil, &ToolError{Code: "read_failed", Message: err.Error()}
+			}
+			only := make(map[string]bool, len(sr.Files))
+			for path := range sr.Files {
+				only[path] = true
+			}
+			rep := ownership.Analyze(commits, only)
+			if in.Limit > 0 && len(rep.Files) > in.Limit {
+				rep.Files = rep.Files[:in.Limit]
+			}
+			return map[string]any{
+				"slug":              in.Slug,
+				"report":            rep,
+				"minor_threshold":   ownership.MinorThreshold,
+				"research_metrics":  []string{"total_contributors", "minor_contributors", "major_contributors", "ownership"},
+				"extension_metrics": []string{"ai_proportion", "human_ownership", "top_human_owner", "fully_ai_authored"},
 			}, nil
 		},
 	}

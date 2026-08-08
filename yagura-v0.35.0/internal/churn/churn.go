@@ -47,11 +47,15 @@ type FileChange struct {
 	Deleted int
 }
 
-// Commit は 1 コミットの numstat。
+// Commit は 1 コミットの numstat + 著者。
+// Author/Email は v0.120.0 で追加(internal/ownership が同じ git seam を共有するため。
+// 独自に git log を読む二本目の経路を作らない)。
 type Commit struct {
-	Hash  string
-	When  time.Time
-	Files []FileChange
+	Hash   string
+	When   time.Time
+	Author string
+	Email  string
+	Files  []FileChange
 }
 
 // Measures は Nagappan & Ball (ICSE 2005) の相対 churn 指標 M1-M8。
@@ -101,10 +105,16 @@ func Parse(out string) ([]Commit, error) {
 		if line == "" {
 			continue
 		}
-		// commit ヘッダ行: <hash>|<iso8601>
-		if hash, ts, ok := strings.Cut(line, "|"); ok && !strings.Contains(hash, "\t") {
+		// commit ヘッダ行: <hash>|<iso8601> または <hash>|<iso8601>|<author>|<email>
+		// (v0.120.0 で著者欄を追加。旧 2 欄形式もそのまま解釈できる)
+		if hash, rest, ok := strings.Cut(line, "|"); ok && !strings.Contains(hash, "\t") {
 			commits = append(commits, Commit{Hash: hash})
 			cur = &commits[len(commits)-1]
+			ts := rest
+			if head, tail, ok2 := strings.Cut(rest, "|"); ok2 {
+				ts = head
+				cur.Author, cur.Email, _ = strings.Cut(tail, "|")
+			}
 			if when, err := time.Parse(time.RFC3339, ts); err == nil {
 				cur.When = when
 			}

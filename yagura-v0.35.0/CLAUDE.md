@@ -23,7 +23,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 89 internal packages
+## Map — 90 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -341,6 +341,24 @@ cortex flywheel 4 段階すべてを単体で機械化:
   assertcheck)を package 別 grade(A-F)へ合成(ソクラテス新視点 synthesis)。
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
+
+### 所有権 / ownership(★ v0.120.0、論文由来)
+- `internal/ownership` — behavioral code analysis のもう半分「誰が書いたか」。
+  根拠は **Bird, Nagappan, Murphy, Gall, Devanbu, "Don't Touch My Code!", ESEC/FSE 2011**
+  (Windows Vista/7 で、minor 寄与者数と最大所有者の所有割合が pre-release fault /
+  post-release failure と関係)。4 指標は論文の定義そのまま:
+  Minor(< **5%**)/ Major(>= 5%)/ Total / Ownership(最大寄与者の割合)。
+  閾値は `TestMinorThresholdIsFivePercent` が固定——変えた時点で論文の指標ではなくなる。
+  **ランキングは Ownership 昇順**(所有権が低いほど危険、という論文の含意どおり)。
+- **論文外の拡張は必ず分けて報告すること**: `ai_proportion` / `human_ownership` /
+  `top_human_owner` / `fully_ai_authored` は本リポジトリ独自のヒューリスティックで
+  研究の裏付けが無い。MCP 応答でも `research_metrics` と `extension_metrics` を
+  別配列で返す。Bird らの機序は「専門性の低い寄与者が誤りを入れる」であって
+  「AI が全部書いた」状況は論文の射程外——研究の権威を借りて語らない(honest capability)。
+- git 読み出しは `churn.ReadGitLog` の **単一 seam** を共有する(`churn.Commit` に
+  Author/Email を足した)。二本目の git 経路を作らないこと。
+  自リポジトリ dogfood: 全 187 Go ファイルが Ownership 1.00 / minor 0(論文指標では
+  最も安全)である一方、187/187 が fully AI-authored ——両指標を分けている理由の実例。
 
 ### 時間軸 / churn(★ v0.119.0、論文由来)
 - `internal/churn` — yagura 唯一の **時間軸** レンズ。v0.118 まで全 lens が snapshot 解析で、
