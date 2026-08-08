@@ -342,6 +342,24 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### alert は「件数予算」を持つ(★ v0.122.0、論文由来)
+- `internal/alertfix` に 8 番目の source `process_risk` を追加(churn × ownership を
+  注意配分レイヤへ供給)。**1 プロジェクトあたり最大 3 件**(`MaxProcessAlertsPerProject`)。
+- 根拠は **Sadowski et al., "Lessons from Building Static Analysis Tools at Google",
+  CACM 2018**: 解析結果を自動起票していた初期方式は **起票 bug の 84% が未修正**。
+  同論文の "effective false positive" = 「開発者が見た後に何も行動しなかった指摘」——
+  技術的に正しくても理解・行動につながらなければ偽陽性と同じ害。code review に出す
+  チェックは effective FP 率 10% 未満が要件で、「偽陽性率を決めるのは開発者であって
+  ツール作者ではない」。
+- **新しい alert source を足すときは必ず件数予算・沈黙条件・行動可能性をセットで設計する**:
+  ①上限件数 ②健全時は 0 件 ③全 alert に「なぜ出たか(証拠)」と「次に何をするか
+  (recommendation + suggested_tool)」。①②③ は各々テストで固定すること。
+- **合成スコアに絶対閾値を置かない**(v0.122.0 の実失敗): percentile 平均のスコアは
+  リポジトリごとに意味が変わり、実測で最上位が 0.695 だったため 0.85 の閾値は
+  「絶対に発火しない死んだ条件」だった。発火判定は解釈可能な絶対条件
+  (相対 churn >= 1.0 / 所有率 < 0.5)に置き、スコアは **並び順専用**にする。
+  選抜は score 順・**提示は severity 順**(他 source の rankAlerts と規約を揃える)。
+
 ### プロセス指標 > 製品指標(★ v0.121.0、論文由来 + 自己反証)
 - `internal/processrisk` — churn(v0.119)と ownership(v0.120)の **プロセス指標のみ**を
   合成して順位付けする。根拠は **Rahman & Devanbu (ICSE 2013)**(製品指標は stasis =

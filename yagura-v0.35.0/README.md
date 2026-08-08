@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.121.0** — 105 MCP tools, 91 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Process metrics over product metrics:** `yagura_process_risk` ranks files using churn + ownership only, deliberately excluding complexity from the score — Majumder/Mody/Menzies (EMSE 2022, 700 projects / 722k commits) measured product metrics at AUC ~54% (near-random) against ~95% for process metrics. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.122.0** — 105 MCP tools, 91 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Process risk reaches the alert hub:** `alert_fix` gains an 8th signal source fed by churn + ownership — deliberately capped at 3 alerts per project, since Sadowski et al. (CACM 2018) found Google's auto-filed bugs went 84% unfixed and define any un-actioned finding as an "effective false positive". Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-117 consecutive releases (v0.6 → v0.121.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+118 consecutive releases (v0.6 → v0.122.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

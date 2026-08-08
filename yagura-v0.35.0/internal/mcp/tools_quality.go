@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
+	"github.com/shizukutanaka/yagura/internal/alertfix"
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
@@ -1903,12 +1904,24 @@ func buildProcessRiskTool(d Deps) *Tool {
 			chRep := churn.Analyze(commits, sizes, cx)
 			ownRep := ownership.Analyze(commits, only)
 			rep := processrisk.Score(chRep.Files, ownRep.Files)
+			// v0.122.0: 上位リスクを alert 化して注意配分レイヤへ供給する。
+			// 件数は alertfix 側で Sadowski et al. の知見に基づき厳しく絞られる
+			// (全件出すと「起票された bug の 84% が未修正」の失敗を再現する)。
+			riskFiles := make([]alertfix.ProcessRiskFile, 0, len(rep.Files))
+			for _, f := range rep.Files {
+				riskFiles = append(riskFiles, alertfix.ProcessRiskFile{
+					Path: f.Path, Score: f.Score, RelativeChurn: f.RelativeChurn,
+					Ownership: f.Ownership, HasOwnership: f.HasOwnership, Reasons: f.Reasons,
+				})
+			}
+			alerts := alertfix.EvaluateProcessRisk(in.Slug, riskFiles, alertfix.DefaultThresholds())
 			if in.Limit > 0 && len(rep.Files) > in.Limit {
 				rep.Files = rep.Files[:in.Limit]
 			}
 			return map[string]any{
 				"slug":       in.Slug,
 				"report":     rep,
+				"alerts":     alerts,
 				"incomplete": sr.Incomplete(),
 			}, nil
 		},

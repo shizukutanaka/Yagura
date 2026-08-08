@@ -4,6 +4,97 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.122.0] - 2026-08-08
+
+### Theme — "Process risk reaches the alert hub, under an alert-fatigue budget"
+
+Three consecutive releases listed the same open item: `alert_fix` — the layer that decides
+where attention goes — still saw only external sensors (vulns / CI / Scorecard / staleness
+/ issues / plan / visibility), never the process metrics built in v0.119–v0.121. This
+closes that seam. But the interesting question turned out not to be *whether* to feed it,
+it was **how many alerts are safe to emit**.
+
+#### Research basis
+
+**Sadowski, Aftandilian, Eagle, Miller-Cushon & Jaspan, "Lessons from Building Static
+Analysis Tools at Google", CACM 2018.**
+
+- Google's earlier approach automatically filed bugs from analysis results. **84% of the
+  bugs it filed were never fixed.**
+- The paper defines an **"effective false positive"**: any issue where *the developer took
+  no positive action after seeing it*. A technically correct finding that nobody
+  understands or acts on causes the same damage as a wrong one.
+- Checks surfaced in code review are held to **under 10% effective false positives**, and
+  the paper is blunt about who decides: *"Developers, not tool authors, will determine and
+  act on a tool's perceived false-positive rate."*
+
+Ranking 191 files by risk and emitting an alert for each would reproduce Google's failed
+design exactly. So the source ships with a hard budget.
+
+#### Added — `SourceProcessRisk`, the 8th alert source
+
+- **Capped at `MaxProcessAlertsPerProject = 3`**, pinned by
+  `TestProcessRisk_VolumeIsCapped` (100 risky files in ⇒ at most 3 alerts out).
+- **Every alert must be understandable and actionable**, pinned by
+  `TestProcessRisk_EveryAlertIsActionable`: a description carrying the evidence that
+  fired it, a concrete recommendation, and a `SuggestedTool` to investigate with. An
+  alert failing those is an effective false positive by the paper's definition.
+- **Silent on healthy code** — a calm repository emits nothing.
+- **Stable IDs** (`project:process_risk:path`) so the existing resolve/snooze lifecycle
+  works and a dismissed finding is not nagged again.
+- Severity tops out at `high`, never `critical`: this is a leading indicator, not a live
+  vulnerability, and inflating severity is another way to train people to ignore a source.
+
+#### Fixed — a dead threshold, caught by dogfooding
+
+The first implementation gated firing on the composite `processrisk` score (`>= 0.85`).
+Dogfooding showed **zero alerts on a repository with genuinely churning files**: that
+score is a *mean of within-repo percentiles*, and the top file on this repo scores
+**0.695**, so the gate could never open. A threshold that never fires is as useless as
+one that always does.
+
+Firing now depends on **interpretable absolute conditions** drawn from the source papers
+— relative churn ≥ 1.0 (the file has been rewritten past its own current size, the
+file-level analogue of Nagappan & Ball's M1 exceeding 1) **or** top-owner share < 0.5 (no
+clear owner, Bird et al.) — while the composite score is used only for *ordering*. Since
+nothing here is calibrated against a defect dataset, no absolute "danger line" can be
+drawn on the composite score, and this release stops pretending otherwise.
+`TestProcessRisk_FiresOnRealisticScores` pins the regression using the real 0.695/6.34
+figures observed.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 9 new tests
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001)
+- **Live dogfood:** 191 files scored → **exactly 3 alerts**, severity-ordered, each
+  naming its evidence (`internal/mcp/tools.go`, relative churn 6.34, MEDIUM). Also
+  corrected during dogfooding: alerts were emitted in score order, so a MEDIUM could
+  print below a LOW; selection stays score-based but presentation is now severity-first,
+  matching `rankAlerts` in the rest of `alertfix`.
+
+#### Counts
+
+- MCP tools: 105 (unchanged — this extends an existing tool's output)
+- Alert sources: 7 → **8**
+- Internal packages: 91 (unchanged)
+- Consecutive reproducible releases: 117 → **118** (v0.6 → v0.122.0)
+
+#### What's not yet
+
+- The daemon's periodic scanner does not yet compute process risk, so these alerts appear
+  only when `yagura_process_risk` is called. Wiring it into the sweep would put process
+  risk on the dashboard's health banner too.
+- No measurement of our own effective-false-positive rate. Sadowski et al.'s point is
+  that only developer behaviour reveals it — the cap is a precaution, not evidence.
+- The 3-alert budget and the churn/ownership cut-offs are informed choices, not
+  calibrated ones.
+
+#### Sources
+
+- Sadowski, C., Aftandilian, E., Eagle, A., Miller-Cushon, L. & Jaspan, C. *Lessons from
+  Building Static Analysis Tools at Google.* Communications of the ACM, 61(4), 2018.
+  https://cacm.acm.org/research/lessons-from-building-static-analysis-tools-at-google/
+
 ## [v0.121.0] - 2026-08-08
 
 ### Theme — "Process metrics over product metrics (and a correction to our own v0.119.0)"
