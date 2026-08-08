@@ -9,12 +9,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/shizukutanaka/yagura/internal/aiverify"
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/calibrate"
+	"github.com/shizukutanaka/yagura/internal/churn"
 	"github.com/shizukutanaka/yagura/internal/codehealth"
 	"github.com/shizukutanaka/yagura/internal/cognit"
 	"github.com/shizukutanaka/yagura/internal/complexity"
@@ -41,6 +43,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/recvcheck"
 	"github.com/shizukutanaka/yagura/internal/regress"
 	"github.com/shizukutanaka/yagura/internal/returncheck"
+	"github.com/shizukutanaka/yagura/internal/srcfiles"
 	"github.com/shizukutanaka/yagura/internal/synccheck"
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 	"github.com/shizukutanaka/yagura/internal/thelper"
@@ -1661,6 +1664,90 @@ func buildPortfolioQualityTool(d Deps) *Tool {
 				rep.Projects = rep.Projects[:in.Limit]
 			}
 			return rep, nil
+		},
+	}
+}
+
+// buildChurnRiskTool は登録プロジェクトの *時間軸* を解析する(v0.119.0)。
+//
+// 研究的根拠:
+//   - Nagappan & Ball, ICSE 2005: 絶対 churn は defect density の予測子として貧弱だが、
+//     サイズ・時間幅で正規化した相対 churn(M1-M8)は fault-prone を 89.0% で判別する。
+//     よって順位付けは **相対** churn で行う(絶対 churn では並べない)。
+//   - Tornhill の behavioral code analysis: 本当に危険なのは「頻繁に変わる複雑なコード」。
+//     RiskScore = 相対 churn × 複雑度 がこの規則。
+//
+// v0.118.0 の portfolio_quality と同じく **files を受け取らない**——slug から local_path を
+// 解決し daemon 側で git log とソースを読むので、内容は LLM context を通らない。
+func buildChurnRiskTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_churn_risk",
+		Title:       "Churn Risk (Temporal Hotspots)",
+		Description: "[S] Rank files by relative churn x complexity from git history (Nagappan-Ball M1-M8 + Tornhill hotspots). Needs only a slug.",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"slug":        map[string]any{"type": "string", "description": "registered project slug"},
+				"max_commits": map[string]any{"type": "integer", "description": "commits to walk back (default 500)"},
+				"limit":       map[string]any{"type": "integer", "description": "max ranked files to return"},
+			},
+			"required": []string{"slug"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			if d.Registry == nil {
+				return nil, &ToolError{Code: "unavailable", Message: "registry not configured"}
+			}
+			var in struct {
+				Slug       string `json:"slug"`
+				MaxCommits int    `json:"max_commits"`
+				Limit      int    `json:"limit"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if in.Slug == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
+			}
+			p, err := d.Registry.Get(in.Slug)
+			if err != nil || p == nil {
+				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
+			}
+			if p.LocalPath == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "project has no local_path; set it with yagura_update"}
+			}
+			logOut, err := churn.ReadGitLog(ctx, p.LocalPath, in.MaxCommits)
+			if err != nil {
+				// 履歴が取れないことを明示的な失敗にする(churn 0 を「安全」と誤読させない)
+				return nil, &ToolError{Code: "no_history", Message: err.Error()}
+			}
+			commits, err := churn.Parse(logOut)
+			if err != nil {
+				return nil, &ToolError{Code: "parse_failed", Cause: err}
+			}
+			sr, err := srcfiles.ReadGo(p.LocalPath)
+			if err != nil {
+				return nil, &ToolError{Code: "read_failed", Message: err.Error()}
+			}
+			sizes := make(map[string]int, len(sr.Files))
+			for path, content := range sr.Files {
+				sizes[path] = strings.Count(content, "\n") + 1
+			}
+			cx := map[string]int{}
+			for _, f := range complexity.Scan(sr.Files, 10).Functions {
+				if f.Complexity > cx[f.File] {
+					cx[f.File] = f.Complexity
+				}
+			}
+			rep := churn.Analyze(commits, sizes, cx)
+			if in.Limit > 0 && len(rep.Files) > in.Limit {
+				rep.Files = rep.Files[:in.Limit]
+			}
+			return map[string]any{
+				"slug":       in.Slug,
+				"report":     rep,
+				"incomplete": sr.Incomplete(),
+			}, nil
 		},
 	}
 }

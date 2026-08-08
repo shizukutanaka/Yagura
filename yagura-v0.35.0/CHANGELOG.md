@@ -4,6 +4,90 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.119.0] - 2026-08-08
+
+### Theme — "The temporal dimension: research-grounded churn risk"
+
+Directive was **論文や技術情報などを参考に続けて** — so this release is grounded in
+published research rather than invented heuristics.
+
+**The gap found:** every one of the ~24 lenses built so far was **snapshot-only**.
+`grep -rl "git log\|churn" internal/` returned **0**. Worse, the existing
+`internal/hotspot` is *lens convergence* (several static lenses flagging the same
+function) — not what the literature means by a hotspot. The entire *time* axis —
+which code actually keeps changing — was missing.
+
+#### Research basis
+
+- **Nagappan & Ball, "Use of Relative Code Churn Measures to Predict System Defect
+  Density", ICSE 2005 (Microsoft Research).** On Windows Server 2003 they show that
+  **absolute** churn measures are poor predictors of defect density, while a set of
+  **relative** measures (churn normalized by component size and temporal extent)
+  is highly predictive — discriminating fault-prone from not-fault-prone binaries at
+  **89.0% accuracy**. Their M1–M8 are implemented verbatim:
+  M1 churned/total LOC · M2 deleted/total LOC · M3 files-churned/file-count ·
+  M4 churn-count/files-churned · M5 weeks-of-churn/file-count ·
+  M6 lines-worked-on/weeks · M7 churned/deleted · M8 lines-worked-on/churn-count.
+  **Ranking is by relative churn, never absolute** — that negative result is the
+  paper's central finding and is pinned by a regression test.
+- **Adam Tornhill's behavioral code analysis.** Static analysis inspects a snapshot;
+  behavioral analysis adds temporal evolution. The genuinely dangerous code is
+  *complex code that changes often*; reported top hotspots are a small share of the
+  codebase yet account for **25–70% of defects**. `RiskScore = relative churn ×
+  complexity` implements exactly this rule.
+
+#### Added — `internal/churn` + `yagura_churn_risk` (tool #103)
+
+- `Parse` is a **pure function** over `git log --numstat` output — no git needed to
+  test it, matching this repo's content-based lens style. `ReadGitLog` isolates the
+  IO (bounded to 500 commits, 30s timeout, `--no-merges`).
+- Files whose current size is unknown are **counted as `skipped`**, never divided by
+  zero and never silently treated as 0-churn "safe".
+- A repository with no history is an **explicit `no_history` error**, not an empty
+  (falsely reassuring) result — the same fail-closed discipline as the truncated-scan
+  warnings.
+- Like v0.118.0's `portfolio_quality`, the tool takes **no `files`**: it resolves
+  `local_path` from the registry and reads git + sources daemon-side, so no source
+  content crosses the LLM context. `openWorldHint: true` (spawns `git`), consistent
+  with the v0.113.0 classification of `yagura_handoff`.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 9 new tests, including two that pin the
+  research: relative churn must outrank absolute, and complexity must break ties
+  the Tornhill way.
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001 — `os/exec` only).
+- **Live dogfood on this repo's own 284-commit history** (via the MCP endpoint):
+  184 files analyzed, 10 weeks, M1=1.371 (churn exceeds current LOC — heavy rewriting),
+  M7=4.57 (churn≫deletion ⇒ new-feature development, per the paper's reading).
+  Top hotspot `internal/mcp/tools.go` (relative churn **6.36** — 1,945 lines churned
+  through a 528-line file). Critically, `cmd/yagura/cli.go` has by far the **largest
+  absolute churn (5,967 lines) yet ranks only 5th** — a naive absolute-churn ranking
+  would have pointed at the wrong file, which is precisely the paper's point,
+  reproduced on real data.
+
+#### Counts
+
+- MCP tools: 102 → **103**
+- Internal packages: 88 → **89** (`churn`)
+- Consecutive reproducible releases: 114 → **115** (v0.6 → v0.119.0)
+
+#### What's not yet
+
+- `RiskScore` weights churn × complexity 1:1; the literature suggests tuning per
+  codebase. `calibrate` already exists for threshold learning and could ground the
+  weight in local data.
+- Churn is not yet an `alert_fix` signal source, nor folded into
+  `portfolio_quality` — both are now one seam away.
+- Author/ownership metrics (knowledge-loss risk) are the other half of behavioral
+  code analysis and remain unbuilt.
+
+#### Sources
+
+- Nagappan, N. & Ball, T. *Use of Relative Code Churn Measures to Predict System
+  Defect Density.* ICSE 2005, 284–292. https://doi.org/10.1145/1062455.1062514
+- Tornhill, A. — behavioral code analysis / hotspots (CodeScene).
+
 ## [v0.118.0] - 2026-07-23
 
 ### Theme — "First Principles: connect the quality lenses to the portfolio layer"

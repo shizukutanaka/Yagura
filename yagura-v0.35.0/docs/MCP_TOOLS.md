@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **102 tools**.
+Generated from a live yagura — **103 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (54)
+- [Misc](#misc) (55)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -498,6 +498,20 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | `has_worklog` (boolean) |  |  |
 | `mcp_server_count` (integer) |  |  |
 | `settings_json` (string) |  |  |
+
+---
+
+### `yagura_churn_risk`
+
+[S] Rank files by relative churn x complexity from git history (Nagappan-Ball M1-M8 + Tornhill hotspots). Needs only a slug.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `limit` (integer) |  | max ranked files to return |
+| `max_commits` (integer) |  | commits to walk back (default 500) |
+| `slug` (string) | ★ | registered project slug |
 
 ---
 

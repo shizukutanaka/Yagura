@@ -23,7 +23,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 88 internal packages
+## Map — 89 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -341,6 +341,23 @@ cortex flywheel 4 段階すべてを単体で機械化:
   assertcheck)を package 別 grade(A-F)へ合成(ソクラテス新視点 synthesis)。
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
+
+### 時間軸 / churn(★ v0.119.0、論文由来)
+- `internal/churn` — yagura 唯一の **時間軸** レンズ。v0.118 まで全 lens が snapshot 解析で、
+  `git log` を読む箇所は 0 だった(既存 `internal/hotspot` は名前に反して「複数 lens の収束」で
+  あり、業界・研究で言う hotspot = 複雑度 × 変更頻度 ではない)。
+- 根拠: **Nagappan & Ball, ICSE 2005**(絶対 churn は defect density の予測子として貧弱、
+  サイズ・時間幅で正規化した相対 churn M1-M8 は fault-prone を **89.0%** で判別)と
+  **Tornhill の behavioral code analysis**(危険なのは「頻繁に変わる複雑なコード」、
+  上位 hotspot が欠陥の 25-70% を占める)。
+  → **順位付けは必ず相対 churn で行う**(絶対 churn で並べないことが論文の中心的知見。
+  回帰テスト `TestAnalyze_RanksByRelativeNotAbsoluteChurn` が固定している)。
+- `Parse` は `git log --numstat` 出力の **純関数**(git 不要でテスト可能)、IO は `ReadGitLog`
+  に隔離。サイズ不明ファイルは `skipped` に計上して 0 除算も「churn 0 = 安全」の誤報もしない。
+  git 履歴が無いリポジトリは **明示的な `no_history` エラー**(空結果で安心させない)。
+- MCP `yagura_churn_risk` は slug のみ受け取り daemon 側で git とソースを読む
+  (files を LLM context に通さない)。`git` を spawn するので `openWorldHint: true`
+  (v0.113.0 の `yagura_handoff` 分類と一貫)。★ v0.119
 
 ### Portfolio-wide quality(★ v0.118.0、First Principles 由来)
 - `internal/srcfiles` — capped/fail-open-aware なソースツリー walker の**単一 seam**。
