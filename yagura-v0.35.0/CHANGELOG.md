@@ -4,6 +4,88 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.123.0] - 2026-08-09
+
+### Theme — "Self-calibration via SZZ stage 1: the ranking is now measured, not just asserted"
+
+v0.121.0 and v0.122.0 both stated the same honest limitation, twice: *"nothing here is
+calibrated against a defect dataset — these are risk indicators, not validated
+predictions."* This release closes that gap using the standard technique from the
+defect-prediction literature — with calibration data drawn from **each repository's own
+fix history** rather than an external dataset.
+
+#### Research basis
+
+**The SZZ algorithm (Śliwerski, Zimmermann & Zeller, "When Do Changes Induce Fixes?",
+MSR 2005)** is how defect-prediction research builds its ground truth, in three stages:
+(1) identify bug-fixing commits (from messages / issue links), (2) locate the lines those
+fixes changed, (3) trace back via blame to the commits that *introduced* the bugs.
+
+**Implemented here: stage 1 only** (`internal/fixhistory`), stated plainly in the package
+doc. What this yields is "files touched by fix commits" — an *approximation* of where
+defects surfaced, not bug-introducing commits. Known limitations of message-based fix
+identification are inherited knowingly: fixes not labeled "fix" are missed, and word
+fragments are the classic false-positive trap — the SZZ replication literature ("SZZ
+revisited: verifying when changes induce fixes", and later re-implementations) flags
+exactly this, so matching is **word-boundary** based and `prefix`/`suffix`/`fixture`
+are pinned as non-fixes by test. Revert/Merge bookkeeping commits are excluded.
+
+#### Added — `internal/fixhistory` + validation in `yagura_process_risk`
+
+- `IsFixCommit` / `Analyze` / `Validate`: fix identification, per-file fix counts, and
+  **precision@K with a random-ranking baseline and lift**. Precision without a baseline
+  is a number that merely looks good; the baseline (share of ranked files ever fixed) is
+  what a random ordering would score, and lift is the ratio.
+- A repository with no identifiable fix commits gets `valid: false` with an explanation —
+  no fabricated score. And the validator can genuinely fail:
+  `TestValidate_InvertedRankingScoresLow` pins that an inverted ranking scores 0
+  (a validator that always reports success validates nothing).
+- `yagura_process_risk` responses now carry `fix_history` and `validation` blocks. The
+  commits are already in hand from the churn read, so **git is still executed exactly
+  once** per call (single-seam rule).
+- `churn.Commit` gained `Subject` (`%s` appended to the log format, placed last since
+  subjects may contain `|`; the parser stays compatible with both older formats).
+
+#### Measured on this repository (reported as-is)
+
+- SZZ stage 1 identified **26 fix commits out of 142** analyzed.
+- The process-metric ranking achieved **precision@10 = 0.60** against a **0.26 random
+  baseline** — **lift 2.27×**. Six of the ten files the ranking marked riskiest were
+  in fact touched by fix commits.
+- The "uncalibrated" caveat carried by v0.121/v0.122 is now replaced, for this repo, by
+  a measured result — and the measurement ships in every response, so any repository
+  using the tool sees its own number, including a poor one.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 10 new tests (word-fragment rejection,
+  inverted-ranking-fails, baseline reporting, no-fix honesty, K clamping)
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001 — `regexp` only)
+- Live dogfood produced the numbers above via the MCP endpoint.
+
+#### Counts
+
+- MCP tools: 105 (unchanged — extends `yagura_process_risk`)
+- Internal packages: 91 → **92** (`fixhistory`)
+- Consecutive reproducible releases: 118 → **119** (v0.6 → v0.123.0)
+
+#### What's not yet
+
+- SZZ stages 2–3 (line-level diff + blame trace to bug-introducing commits) — the full
+  algorithm would let churn/ownership be validated against *inducing* commits rather
+  than fixed files.
+- Issue-tracker linkage (the original paper cross-references bug IDs; only message
+  heuristics are used here).
+- One repository is one data point. The 2.27× lift here says nothing about other repos —
+  which is exactly why the validation is computed per-repository at call time instead of
+  being baked in as a claim.
+
+#### Sources
+
+- Śliwerski, J., Zimmermann, T. & Zeller, A. *When Do Changes Induce Fixes?* MSR 2005.
+- Williams & Spacco. *SZZ revisited: verifying when changes induce fixes.* DEFECTS 2008.
+  https://dl.acm.org/doi/10.1145/1390817.1390826
+
 ## [v0.122.0] - 2026-08-08
 
 ### Theme — "Process risk reaches the alert hub, under an alert-fatigue budget"

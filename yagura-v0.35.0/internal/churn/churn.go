@@ -51,11 +51,12 @@ type FileChange struct {
 // Author/Email は v0.120.0 で追加(internal/ownership が同じ git seam を共有するため。
 // 独自に git log を読む二本目の経路を作らない)。
 type Commit struct {
-	Hash   string
-	When   time.Time
-	Author string
-	Email  string
-	Files  []FileChange
+	Hash    string
+	When    time.Time
+	Author  string
+	Email   string
+	Subject string // v0.123.0: fix-commit 判定用(internal/fixhistory)
+	Files   []FileChange
 }
 
 // Measures は Nagappan & Ball (ICSE 2005) の相対 churn 指標 M1-M8。
@@ -113,7 +114,10 @@ func Parse(out string) ([]Commit, error) {
 			ts := rest
 			if head, tail, ok2 := strings.Cut(rest, "|"); ok2 {
 				ts = head
-				cur.Author, cur.Email, _ = strings.Cut(tail, "|")
+				var emailAndSubject string
+				cur.Author, emailAndSubject, _ = strings.Cut(tail, "|")
+				// subject は末尾に置き、'|' を含みうるので最初の 1 個だけで切る
+				cur.Email, cur.Subject, _ = strings.Cut(emailAndSubject, "|")
 			}
 			if when, err := time.Parse(time.RFC3339, ts); err == nil {
 				cur.When = when

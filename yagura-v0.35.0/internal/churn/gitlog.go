@@ -10,8 +10,9 @@ import (
 	"time"
 )
 
-// LogFormat は Parse が期待する git log の書式(<hash>|<ISO8601>)。
-const LogFormat = "--format=%H|%aI|%an|%ae"
+// LogFormat は Parse が期待する git log の書式
+// (<hash>|<ISO8601>|<author>|<email>|<subject>)。subject は '|' を含みうるので末尾。
+const LogFormat = "--format=%H|%aI|%an|%ae|%s"
 
 // DefaultMaxCommits は既定で遡るコミット数。履歴が巨大なリポジトリで
 // git log が無制限に走るのを防ぐ(部分履歴でも相対 churn は意味を持つ)。

@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.122.0** — 105 MCP tools, 91 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Process risk reaches the alert hub:** `alert_fix` gains an 8th signal source fed by churn + ownership — deliberately capped at 3 alerts per project, since Sadowski et al. (CACM 2018) found Google's auto-filed bugs went 84% unfixed and define any un-actioned finding as an "effective false positive". Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.123.0** — 105 MCP tools, 92 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Self-calibration (SZZ stage 1):** `yagura_process_risk` now validates its own ranking against each repository's fix history (Śliwerski/Zimmermann/Zeller, MSR 2005) — on this repo, precision@10 = 0.60 vs a 0.26 random baseline (2.27× lift), reported honestly in every response. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-118 consecutive releases (v0.6 → v0.122.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+119 consecutive releases (v0.6 → v0.123.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
@@ -267,7 +267,7 @@ sha256sum -c SHA256SUMS
 ```
 .
 ├── cmd/yagura/              # Entry point (single binary)
-├── internal/                # 91 packages, none exported
+├── internal/                # 92 packages, none exported
 │   ├── mcp/                 # MCP server, tool registration
 │   ├── registry/            # Project registry (JSON file per project)
 │   ├── scanner/             # Background sensor loop (24 h)

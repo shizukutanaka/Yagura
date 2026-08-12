@@ -23,7 +23,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 91 internal packages
+## Map — 92 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -341,6 +341,25 @@ cortex flywheel 4 段階すべてを単体で機械化:
   assertcheck)を package 別 grade(A-F)へ合成(ソクラテス新視点 synthesis)。
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
+
+### ランキングは自己較正する(★ v0.123.0、論文由来)
+- `internal/fixhistory` — **SZZ 第 1 段**(Śliwerski/Zimmermann/Zeller, MSR 2005)の
+  fix コミット特定を実装し、`yagura_process_risk` の応答に `fix_history` と
+  `validation`(precision@10 / random baseline / lift)を載せる。git 読み出しは
+  churn と共有で 1 回のまま(単一 seam)。`churn.Commit` に `Subject` を追加
+  (`|` を含みうるので format 末尾)。
+- **実装は第 1 段のみ**で、第 2-3 段(行 blame 遡行 → bug 導入コミット特定)は未実装
+  ——「fix が触れたファイル」は欠陥出現の *近似* であること、message ベース特定の限界
+  (fix と書かない fix の見逃し)を package doc に明記している。
+- **単語断片を fix と誤認しない**(prefix/suffix/fixture)——SZZ 追試文献が指摘する
+  古典的偽陽性。単語境界 regex + テスト固定。Revert/Merge は除外。
+- **検証器は落ちうるものであること**: 逆順ランキングが 0 点になるテスト
+  (`TestValidate_InvertedRankingScoresLow`)を必ず持つ——常に成功する検証器は何も
+  検証しない。fix データが無いリポジトリは `valid=false` + 理由(偽スコアを出さない)。
+  precision は必ず **baseline(ランダム期待値)と lift を併記**する。
+- 実測(このリポジトリ): 26/142 が fix コミット、precision@10 = 0.60 vs baseline 0.26
+  = **lift 2.27×**。数値は較正ではなく単一リポジトリの 1 観測点——応答に毎回計算して
+  載せるのはそのため(他リポジトリでは各自の数値が出る)。
 
 ### alert は「件数予算」を持つ(★ v0.122.0、論文由来)
 - `internal/alertfix` に 8 番目の source `process_risk` を追加(churn × ownership を

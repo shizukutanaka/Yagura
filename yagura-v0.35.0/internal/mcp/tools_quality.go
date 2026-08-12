@@ -28,6 +28,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
 	"github.com/shizukutanaka/yagura/internal/errwrap"
+	"github.com/shizukutanaka/yagura/internal/fixhistory"
 	"github.com/shizukutanaka/yagura/internal/flagarg"
 	"github.com/shizukutanaka/yagura/internal/globalcheck"
 	"github.com/shizukutanaka/yagura/internal/hotspot"
@@ -1904,6 +1905,14 @@ func buildProcessRiskTool(d Deps) *Tool {
 			chRep := churn.Analyze(commits, sizes, cx)
 			ownRep := ownership.Analyze(commits, only)
 			rep := processrisk.Score(chRep.Files, ownRep.Files)
+			// v0.123.0: SZZ 第 1 段(fix コミット特定)でランキングを自己較正する。
+			// commits は既に手元にあるので git 読み出しは 1 回のまま(単一 seam)。
+			fixRep := fixhistory.Analyze(commits)
+			ranking := make([]string, 0, len(rep.Files))
+			for _, f := range rep.Files {
+				ranking = append(ranking, f.Path)
+			}
+			validation := fixhistory.Validate(ranking, fixRep.FixesByFile, 10)
 			// v0.122.0: 上位リスクを alert 化して注意配分レイヤへ供給する。
 			// 件数は alertfix 側で Sadowski et al. の知見に基づき厳しく絞られる
 			// (全件出すと「起票された bug の 84% が未修正」の失敗を再現する)。
@@ -1923,6 +1932,13 @@ func buildProcessRiskTool(d Deps) *Tool {
 				"report":     rep,
 				"alerts":     alerts,
 				"incomplete": sr.Incomplete(),
+				// v0.123.0: 自己較正(SZZ 第 1 段)。fix 履歴が無ければ valid=false。
+				"fix_history": map[string]any{
+					"fix_commits":   fixRep.FixCommits,
+					"total_commits": fixRep.TotalCommits,
+					"most_fixed":    fixRep.MostFixed,
+				},
+				"validation": validation,
 			}, nil
 		},
 	}
