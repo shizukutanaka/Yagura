@@ -23,7 +23,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 92 internal packages
+## Map — 93 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -341,6 +341,22 @@ cortex flywheel 4 段階すべてを単体で機械化:
   assertcheck)を package 別 grade(A-F)へ合成(ソクラテス新視点 synthesis)。
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
+
+### データセットは必ず時間分割する(★ v0.124.0、論文由来 + 自己反証)
+- `internal/defectdataset` — git 履歴から **ファイル単位の欠陥データセット**(行=ファイル、
+  列=メトリクス群 + 末尾に fix ラベル)を生成。JSON / CSV。MCP `yagura_defect_dataset`。
+  形式は **Zimmermann, Premraj & Zeller "Predicting Defects for Eclipse"(PROMISE 2007)**
+  ——pre-release メトリクス + post-release 欠陥数——に倣う。
+- **既定で時間分割(feature window 70% / label window 30%)。** Eclipse データセットが
+  時間を分けているのは、同一期間から特徴とラベルを取ると「過去を予測する」リーク付き
+  データになるため。**分割を切る(split_ratio=0)場合は `Meta.Leakage=true` と警告文を
+  データ自身に刻む**——黙って混ぜない。
+- **自己反証**: v0.123.0 の precision@10 = 0.60(lift 2.27×)は同一期間の特徴とラベルを
+  突き合わせていた。時間分割で測り直すと **0.25 / baseline 0.15 = lift 1.68×**。
+  リークを外せば数字は落ちる——落ちた事実をそのまま記録すること。
+- 実測の含意: このリポジトリでは **変更回数(9.64×)が相対 churn(1.22×)より遥かに
+  クラスを分ける**のに、processrisk は両者を等重みにしている。データセットはこういう
+  検算のために在る(重み変更は別リリース + 複数リポジトリでの検証後)。
 
 ### ランキングは自己較正する(★ v0.123.0、論文由来)
 - `internal/fixhistory` — **SZZ 第 1 段**(Śliwerski/Zimmermann/Zeller, MSR 2005)の

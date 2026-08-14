@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **105 tools**.
+Generated from a live yagura — **106 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (57)
+- [Misc](#misc) (58)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -567,6 +567,21 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 ### `yagura_dedupe_stats`
 
 [S] Content cache stats: hits/misses/bytes saved. Visualizes redundant-read prevention.
+
+---
+
+### `yagura_defect_dataset`
+
+[S] Build a per-file defect dataset from git history (metrics + fix labels, temporally split). JSON or CSV. Needs only a slug.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `format` (string) |  | output format (default json) |
+| `max_commits` (integer) |  | commits to walk back (default 500) |
+| `slug` (string) | ★ | registered project slug |
+| `split_ratio` (number) |  | feature-window share (default 0.7; 0 disables the split and flags leakage) |
 
 ---
 

@@ -4,6 +4,107 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.124.0] - 2026-08-09
+
+### Theme — "A defect dataset — and the leakage it exposed in v0.123.0"
+
+By v0.123.0 every ingredient existed — process metrics (churn, ownership), a product
+metric (complexity), and fix labels (SZZ stage 1) — but nothing assembled them into the
+one artifact the defect-prediction field actually works with: **a table**. This release
+emits it, and building it honestly surfaced a methodological flaw in the previous
+release's headline number.
+
+#### Research basis
+
+- **Zimmermann, Premraj & Zeller, "Predicting Defects for Eclipse" (PROMISE 2007).** The
+  classic public defect dataset: **pre-release metrics paired with post-release defect
+  counts**, one row per file/package, which became a standard benchmark. The shape here
+  follows it — row = file, columns = metrics, label columns last — as does the CSV
+  convention of the PROMISE repository.
+- **The temporal split is the point, not decoration.** Eclipse pairs *pre*-release
+  metrics with *post*-release defects precisely because drawing features and labels from
+  the same window produces a dataset that "predicts" the past. `internal/defectdataset`
+  therefore splits commit history by time: features from the older window, labels from
+  the newer one.
+
+#### Self-correction: v0.123.0's precision@10 was measured with leakage
+
+v0.123.0 reported precision@10 = 0.60 vs a 0.26 baseline (**2.27× lift**) — but features
+and labels came from the **same** commit window. That number shows the ranking agrees
+with fixes *inside one window*; it is not evidence of forecasting. Measured properly on
+this repository with a temporal split, ranking by relative churn in the feature window
+against fixes in a **later** window gives **precision@top-decile = 0.25 vs a 0.15
+baseline — 1.68× lift.** Real signal, but meaningfully weaker than the leaking figure.
+That drop is the expected cost of removing leakage, and it is recorded rather than
+quietly dropped.
+
+#### Added — `internal/defectdataset` + `yagura_defect_dataset` (tool #106)
+
+- One row per file: relative churn, change count, churned/deleted LOC, ownership, minor/
+  major/total contributors, complexity, size — then `fix_count` and `fixed` as the label
+  columns. JSON or CSV (RFC4180-style quoting for paths containing commas).
+- `Meta` ships the provenance: both window boundaries and commit counts, row count,
+  defective rows, **positive rate** (class balance is the first thing anyone needs), and
+  a note stating labels are SZZ stage 1 only — "a fix commit touched this file", not a
+  verified defect.
+- **`split_ratio: 0` disables the split, and the dataset then carries
+  `leakage: true` plus a warning in its own `note`.** Opting out is allowed; hiding it
+  is not.
+- Files whose current size is unknown are excluded and counted, never emitted with
+  misleading zeros.
+- Rows are path-ascending so two runs produce byte-identical CSV and datasets diff cleanly
+  over time.
+
+#### Measured on this repository
+
+Feature window 100 commits (2026-06-09 → 06-21), label window 43 commits (06-22 → 08-12);
+**128 rows, 19 defective, positive rate 0.148**, no leakage. Comparing the two classes
+across the split:
+
+| feature | defective mean | clean mean | ratio |
+|---|---|---|---|
+| **change count** | 17.95 | 1.86 | **9.64×** |
+| size (LOC) | 868.7 | 355.0 | 2.45× |
+| relative churn | 1.23 | 1.01 | 1.22× |
+| complexity | 11.58 | 9.77 | 1.19× |
+
+**Change *frequency* separates the classes far more sharply than churn *volume*** here —
+yet `processrisk` weights those two signals equally. Complexity's 1.19× is the weakest
+signal of the four, consistent with the product-metric result that drove v0.121.0. The
+dataset was built to enable exactly this kind of check, and it immediately produced one
+that criticises the current scoring.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 10 new tests, including that labels come *only*
+  from the label window, features *only* from the feature window, and that `split_ratio: 0`
+  sets `Meta.Leakage`
+- One test caught a real defect during development: the split point used truncation, so 3
+  commits at ratio 0.66 produced a 1/2 split (33%) instead of 2/1. Now rounds.
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001)
+
+#### Counts
+
+- MCP tools: 105 → **106**
+- Internal packages: 92 → **93** (`defectdataset`)
+- Consecutive reproducible releases: 119 → **120** (v0.6 → v0.124.0)
+
+#### What's not yet
+
+- **`processrisk` still weights change count and relative churn equally**, which the table
+  above suggests is wrong for this repository. Re-weighting deserves its own release, and
+  should be validated across more than one repo before being called an improvement.
+- The v0.123.0 `validation` block still computes same-window precision. It should either
+  adopt the temporal split or be labelled as in-window agreement in the response itself.
+- Multi-project aggregation (the point of a portable format) is not implemented; datasets
+  must be combined by hand today.
+- Labels remain SZZ stage 1 — no blame trace to bug-introducing commits.
+
+#### Sources
+
+- Zimmermann, T., Premraj, R. & Zeller, A. *Predicting Defects for Eclipse.* PROMISE 2007.
+- Śliwerski, J., Zimmermann, T. & Zeller, A. *When Do Changes Induce Fixes?* MSR 2005.
+
 ## [v0.123.0] - 2026-08-09
 
 ### Theme — "Self-calibration via SZZ stage 1: the ranking is now measured, not just asserted"

@@ -24,6 +24,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/coupling"
 	"github.com/shizukutanaka/yagura/internal/ctxcheck"
 	"github.com/shizukutanaka/yagura/internal/deadcode"
+	"github.com/shizukutanaka/yagura/internal/defectdataset"
 	"github.com/shizukutanaka/yagura/internal/deprank"
 	"github.com/shizukutanaka/yagura/internal/errdiscard"
 	"github.com/shizukutanaka/yagura/internal/errpolicy"
@@ -1940,6 +1941,94 @@ func buildProcessRiskTool(d Deps) *Tool {
 				},
 				"validation": validation,
 			}, nil
+		},
+	}
+}
+
+// buildDefectDatasetTool は各リポジトリの git 履歴から **ファイル単位の欠陥データセット**
+// を生成する(v0.124.0、tool #106)。
+//
+// 研究的根拠: Zimmermann, Premraj & Zeller "Predicting Defects for Eclipse"(PROMISE 2007)
+// の形式(行 = ファイル、列 = メトリクス + 欠陥ラベル)と **時間分割**に倣う。
+// 既定で古い側 70% から特徴、新しい側 30% からラベルを作るので、特徴が未来を見ない。
+// split_ratio=0 で分割を切れるが、その場合は応答の meta.leakage=true が立つ。
+func buildDefectDatasetTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_defect_dataset",
+		Title:       "Defect Dataset (PROMISE-style)",
+		Description: "[S] Build a per-file defect dataset from git history (metrics + fix labels, temporally split). JSON or CSV. Needs only a slug.",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"slug":        map[string]any{"type": "string", "description": "registered project slug"},
+				"max_commits": map[string]any{"type": "integer", "description": "commits to walk back (default 500)"},
+				"split_ratio": map[string]any{"type": "number", "description": "feature-window share (default 0.7; 0 disables the split and flags leakage)"},
+				"format":      map[string]any{"type": "string", "enum": []string{"json", "csv"}, "description": "output format (default json)"},
+			},
+			"required": []string{"slug"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			if d.Registry == nil {
+				return nil, &ToolError{Code: "unavailable", Message: "registry not configured"}
+			}
+			var in struct {
+				Slug       string   `json:"slug"`
+				MaxCommits int      `json:"max_commits"`
+				SplitRatio *float64 `json:"split_ratio"`
+				Format     string   `json:"format"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if in.Slug == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
+			}
+			p, err := d.Registry.Get(in.Slug)
+			if err != nil || p == nil {
+				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
+			}
+			if p.LocalPath == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "project has no local_path; set it with yagura_update"}
+			}
+			logOut, err := churn.ReadGitLog(ctx, p.LocalPath, in.MaxCommits)
+			if err != nil {
+				return nil, &ToolError{Code: "no_history", Message: err.Error()}
+			}
+			commits, err := churn.Parse(logOut)
+			if err != nil {
+				return nil, &ToolError{Code: "parse_failed", Cause: err}
+			}
+			sr, err := srcfiles.ReadGo(p.LocalPath)
+			if err != nil {
+				return nil, &ToolError{Code: "read_failed", Message: err.Error()}
+			}
+			sizes := make(map[string]int, len(sr.Files))
+			for path, content := range sr.Files {
+				sizes[path] = strings.Count(content, "\n") + 1
+			}
+			cx := map[string]int{}
+			for _, f := range complexity.Scan(sr.Files, 10).Functions {
+				if f.Complexity > cx[f.File] {
+					cx[f.File] = f.Complexity
+				}
+			}
+			ratio := defectdataset.DefaultSplitRatio
+			if in.SplitRatio != nil {
+				ratio = *in.SplitRatio
+			}
+			ds := defectdataset.Build(commits, sizes, cx, defectdataset.Options{SplitRatio: ratio})
+			out := map[string]any{
+				"slug":       in.Slug,
+				"meta":       ds.Meta,
+				"incomplete": sr.Incomplete(),
+			}
+			if strings.EqualFold(in.Format, "csv") {
+				out["csv"] = ds.CSV()
+			} else {
+				out["rows"] = ds.Rows
+			}
+			return out, nil
 		},
 	}
 }

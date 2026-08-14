@@ -208,7 +208,7 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		// v0.36 — method receiver consistency (self-consistency)
 		"yagura_recv_check",
 		// v0.36 — composite maintainability grade (synthesis)
-		"yagura_code_health", "yagura_portfolio_quality", "yagura_churn_risk", "yagura_ownership", "yagura_process_risk",
+		"yagura_code_health", "yagura_portfolio_quality", "yagura_churn_risk", "yagura_ownership", "yagura_process_risk", "yagura_defect_dataset",
 		// v0.27 — cortex flywheel ④ Alert-Fix
 		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
 		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",
