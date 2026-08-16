@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.124.0** — 106 MCP tools, 93 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Defect dataset:** `yagura_defect_dataset` emits a PROMISE-style per-file table (metrics + fix labels) from any repository's git history, temporally split in the manner of Zimmermann/Premraj/Zeller's Eclipse dataset so features never see the future — and it flags `leakage: true` in its own metadata if you disable the split. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.125.0** — 106 MCP tools, 94 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Walk-forward validation:** `yagura_process_risk` now reports an order-preserving evaluation (Falessi et al., EMSE 2020) instead of the leaking same-window number, and compares competing signals under one protocol — which showed that the `relative_churn` ranking this project shipped in v0.119 is the *weakest* of four signals tested here (1.14x lift vs 5.93x for change count). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-120 consecutive releases (v0.6 → v0.124.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+121 consecutive releases (v0.6 → v0.125.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
@@ -267,7 +267,7 @@ sha256sum -c SHA256SUMS
 ```
 .
 ├── cmd/yagura/              # Entry point (single binary)
-├── internal/                # 93 packages, none exported
+├── internal/                # 94 packages, none exported
 │   ├── mcp/                 # MCP server, tool registration
 │   ├── registry/            # Project registry (JSON file per project)
 │   ├── scanner/             # Background sensor loop (24 h)

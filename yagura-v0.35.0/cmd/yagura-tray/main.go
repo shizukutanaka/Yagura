@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	version = "0.124.0" // updated together with main yagura version
+	version = "0.125.0" // updated together with main yagura version
 )
 
 func main() {

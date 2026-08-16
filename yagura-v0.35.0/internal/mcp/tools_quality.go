@@ -53,6 +53,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/testcoverage"
 	"github.com/shizukutanaka/yagura/internal/thelper"
 	"github.com/shizukutanaka/yagura/internal/typeassert"
+	"github.com/shizukutanaka/yagura/internal/walkforward"
 )
 
 // ─── yagura_quality_check (v0.19.0) ───────────────────────────
@@ -1913,7 +1914,10 @@ func buildProcessRiskTool(d Deps) *Tool {
 			for _, f := range rep.Files {
 				ranking = append(ranking, f.Path)
 			}
-			validation := fixhistory.Validate(ranking, fixRep.FixesByFile, 10)
+			inWindow := fixhistory.Validate(ranking, fixRep.FixesByFile, 10)
+			// v0.125.0: 時系列順を保つ walk-forward を headline にする。
+			// Falessi et al. (EMSE 2020) — 順序を無視した検証は誤った数字を出す。
+			wf := walkforward.Run(commits, sizes, cx, walkforward.Options{})
 			// v0.122.0: 上位リスクを alert 化して注意配分レイヤへ供給する。
 			// 件数は alertfix 側で Sadowski et al. の知見に基づき厳しく絞られる
 			// (全件出すと「起票された bug の 84% が未修正」の失敗を再現する)。
@@ -1939,7 +1943,17 @@ func buildProcessRiskTool(d Deps) *Tool {
 					"total_commits": fixRep.TotalCommits,
 					"most_fixed":    fixRep.MostFixed,
 				},
-				"validation": validation,
+				// v0.125.0: headline は時系列順を保つ walk-forward。
+				"validation": wf,
+				// 同一窓の一致度も残すが、**予測の証拠ではない**ことを明示する
+				// (v0.123.0 はこれを headline にしていた=誤り)。
+				"in_window_agreement": map[string]any{
+					"result":     inWindow,
+					"predictive": false,
+					"note": "Features and labels come from the SAME commit window, so this measures " +
+						"agreement inside one window, not forecasting. Kept for comparison with the " +
+						"walk-forward result above; see Falessi et al., EMSE 2020.",
+				},
 			}, nil
 		},
 	}

@@ -4,6 +4,104 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.125.0] - 2026-08-09
+
+### Theme — "Walk-forward validation, and the signal it says we picked wrong"
+
+v0.124.0 documented that v0.123.0's headline `precision@10` was measured with leakage —
+but **the tool kept returning that number anyway**. Shipping a figure you have publicly
+called misleading is exactly the intent-vs-implementation gap this project exists to
+catch, so this release replaces it.
+
+#### Research basis
+
+**Falessi, Huang, Narayana, Thai & Turhan, "On the need of preserving order of data when
+validating within-project defect classifiers", EMSE 2020** (arXiv:1809.01510). They
+compare cross-validation, bootstrap and **walk-forward** — the only one of the three that
+preserves temporal order — across 10 classifiers on 13 open-source and 2 closed projects.
+For the *same* classifier on the *same* project, AUC measured by 10-fold versus
+walk-forward differs across **[-0.20, +0.22]** and is **statistically different in 45% of
+cases**. Their recommendation for the within-project across-release setting is
+walk-forward.
+
+#### Added — `internal/walkforward`
+
+Splits history into `Folds+1` segments; fold *i* takes features from everything before
+segment *i+1* and labels from segment *i+1*, so training data always precedes its test
+window. Each fold reuses `defectdataset.BuildWindows` (extracted this release from
+`Build`) rather than re-implementing the split.
+
+- **Scorers are injected**, so competing signals are measured under one identical
+  protocol — the way to answer v0.124.0's open weighting question with evidence rather
+  than a guess.
+- Folds whose label window contains no fixes are **skipped and counted**, never averaged
+  in as a fabricated zero; if no fold scores, the run is `valid: false` with a reason.
+- `TestRun_InvertedScorerLosesToBaseline` pins that an inverted ranking cannot win — an
+  evaluator that always succeeds proves nothing.
+
+#### Fixed — the tool no longer leads with a leaking number
+
+`yagura_process_risk`'s `validation` is now the walk-forward result. The old same-window
+figure is retained as **`in_window_agreement`** with `predictive: false` and an
+explanation, so the two can be compared rather than confused.
+
+#### Measured on this repository (3 folds, order-preserving, no folds skipped)
+
+| scorer | precision@K | baseline | lift |
+|---|---|---|---|
+| `size_loc` | 0.684 | 0.114 | **6.08×** |
+| `churn_count` | 0.675 | 0.114 | **5.93×** |
+| `complexity` | 0.410 | 0.114 | 3.66× |
+| **`relative_churn`** | **0.132** | 0.114 | **1.14×** |
+
+For comparison, the retained in-window number is 0.60 / 2.32× — again showing how much
+leakage flatters a result.
+
+**This contradicts a design decision this project shipped.** `relative_churn` — the
+signal `yagura_churn_risk` ranks by, chosen in v0.119.0 on the strength of Nagappan &
+Ball — is the **weakest of the four** here, barely above random, while plain change count
+reaches 5.93×. Two honest caveats before anyone acts on that:
+
+- **`size_loc` winning is a known confound, not a discovery.** Larger files are touched
+  more often and so correlate with almost everything; the confounding effect of size on
+  metric validity is long-established (El Emam et al., TSE 2001). It is reported because
+  hiding an inconvenient baseline would be the dishonest choice, not because file size is
+  being proposed as a risk signal.
+- Nagappan & Ball validated relative churn at **binary/component** granularity on Windows.
+  The file-level adaptation used here may simply not carry over — that is a limitation of
+  this project's adaptation, not a refutation of their result.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 7 new tests
+- One test failure during development was the test's own fault and worth recording: a
+  fixture subject read `"feat: no fixes anywhere"`, which contains the word *fixes*, so
+  `IsFixCommit` correctly matched it. The fixture was wrong, not the code.
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001)
+
+#### Counts
+
+- MCP tools: 106 (unchanged — extends an existing tool)
+- Internal packages: 93 → **94** (`walkforward`)
+- Consecutive reproducible releases: 120 → **121** (v0.6 → v0.125.0)
+
+#### What's not yet
+
+- **The evidence now points at re-ranking `churn_risk` by change count**, but that is one
+  repository, precision@K rather than AUC, and entangled with the size confound. It needs
+  multi-repository evidence before being called an improvement — deliberately not done here.
+- No gap window between feature and label windows, so a fix landing moments after the cut
+  still counts as "future".
+- `processrisk` weighting is still uniform.
+
+#### Sources
+
+- Falessi, D., Huang, J., Narayana, L., Thai, J. F. & Turhan, B. *On the need of preserving
+  order of data when validating within-project defect classifiers.* EMSE 2020.
+  https://arxiv.org/abs/1809.01510
+- El Emam, K., Benlarbi, S., Goel, N. & Rai, S. *The confounding effect of class size on the
+  validity of object-oriented metrics.* IEEE TSE, 2001.
+
 ## [v0.124.0] - 2026-08-09
 
 ### Theme — "A defect dataset — and the leakage it exposed in v0.123.0"

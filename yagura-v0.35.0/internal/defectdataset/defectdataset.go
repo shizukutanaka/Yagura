@@ -138,7 +138,27 @@ func Build(commits []churn.Commit, sizes map[string]int, complexity map[string]i
 	d.Meta.LabelCommits = len(labelCommits)
 	d.Meta.FeatureStart, d.Meta.FeatureEnd = span(featureCommits)
 	d.Meta.LabelStart, d.Meta.LabelEnd = span(labelCommits)
+	fill(&d, featureCommits, labelCommits, sizes, complexity)
+	return d
+}
 
+// BuildWindows は feature / label の窓を **明示的に** 受け取る版(v0.125.0)。
+// walk-forward 評価(internal/walkforward)が fold ごとに窓を指定して呼ぶ。
+// Build と同じ組み立てロジックを共有し、分割の実装を二重に持たない。
+func BuildWindows(featureCommits, labelCommits []churn.Commit, sizes, complexity map[string]int) Dataset {
+	d := Dataset{Rows: []Row{}}
+	d.Meta.FormatVersion = FormatVersion
+	d.Meta.Note = baseNote
+	d.Meta.FeatureCommits = len(featureCommits)
+	d.Meta.LabelCommits = len(labelCommits)
+	d.Meta.FeatureStart, d.Meta.FeatureEnd = span(featureCommits)
+	d.Meta.LabelStart, d.Meta.LabelEnd = span(labelCommits)
+	fill(&d, featureCommits, labelCommits, sizes, complexity)
+	return d
+}
+
+// fill は窓が決まった後の共通処理(特徴 = feature window、ラベル = label window)。
+func fill(d *Dataset, featureCommits, labelCommits []churn.Commit, sizes, complexity map[string]int) {
 	// 特徴: feature window のみ
 	chRep := churn.Analyze(featureCommits, sizes, complexity)
 	ownRep := ownership.Analyze(featureCommits, nil)
@@ -183,7 +203,6 @@ func Build(commits []churn.Commit, sizes map[string]int, complexity map[string]i
 	if d.Meta.Rows > 0 {
 		d.Meta.PositiveRate = float64(d.Meta.DefectiveRows) / float64(d.Meta.Rows)
 	}
-	return d
 }
 
 // split は時系列順の commits を feature / label に切る。

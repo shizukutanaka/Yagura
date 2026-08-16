@@ -23,7 +23,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 93 internal packages
+## Map — 94 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -341,6 +341,24 @@ cortex flywheel 4 段階すべてを単体で機械化:
   assertcheck)を package 別 grade(A-F)へ合成(ソクラテス新視点 synthesis)。
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
+
+### 検証は時系列順を保つ(★ v0.125.0、論文由来 + 自己反証)
+- `internal/walkforward` — 履歴を Folds+1 区間に切り、fold ごとに「区間 i+1 より前」で
+  特徴、「区間 i+1」でラベルを作る **walk-forward**。各 fold は
+  `defectdataset.BuildWindows`(本リリースで `Build` から抽出)を再利用する。
+- 根拠は **Falessi et al., EMSE 2020**: cross-validation / bootstrap / walk-forward の
+  うち順序を保つのは walk-forward のみで、同一分類器・同一プロジェクトでも 10-fold と
+  walk-forward の **AUC 差 [-0.20,+0.22]、45% のケースで有意**。
+- **`yagura_process_risk` の headline は walk-forward。** 同一窓の数値は消さずに
+  `in_window_agreement` として `predictive:false` + 理由付きで残す
+  ——「誤解を招くと自分で書いた数値を出し続けない」。v0.123.0 の誤りの是正。
+- **Scorer は注入可能**にして同一プロトコルで競合シグナルを比較する。陽性 0 の fold は
+  捏造 0 を混ぜず skip して数える。**逆順 scorer が勝てないテストを必ず置く**
+  (常に成功する検証器は何も検証しない)。
+- 実測(このリポジトリ、3 fold): size_loc 6.08× / churn_count 5.93× / complexity 3.66× /
+  **relative_churn 1.14×**。v0.119.0 が選んだ relative_churn が最弱という自己反証。
+  ただし **size_loc の勝ちはサイズ交絡**(El Emam et al., TSE 2001)であり発見ではない。
+  不都合な baseline を隠さないために載せる。重み変更は複数リポジトリ検証後。
 
 ### データセットは必ず時間分割する(★ v0.124.0、論文由来 + 自己反証)
 - `internal/defectdataset` — git 履歴から **ファイル単位の欠陥データセット**(行=ファイル、
