@@ -342,6 +342,21 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### feature 窓は expanding / sliding を選べる(★ v0.127.0、論文由来 + null result)
+- `walkforward.Options.WindowDays` — 0(既定)は **expanding**(履歴先頭から cut まで)、
+  >0 で **sliding**(直近 N 日のみ)。`Report.WindowMode` と note に必ずどちらか明記する。
+- 根拠は **McIntosh & Kamei, "Are Fix-Inducing Changes a Moving Target?", IEEE TSE 44(5),
+  2018**(Qt / OpenStack の 37,524 changes)。JIT モデルは「過去の fix-inducing change は
+  将来のものと似ている」と仮定するが、**訓練から 1 年後には AUC と calibration が大きく低下**
+  する(訓練に使った指標の値がシフトするため)。同論文は **6 か月以上**の履歴での訓練を推奨。
+- **本リポジトリでは null result**: 追跡履歴が約 64 日しかなく、30 日 sliding は
+  expanding と完全に同一(最初の 108 commits が 30 日未満に収まる)。14 日でようやく
+  fold 2 が 108→89 commits に縮むが、lift はほぼ動かない
+  (size_loc 6.08→6.09 / churn_count 5.93→5.96)。**論文の効果は 1 年規模の話であり、
+  2 か月のリポジトリでは検証できない**——効果が出たふりをしないこと。
+- 窓を短くする場合は「論文の推奨は 6 か月以上であり、それより短い窓は本プロジェクト独自の
+  探索であって推奨ではない」と note に明記する(既に実装済み)。
+
 ### 検証窓には gap を置ける(★ v0.126.0、論文由来 + 自己修正)
 - `walkforward.Options.GapDays` — feature 窓の末尾から N 日以内のコミットは
   **特徴にもラベルにも使わない**。gap が label 窓を食い尽くした fold は理由付きで skip。

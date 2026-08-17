@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.126.0** — 106 MCP tools, 94 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Verification-latency gap:** walk-forward validation can now leave a gap between feature and label windows (JIT defect-prediction literature) — on this repo applying a 3-day gap drops every signal's lift *and reverses the ranking*, with change count overtaking file size once near-cut fixes are excluded. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.127.0** — 106 MCP tools, 94 internal packages, 24 computational sensors, shell tab-completion (`yagura completion bash|zsh|fish`). **Sliding feature window** for walk-forward validation (McIntosh & Kamei, TSE 2018 — JIT models decay ~a year after training). Reported as a **null result on this repository**: its history is far too short for that decay to appear, so sliding and expanding windows give near-identical numbers here. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-122 consecutive releases (v0.6 → v0.126.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+123 consecutive releases (v0.6 → v0.127.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

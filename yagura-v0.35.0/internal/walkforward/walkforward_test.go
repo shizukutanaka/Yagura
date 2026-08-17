@@ -248,3 +248,92 @@ func TestRun_ReportsKPerFold(t *testing.T) {
 		}
 	}
 }
+
+// ─── v0.127.0: sliding vs expanding feature window ───────────────
+
+// TestRun_SlidingWindowDropsOldHistory: with WindowDays set, a fold's feature
+// window must cover only the trailing N days, not all history from the start.
+// McIntosh & Kamei (TSE 2018) found JIT model performance decays as the
+// properties of fix-inducing changes shift, which is the argument for being able
+// to ignore stale history.
+func TestRun_SlidingWindowDropsOldHistory(t *testing.T) {
+	var cs []churn.Commit
+	for d := 1; d <= 20; d++ {
+		cs = append(cs, commit(d, "fix: work", "a.go"))
+	}
+	sz := sizes("a.go")
+	exp := Run(cs, sz, nil, Options{Folds: 2})
+	sli := Run(cs, sz, nil, Options{Folds: 2, WindowDays: 3})
+
+	if exp.WindowMode != "expanding" {
+		t.Errorf("default WindowMode = %q, want expanding", exp.WindowMode)
+	}
+	if sli.WindowMode != "sliding" {
+		t.Errorf("with WindowDays set, WindowMode = %q, want sliding", sli.WindowMode)
+	}
+	for i := range sli.Folds {
+		if sli.Folds[i].Skipped || exp.Folds[i].Skipped {
+			continue
+		}
+		if sli.Folds[i].FeatureCommits >= exp.Folds[i].FeatureCommits {
+			t.Errorf("fold %d: sliding window (%d commits) should be smaller than expanding (%d)",
+				i, sli.Folds[i].FeatureCommits, exp.Folds[i].FeatureCommits)
+		}
+		// the sliding feature window must not start at the very beginning
+		if !sli.Folds[i].FeatureStart.After(exp.Folds[i].FeatureStart) {
+			t.Errorf("fold %d: sliding feature window should start later than expanding", i)
+		}
+	}
+}
+
+// TestRun_SlidingWindowStillPreservesOrder: the window may shrink, but it must
+// never reach past its own cut.
+func TestRun_SlidingWindowStillPreservesOrder(t *testing.T) {
+	var cs []churn.Commit
+	for d := 1; d <= 20; d++ {
+		cs = append(cs, commit(d, "fix: work", "a.go"))
+	}
+	rep := Run(cs, sizes("a.go"), nil, Options{Folds: 3, WindowDays: 5})
+	for i, f := range rep.Folds {
+		if f.Skipped {
+			continue
+		}
+		if f.FeatureEnd.After(f.LabelStart) {
+			t.Errorf("fold %d: sliding window leaked past its cut", i)
+		}
+		if f.FeatureStart.After(f.FeatureEnd) {
+			t.Errorf("fold %d: feature window start is after its end", i)
+		}
+	}
+}
+
+// TestRun_WindowModeIsStatedInNote: a caller must be able to tell which variant
+// produced the number without reading the source.
+func TestRun_WindowModeIsStatedInNote(t *testing.T) {
+	cs, sz := history()
+	for _, tc := range []struct {
+		days int
+		want string
+	}{{0, "expanding"}, {5, "sliding"}} {
+		rep := Run(cs, sz, nil, Options{Folds: 2, WindowDays: tc.days})
+		if !strings.Contains(strings.ToLower(rep.Note), tc.want) {
+			t.Errorf("WindowDays=%d: note must say %q, got %q", tc.days, tc.want, rep.Note)
+		}
+	}
+}
+
+// TestRun_SlidingWindowEmptyIsSkipped: if the window is so short it contains no
+// commits, the fold cannot produce features and must be skipped with a reason.
+func TestRun_SlidingWindowEmptyIsSkipped(t *testing.T) {
+	cs := []churn.Commit{
+		commit(1, "feat: a", "a.go"), commit(2, "feat: a", "a.go"),
+		commit(40, "fix: a", "a.go"), commit(41, "fix: a", "a.go"),
+	}
+	// a 1-day window at a cut far from the previous commit leaves no features
+	rep := Run(cs, sizes("a.go"), nil, Options{Folds: 2, WindowDays: 1})
+	for _, f := range rep.Folds {
+		if f.Skipped && f.Reason == "" {
+			t.Errorf("a skipped fold must state why: %+v", f)
+		}
+	}
+}

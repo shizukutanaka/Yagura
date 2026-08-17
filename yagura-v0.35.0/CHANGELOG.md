@@ -4,6 +4,101 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.127.0] - 2026-08-17
+
+### Theme — "A sliding feature window, and a null result this repository cannot escape"
+
+v0.126.0 listed the **expanding** feature window as an open item: every fold trained on all
+history up to its cut, so stale commits were never dropped and nobody could tell whether
+that helped or hurt. This adds the sliding variant — and then reports, plainly, that **this
+repository is too young for the effect the research describes to be measurable here**.
+
+#### Research basis
+
+McIntosh & Kamei, *"Are Fix-Inducing Changes a Moving Target? A Longitudinal Case Study of
+Just-In-Time Defect Prediction"*, IEEE TSE 44(5), 2018 — 37,524 changes across Qt and
+OpenStack. Their finding is that the properties of fix-inducing changes **shift over time**:
+model discriminatory power and calibration *"drop considerably one year after being
+trained"*, so old history is not automatically useful. Their recommendation is to train on
+**six months or more** of recent history rather than everything ever recorded.
+
+**Stated honestly:** the paper's timescale is a *year*. Choosing a window shorter than six
+months is this project's own decision, not something the paper endorses — the package doc
+says exactly that instead of citing the paper as cover for an arbitrary number.
+
+#### Added — `WindowDays` / `window_days`
+
+`walkforward.Options.WindowDays > 0` makes the feature window **sliding**: only commits
+within the last N days before the cut supply features. `0` (the default, unchanged) keeps it
+**expanding**. Which variant ran is always reported — `Report.WindowMode` is
+`"expanding"` or `"sliding"`, `FoldInfo.FeatureStart` shows where each fold's window
+actually began, and the note names the mode rather than leaving it implicit. If a trim
+empties a feature window entirely, that fold is skipped with a stated reason instead of
+being scored on nothing. Exposed on `yagura_process_risk` as `window_days`.
+
+#### Measured on this repository — a null result
+
+146 commits spanning roughly two months, 3 folds, label windows of 36 commits each:
+
+| scorer | expanding | 30d sliding | 14d sliding | 7d sliding |
+|---|---|---|---|---|
+| `size_loc` | **6.08×** | **6.08×** | **6.09×** | **6.46×** |
+| `churn_count` | 5.93× | 5.93× | 5.96× | 5.43× |
+| `complexity` | 3.66× | 3.66× | 3.45× | 3.48× |
+| `relative_churn` | 1.14× | 1.14× | 0.92× | 0.45× |
+
+- **A 30-day window is bit-identical to expanding.** Not approximately — identical. The
+  largest feature window here holds 108 commits that span less than 30 days, so a 30-day
+  slide trims nothing at all. Reporting this as a "sliding window result" would be a lie.
+- **A 14-day window trims exactly one fold** (108 → 89 commits) and moves the headline
+  numbers by well under a percent.
+- **The year-scale decay the paper measures cannot be observed on a two-month history.**
+  Not "was not observed" — *cannot be*. There is no year of history to age out. Anyone
+  reading this should treat the feature as implemented and untested-at-scale, not validated.
+
+Two findings do survive, and neither depends on the decay claim:
+
+1. **`relative_churn` degrades monotonically as the window shrinks** — 1.14× → 0.92× →
+   0.45×, crossing below random at 14 days. It is a *ratio* whose numerator and denominator
+   are both drawn from the window, so a short window leaves it computed on almost nothing.
+   This is further evidence against v0.119.0's choice of `relative_churn` as the primary
+   signal, now from a third independent direction.
+2. **Shrinking the feature window changes the row population, and therefore the baseline.**
+   At 7 days the fold-2 baseline moves 0.1139 → 0.1478 and its positive count 16 → 14,
+   because files absent from the trimmed window drop out of the dataset entirely. Lifts
+   across window sizes are therefore **not** measured against a common denominator. That
+   caveat applies to the table above and is recorded rather than glossed over.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 4 new tests covering the trim, order preservation
+  under sliding, mode disclosure in the note, and the empty-window skip
+- `make verify` byte-for-byte reproducible
+  (`3a6f13ae4b7c8b7b6ae0664c8d64ebb6854e379e3c69a5ec1ea1676ec46ee93b`); `go.sum` absent
+  (ADR-0001)
+
+#### Counts
+
+- MCP tools: 106 · Internal packages: 94 (both unchanged — an existing tool gained a knob)
+- Consecutive reproducible releases: 122 → **123** (v0.6 → v0.127.0)
+
+#### What's not yet
+
+- **A repository long enough to test this.** Every conclusion about window length here is
+  provisional until run on a multi-year history. This is now the single most valuable open
+  item on the list, ahead of any new metric.
+- `gap_days` and `window_days` both default to `0`, so the default headline still uses the
+  expanding window with no gap. Changing a default silently would alter every previously
+  reported number.
+- Still precision@K, not AUC; still SZZ stage 1 only (no blame trace to the inducing change).
+
+#### Sources
+
+- McIntosh & Kamei, *Are Fix-Inducing Changes a Moving Target?* IEEE TSE 44(5), 2018.
+  https://doi.org/10.1109/TSE.2017.2693980
+- Falessi, Huang, Narayana, Thai & Turhan, *On the need of preserving order of data when
+  validating within-project defect classifiers.* EMSE, 2020. https://arxiv.org/abs/1809.01510
+
 ## [v0.126.0] - 2026-08-09
 
 ### Theme — "Verification latency: a gap between the windows, and it reorders the answer"

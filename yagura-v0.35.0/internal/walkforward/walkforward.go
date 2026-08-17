@@ -72,7 +72,10 @@ type Options struct {
 	// GapDays は feature window と label window の間に空ける日数(v0.126.0)。
 	// gap 内のコミットは **特徴にもラベルにも使わない**。0 で gap 無し(既定)。
 	GapDays int
-	Scorers []Scorer
+	// WindowDays > 0 で feature window を **sliding**(直近 N 日のみ)にする。
+	// 0(既定)は **expanding**(履歴の先頭から cut まで全部)。v0.127.0。
+	WindowDays int
+	Scorers    []Scorer
 }
 
 // FoldInfo は 1 fold の窓の素性(順序保存の検証に使えるよう外に出す)。
@@ -85,6 +88,7 @@ type FoldInfo struct {
 	Skipped        bool      `json:"skipped"` // label window に陽性が無く採点不能
 	K              int       `json:"k"`       // precision@K の K(粒度が見えるよう公開)
 	GapCommits     int       `json:"gap_commits"`
+	FeatureStart   time.Time `json:"feature_start"`
 	FeatureEnd     time.Time `json:"feature_end"`
 	GapEnd         time.Time `json:"gap_end,omitempty"`
 	LabelStart     time.Time `json:"label_start"`
@@ -104,6 +108,8 @@ type ScorerResult struct {
 type Report struct {
 	Valid        bool                    `json:"valid"`
 	GapDays      int                     `json:"gap_days"`
+	WindowMode   string                  `json:"window_mode"` // "expanding" | "sliding"
+	WindowDays   int                     `json:"window_days"`
 	Folds        []FoldInfo              `json:"folds"`
 	SkippedFolds int                     `json:"skipped_folds"`
 	PerScorer    map[string]ScorerResult `json:"per_scorer"`
@@ -117,6 +123,18 @@ const validNote = "Walk-forward validation: each fold's features come strictly f
 	"Metric is precision@K against files touched by fix commits (SZZ stage 1), with the fold's " +
 	"own positive rate as baseline; lift > 1 beats random ranking. " +
 	"Label windows are equal-sized across folds so no fold carries extra weight in the mean."
+
+// windowNoteExpanding / windowNoteSliding は使った窓の種類を必ず言明する。
+const windowNoteExpanding = " Feature window is EXPANDING: every fold trains on all history up to " +
+	"its cut. McIntosh & Kamei (TSE 2018, 37,524 changes in Qt and OpenStack) found that JIT model " +
+	"discriminatory power and calibration drop considerably one year after training because the " +
+	"properties of fix-inducing changes shift, and recommend training on six months or more of " +
+	"history — so keeping old data is not automatically better. Pass window_days>0 for a sliding window."
+
+const windowNoteSliding = " Feature window is SLIDING over the last %d day(s): older history is " +
+	"deliberately ignored, following the model-ageing result of McIntosh & Kamei (TSE 2018). NOTE: " +
+	"they recommend SIX MONTHS or more of training history; a window shorter than that is this " +
+	"project's own choice for exploring the mechanism, not their recommendation."
 
 // gapNoteOn / gapNoteOff は gap の有無を必ず言明する(黙って gap 無しで測らない)。
 const gapNoteOn = " A gap of %d day(s) separates each feature window from its label window; " +
@@ -166,6 +184,14 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 	}
 
 	rep.GapDays = opts.GapDays
+	rep.WindowDays = opts.WindowDays
+	if opts.WindowDays > 0 {
+		rep.WindowMode = "sliding"
+		rep.Note += fmt.Sprintf(windowNoteSliding, opts.WindowDays)
+	} else {
+		rep.WindowMode = "expanding"
+		rep.Note += windowNoteExpanding
+	}
 	if opts.GapDays > 0 {
 		rep.Note += fmt.Sprintf(gapNoteOn, opts.GapDays)
 	} else {
@@ -189,6 +215,23 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 			break
 		}
 		featureWin := ordered[:featEnd]
+		// sliding: 直近 WindowDays 日ぶんだけを特徴に使う(古い履歴を捨てる)
+		if opts.WindowDays > 0 && len(featureWin) > 0 {
+			from := featureWin[len(featureWin)-1].When.AddDate(0, 0, -opts.WindowDays)
+			start := 0
+			for start < len(featureWin) && featureWin[start].When.Before(from) {
+				start++
+			}
+			featureWin = featureWin[start:]
+			if len(featureWin) == 0 {
+				rep.Folds = append(rep.Folds, FoldInfo{
+					Index: i - 1, Skipped: true,
+					Reason: "the sliding feature window contains no commits; nothing to build features from",
+				})
+				rep.SkippedFolds++
+				continue
+			}
+		}
 		labelWin := ordered[featEnd:labelEnd]
 
 		// gap: feature 窓の末尾時刻から GapDays 以内のコミットは label 窓から外す
@@ -223,6 +266,7 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 			Rows:           ds.Meta.Rows,
 			Positives:      ds.Meta.DefectiveRows,
 			GapCommits:     gapCommits,
+			FeatureStart:   featureWin[0].When,
 			FeatureEnd:     featureWin[len(featureWin)-1].When,
 			GapEnd:         gapEnd,
 			LabelStart:     labelWin[0].When,
