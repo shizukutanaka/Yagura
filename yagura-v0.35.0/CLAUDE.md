@@ -342,6 +342,25 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### 検証窓には gap を置ける(★ v0.126.0、論文由来 + 自己修正)
+- `walkforward.Options.GapDays` — feature 窓の末尾から N 日以内のコミットは
+  **特徴にもラベルにも使わない**。gap が label 窓を食い尽くした fold は理由付きで skip。
+- 根拠は JIT 欠陥予測の **verification latency**: ラベルは特徴より遅れて到着するため
+  「訓練とテストの間には訓練データを作れない固定の時間差がある」、変更を clean と
+  ラベルできるのは待機期間の経過後で、**latency を無視すると性能推定が偽になる**
+  (ACM CSUR 2022 の JIT-SDP サーベイ、Cabral & Minku TSE 2022 ほか)。
+- **正直な但し書きを必ず添えること**: 論文の待機期間は *online* JIT モデルの日数であり、
+  ここで実装したのは *offline* 窓間の日数 gap。**類似の論法であって同じプロトコルではない**。
+- gap の有無は **常に応答に明記**する。gap=0 のときは「cut 直後の fix がラベルに残る」
+  ことと「最新 label 窓は HEAD に隣接するので not-fixed は "まだ修正されていない" だけ
+  かもしれない(片側ラベルノイズ)」を note に書く。
+- v0.125.0 の自己修正: **label 窓は全 fold 等サイズ**(最後の fold に残りを吸わせると
+  陽性数と baseline が変わるのに平均では 1 票のままで歪む)。**K は fold ごとに公開**
+  (rows/10 が 1 に潰れると precision が 0/1 になり lift が不安定 — 見えないと気づけない)。
+- 実測: gap=0 → gap=3日 で **全 scorer の lift が低下し、順位も入れ替わる**
+  (size_loc 6.08→3.08、churn_count 5.93→**4.40 で首位**)。cut 直後の fix を外すと
+  サイズ交絡が弱まりプロセス指標が残る、という読み方ができる。
+
 ### 検証は時系列順を保つ(★ v0.125.0、論文由来 + 自己反証)
 - `internal/walkforward` — 履歴を Folds+1 区間に切り、fold ごとに「区間 i+1 より前」で
   特徴、「区間 i+1」でラベルを作る **walk-forward**。各 fold は

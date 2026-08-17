@@ -4,6 +4,104 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.126.0] - 2026-08-09
+
+### Theme — "Verification latency: a gap between the windows, and it reorders the answer"
+
+v0.125.0 listed a missing **gap** between the feature and label windows as its top open
+item: a fix landing moments after the cut was still counted as a "future" label even when
+it was plainly part of the same work. This adds the gap — and applying it changes not just
+the magnitude of every result but **which signal wins**.
+
+#### Research basis
+
+The just-in-time defect-prediction literature calls this **verification latency**: the
+labels of training examples arrive much later than their features, so *"there is a fixed
+gap of time between the training and test examples, where no training examples can be
+produced."* A change can only be labelled clean after a **waiting period** has elapsed
+without a defect being found, and ignoring that latency **leads to false performance
+estimates**. The concept is introduced by Tan et al. and is standard in the online JIT-SDP
+line of work (Cabral & Minku, Tabassum et al., and the ACM Computing Surveys systematic
+survey of JIT-SDP).
+
+**Stated honestly:** that literature specifies the waiting period in *days* for **online**
+JIT models predicting per-commit defectiveness. What ships here is a day-based gap between
+**offline** windows in a file-level evaluation — analogous reasoning, not the same protocol.
+The package doc says exactly that rather than implying the papers validated this design.
+
+#### Added — `GapDays`
+
+Commits falling within `GapDays` of the feature window's end feed **neither** the features
+nor the labels. If the gap swallows an entire label window, that fold is skipped with a
+stated reason rather than scored on nothing. The gap situation is **always** reported: with
+`gap_days=0` the note explicitly warns that near-cut fixes still count, and additionally
+that the newest label window sits adjacent to HEAD, so files marked not-fixed there may
+simply not have been fixed **yet** — the one-sided label noise verification latency
+predicts.
+
+#### Fixed — two fairness defects in v0.125.0's own fold arithmetic
+
+- **Unequal label windows.** The last fold absorbed all remaining commits
+  (`labelEnd = len(ordered)`), so on histories that do not divide evenly it scored a larger
+  window — different positive count, different baseline — while still counting once in an
+  unweighted mean. Label windows are now equal-sized across folds; leftover commits go
+  unused. Pinned by `TestRun_LabelWindowsAreEqualSized`.
+- **Invisible K.** `precision@K` used `K = rows/10` clamped to ≥1, so on small folds K could
+  be 1, making precision all-or-nothing and lift unstable — with no way for a caller to see
+  it. `K` is now reported per fold.
+
+#### Measured on this repository
+
+| scorer | lift @ gap=0 | lift @ gap=3d |
+|---|---|---|
+| `size_loc` | **6.08×** | 3.08× |
+| `churn_count` | 5.93× | **4.40×** |
+| `complexity` | 3.66× | 2.41× |
+| `relative_churn` | 1.14× | 2.41× |
+
+Two things happen, both expected from the theory:
+
+1. **Every lift falls.** Removing fixes adjacent to the cut removes the easiest labels —
+   precisely the inflation verification latency warns about.
+2. **The ranking flips.** `churn_count` overtakes `size_loc` and becomes the clear winner.
+   That matters for v0.125.0's finding: once same-session fixes are excluded, the **size
+   confound weakens and the process signal strengthens**, which is evidence that change
+   count — not file size — is doing the real work.
+
+With `gap_days=3` one fold was skipped: early history is dense (many commits per day), so a
+3-day gap consumed 33 of that fold's 36 label commits, leaving nothing to score. Reported,
+not hidden.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 4 new tests
+- `make verify` byte-for-byte reproducible; `go.sum` absent (ADR-0001)
+- A planned parallel research/review fan-out was attempted and **failed entirely** — all 5
+  agents hit a weekly rate limit and returned nothing. The work was done directly instead;
+  no findings in this entry come from that aborted run.
+
+#### Counts
+
+- MCP tools: 106 · Internal packages: 94 (both unchanged)
+- Consecutive reproducible releases: 121 → **122** (v0.6 → v0.126.0)
+
+#### What's not yet
+
+- **`gap_days` defaults to 0**, so the default headline number still contains near-cut
+  fixes. A non-zero default would change every reported figure and deserves its own
+  decision rather than being slipped in.
+- The feature window is **expanding** (each fold trains on all history up to its cut). A
+  sliding window would test whether stale history helps or hurts; the package doc now
+  states which variant is in use rather than leaving it implicit.
+- Still one repository. The churn_count-over-size_loc result is suggestive, not settled.
+
+#### Sources
+
+- *A Systematic Survey of Just-in-Time Software Defect Prediction.* ACM Computing Surveys, 2022.
+  https://dl.acm.org/doi/10.1145/3567550
+- Cabral & Minku et al., *Towards Reliable Online Just-in-time Software Defect Prediction.*
+  IEEE TSE, 2022. https://minkull.github.io/publications/CabralTSE2022.pdf
+
 ## [v0.125.0] - 2026-08-09
 
 ### Theme — "Walk-forward validation, and the signal it says we picked wrong"

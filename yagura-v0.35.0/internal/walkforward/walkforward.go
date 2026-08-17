@@ -67,8 +67,11 @@ func DefaultScorers() []Scorer {
 
 // Options は評価条件。
 type Options struct {
-	Folds   int
-	TopK    int
+	Folds int
+	TopK  int
+	// GapDays は feature window と label window の間に空ける日数(v0.126.0)。
+	// gap 内のコミットは **特徴にもラベルにも使わない**。0 で gap 無し(既定)。
+	GapDays int
 	Scorers []Scorer
 }
 
@@ -80,7 +83,10 @@ type FoldInfo struct {
 	Rows           int       `json:"rows"`
 	Positives      int       `json:"positives"`
 	Skipped        bool      `json:"skipped"` // label window に陽性が無く採点不能
+	K              int       `json:"k"`       // precision@K の K(粒度が見えるよう公開)
+	GapCommits     int       `json:"gap_commits"`
 	FeatureEnd     time.Time `json:"feature_end"`
+	GapEnd         time.Time `json:"gap_end,omitempty"`
 	LabelStart     time.Time `json:"label_start"`
 	Reason         string    `json:"reason,omitempty"`
 }
@@ -97,6 +103,7 @@ type ScorerResult struct {
 // Report は walk-forward 全体の結果。
 type Report struct {
 	Valid        bool                    `json:"valid"`
+	GapDays      int                     `json:"gap_days"`
 	Folds        []FoldInfo              `json:"folds"`
 	SkippedFolds int                     `json:"skipped_folds"`
 	PerScorer    map[string]ScorerResult `json:"per_scorer"`
@@ -105,9 +112,24 @@ type Report struct {
 }
 
 const validNote = "Walk-forward validation: each fold's features come strictly from commits " +
-	"preceding its label window (Falessi et al., EMSE 2020 — order-preserving validation). " +
+	"preceding its label window (Falessi et al., EMSE 2020 — order-preserving validation), with " +
+	"an EXPANDING feature window (every fold trains on all history up to its cut). " +
 	"Metric is precision@K against files touched by fix commits (SZZ stage 1), with the fold's " +
-	"own positive rate as baseline; lift > 1 beats random ranking."
+	"own positive rate as baseline; lift > 1 beats random ranking. " +
+	"Label windows are equal-sized across folds so no fold carries extra weight in the mean."
+
+// gapNoteOn / gapNoteOff は gap の有無を必ず言明する(黙って gap 無しで測らない)。
+const gapNoteOn = " A gap of %d day(s) separates each feature window from its label window; " +
+	"commits inside the gap feed neither. This follows the verification-latency argument in the " +
+	"just-in-time defect-prediction literature: a change cannot be labelled clean until a waiting " +
+	"period has passed, and ignoring that latency yields false performance estimates. NOTE: that " +
+	"literature specifies the waiting period in DAYS for online JIT models; the adaptation here is " +
+	"a day-based gap between offline windows, which is analogous but not the same protocol."
+
+const gapNoteOff = " NO GAP was applied (gap_days=0): a fix landing immediately after the cut still " +
+	"counts as a future label even if it was part of the same work. Pass gap_days>0 to separate them. " +
+	"Separately, the newest label window sits adjacent to HEAD, so files marked not-fixed there may " +
+	"simply not have been fixed YET (one-sided label noise from verification latency)."
 
 // Run は commits を時系列で Folds+1 区間に切り、fold ごとに
 // 「先頭〜区間 i」で特徴を作り「区間 i+1」でラベルを作って scorer を評価する。
@@ -143,21 +165,55 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 		accs[s.Name] = &acc{}
 	}
 
+	rep.GapDays = opts.GapDays
+	if opts.GapDays > 0 {
+		rep.Note += fmt.Sprintf(gapNoteOn, opts.GapDays)
+	} else {
+		rep.Note += gapNoteOff
+	}
+
 	seg := len(ordered) / (folds + 1)
 	if seg < 1 {
 		seg = 1
 	}
 	for i := 1; i <= folds; i++ {
 		featEnd := seg * i
+		// label 窓は **全 fold 等サイズ**。最後の fold に残り全部を吸わせると、
+		// その fold だけ陽性数と baseline が変わるのに平均では 1 票のまま扱われ、
+		// 集計が歪む(v0.126.0 で修正)。
 		labelEnd := seg * (i + 1)
-		if i == folds {
-			labelEnd = len(ordered) // 最後の fold は残り全部
+		if labelEnd > len(ordered) {
+			labelEnd = len(ordered)
 		}
 		if featEnd >= len(ordered) || labelEnd <= featEnd {
 			break
 		}
 		featureWin := ordered[:featEnd]
 		labelWin := ordered[featEnd:labelEnd]
+
+		// gap: feature 窓の末尾時刻から GapDays 以内のコミットは label 窓から外す
+		// (特徴にも入らない=どちらにも使わない)。
+		gapCommits := 0
+		var gapEnd time.Time
+		if opts.GapDays > 0 && len(featureWin) > 0 {
+			cutoff := featureWin[len(featureWin)-1].When.AddDate(0, 0, opts.GapDays)
+			gapEnd = cutoff
+			drop := 0
+			for drop < len(labelWin) && !labelWin[drop].When.After(cutoff) {
+				drop++
+			}
+			gapCommits = drop
+			labelWin = labelWin[drop:]
+			if len(labelWin) == 0 {
+				rep.Folds = append(rep.Folds, FoldInfo{
+					Index: i - 1, FeatureCommits: len(featureWin), GapCommits: gapCommits,
+					Skipped: true, FeatureEnd: featureWin[len(featureWin)-1].When, GapEnd: gapEnd,
+					Reason: "the gap consumed the entire label window; nothing left to score",
+				})
+				rep.SkippedFolds++
+				continue
+			}
+		}
 
 		ds := defectdataset.BuildWindows(featureWin, labelWin, sizes, complexity)
 		info := FoldInfo{
@@ -166,7 +222,9 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 			LabelCommits:   len(labelWin),
 			Rows:           ds.Meta.Rows,
 			Positives:      ds.Meta.DefectiveRows,
+			GapCommits:     gapCommits,
 			FeatureEnd:     featureWin[len(featureWin)-1].When,
+			GapEnd:         gapEnd,
 			LabelStart:     labelWin[0].When,
 		}
 		// 陽性 0 の fold は採点不能。捏造した 0 を平均に混ぜない。
@@ -187,6 +245,7 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 		if k > ds.Meta.Rows {
 			k = ds.Meta.Rows
 		}
+		info.K = k
 		baseline := ds.Meta.PositiveRate
 		for _, s := range scorers {
 			rows := append([]defectdataset.Row(nil), ds.Rows...)

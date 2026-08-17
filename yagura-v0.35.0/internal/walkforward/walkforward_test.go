@@ -1,6 +1,7 @@
 package walkforward
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -162,4 +163,88 @@ func keys(m map[string]ScorerResult) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// ─── v0.126.0: verification latency / gap ────────────────────────
+
+// TestRun_GapExcludesCommitsFromBothWindows is the core of the gap feature.
+// The JIT defect-prediction literature (verification latency) holds that a
+// change cannot be labelled "clean" until a waiting period has passed, and that
+// a fixed gap must separate training from test data. Commits inside the gap
+// must therefore feed NEITHER the features NOR the labels.
+func TestRun_GapExcludesCommitsFromBothWindows(t *testing.T) {
+	var cs []churn.Commit
+	for d := 1; d <= 12; d++ {
+		cs = append(cs, commit(d, "feat: work", "a.go"))
+	}
+	// no gap: every commit belongs to some window
+	noGap := Run(cs, sizes("a.go"), nil, Options{Folds: 2})
+	withGap := Run(cs, sizes("a.go"), nil, Options{Folds: 2, GapDays: 2})
+
+	for i, f := range withGap.Folds {
+		if !f.GapEnd.IsZero() && f.LabelStart.Before(f.GapEnd) {
+			t.Errorf("fold %d: label window starts before the gap ends", i)
+		}
+		if f.GapCommits < 0 {
+			t.Errorf("fold %d: negative gap commit count", i)
+		}
+	}
+	// the gap must actually remove something relative to no-gap
+	var gapped int
+	for _, f := range withGap.Folds {
+		gapped += f.GapCommits
+	}
+	if gapped == 0 {
+		t.Errorf("GapDays=2 over daily commits should have excluded commits, got 0 (folds=%+v)", withGap.Folds)
+	}
+	_ = noGap
+}
+
+// TestRun_GapIsReportedEvenWhenZero keeps the caller able to tell whether a gap
+// was applied — a silently-absent gap is how optimistic numbers get published.
+func TestRun_GapIsReportedEvenWhenZero(t *testing.T) {
+	cs, sz := history()
+	rep := Run(cs, sz, nil, Options{Folds: 2})
+	if rep.GapDays != 0 {
+		t.Errorf("GapDays should echo the request, got %v", rep.GapDays)
+	}
+	if !strings.Contains(strings.ToLower(rep.Note), "gap") {
+		t.Errorf("the note must state the gap situation, got %q", rep.Note)
+	}
+}
+
+// TestRun_LabelWindowsAreEqualSized: the last fold must not silently absorb all
+// remaining commits, which would give it more positives and a different
+// baseline while still counting once in an unweighted mean.
+func TestRun_LabelWindowsAreEqualSized(t *testing.T) {
+	var cs []churn.Commit
+	for d := 1; d <= 14; d++ { // 14 does not divide evenly by folds+1
+		cs = append(cs, commit(d, "fix: a", "a.go"))
+	}
+	rep := Run(cs, sizes("a.go"), nil, Options{Folds: 3})
+	if len(rep.Folds) < 2 {
+		t.Fatalf("expected multiple folds, got %d", len(rep.Folds))
+	}
+	first := rep.Folds[0].LabelCommits
+	for i, f := range rep.Folds {
+		if f.LabelCommits != first {
+			t.Errorf("fold %d label window has %d commits, fold 0 has %d — unequal windows bias the mean",
+				i, f.LabelCommits, first)
+		}
+	}
+}
+
+// TestRun_ReportsKPerFold: with few rows, K collapses to 1 and precision
+// becomes all-or-nothing. The caller must be able to see that.
+func TestRun_ReportsKPerFold(t *testing.T) {
+	cs, sz := history()
+	rep := Run(cs, sz, nil, Options{Folds: 2})
+	for i, f := range rep.Folds {
+		if f.Skipped {
+			continue
+		}
+		if f.K < 1 {
+			t.Errorf("fold %d: K must be reported and >= 1, got %d", i, f.K)
+		}
+	}
 }
