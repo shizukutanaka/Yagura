@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **106 tools**.
+Generated from a live yagura — **107 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -14,7 +14,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (58)
+- [Misc](#misc) (59)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -501,6 +501,26 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ---
 
+### `yagura_change_coupling`
+
+[S] Find files that change together in git history, and test whether that predicts future co-changes. Needs only a slug.
+
+**Arguments:**
+
+| Name | Required | Description |
+|---|---|---|
+| `k` (integer) |  | suggestions per seed file when validating (default 3) |
+| `limit` (integer) |  | max coupled pairs to return |
+| `max_changeset_files` (integer) |  | commits touching more files than this are excluded (default 30); sweeping commits fabricate coupling |
+| `max_commits` (integer) |  | commits to walk back (default 500) |
+| `min_degree` (number) |  | minimum symmetric coupling degree 0-1 (default 0.30) |
+| `min_revs` (integer) |  | minimum revisions per file (default 5, the code-maat default) |
+| `min_shared_revs` (integer) |  | minimum shared revisions per pair (default 5) |
+| `slug` (string) | ★ | registered project slug |
+| `split_ratio` (number) |  | share of history used to mine rules before validating on the rest (default 0.7) |
+
+---
+
 ### `yagura_churn_risk`
 
 [S] Rank files by relative churn x complexity from git history (Nagappan-Ball M1-M8 + Tornhill hotspots). Needs only a slug.
@@ -910,9 +930,11 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 | Name | Required | Description |
 |---|---|---|
+| `gap_days` (integer) |  | days to leave between feature and label windows in validation (verification latency; default 0) |
 | `limit` (integer) |  | max files to return |
 | `max_commits` (integer) |  | commits to walk back (default 500) |
 | `slug` (string) | ★ | registered project slug |
+| `window_days` (integer) |  | sliding feature-window size in days for validation (0 = expanding, the default) |
 
 ---
 

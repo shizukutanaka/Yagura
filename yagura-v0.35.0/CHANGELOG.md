@@ -4,6 +4,129 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.128.0] - 2026-08-17
+
+### Theme — "Files that change together — and a frequency baseline that mostly beats them"
+
+Every lens shipped since v0.119.0 ranks files *individually*. Nothing measured the oldest
+signal in repository mining: **which files change together**. This adds it — mined as
+association rules, validated temporally, and reported against a baseline that turns out to
+be very hard to beat.
+
+#### Research basis, and the related software
+
+- **Gall, Hajek & Jazayeri, "Detection of Logical Coupling Based on Product Release
+  History", ICSM 1998** — the original idea that release history reveals logical coupling
+  invisible to structural analysis.
+- **Zimmermann, Weißgerber, Diehl & Zeller, "Mining Version Histories to Guide Software
+  Changes", ICSE 2004 / IEEE TSE 31(6) 2005 (ROSE)** — association-rule mining over version
+  histories to suggest *"programmers who changed these functions also changed…"*. The
+  evaluation shape used here — give one changed file, predict the rest — is theirs.
+- **Related software.** The default thresholds are taken from **code-maat** (Adam Tornhill),
+  which implements the same measure: `--min-revs 5`, `--min-shared-revs 5`,
+  `--min-coupling 30`, `--max-changeset-size 30`. **CodeScene** productised the same ideas
+  and surfaces *sum-of-coupling* to find architecturally significant files; that is reported
+  too. Taking another tool's defaults is a real decision, so the source is named in the
+  package doc rather than presented as a natural constant.
+
+#### Added — `internal/cochange` and `yagura_change_coupling` (tool #107)
+
+Not to be confused with the existing `internal/coupling`, which measures **static import**
+coupling from source. This one reads **git**. Where the two disagree is the interesting
+part: a pair that always changes together without importing each other shares a contract no
+compiler can check.
+
+Three quantities are reported, because collapsing them misleads:
+
+- **`degree`** — symmetric, `shared / average-revs` (the code-maat convention).
+- **`confidence_a_to_b` / `confidence_b_to_a`** — directional. If A changes 10 times, B
+  twice, and they share 2, then `P(A|B) = 1.0` but `P(B|A) = 0.2`. Publishing one symmetric
+  percentage invites reading it as "touch A and you'll touch B".
+- **`lift`** — `P(A,B) / (P(A)·P(B))`, the base-rate correction from association-rule
+  mining. Confidence is confounded by how often the *partner* changes: a file touched in
+  every commit looks like a perfect consequent of everything. `lift = 1` means independence
+  — no information. Unlike confidence, lift is symmetric.
+
+#### Measured on this repository — the baseline mostly wins
+
+147 commits, 199 files, 38 pairs above the default thresholds, 70/30 chronological split.
+The opponent is a **frequency baseline** that always names the most-changed files of the
+train window:
+
+| k | ranked by confidence | ranked by lift | baseline |
+|---|---|---|---|
+| 1 | 0.848 → lift **0.97 (loses)** | 0.940 → **1.07** | 0.876 |
+| 3 | 0.855 → **1.49** | 0.748 → 1.30 | 0.575 |
+| 5 | 0.730 → 0.98 (loses) | 0.750 → 1.01 | 0.744 |
+
+**Mined coupling does not reliably beat naming the busiest files on this repository.** It
+loses outright at k=1 and k=5 under confidence ranking, and the best result anywhere is
+1.49×. Only the base-rate-corrected ranking wins consistently at k=1.
+
+The cause is visible in the top pairs and is worth stating plainly: the four version-bump
+files (`cmd/yagura/main.go`, `cmd/yagura/main_test.go`, `internal/dashboard/dashboard.go`,
+`cmd/yagura-tray/main.go`) co-change in **all 81** releases at `degree` 1.00. That is a
+**release ritual, not architecture** — and the same ritual is exactly what makes the
+frequency baseline so strong. A repository whose history is dominated by its own release
+process is a poor place to demonstrate this technique, and pretending otherwise would repeat
+the mistake v0.127.0 was written to avoid.
+
+Two further honest notes:
+
+- **Coverage is 0.687** — a third of test cases had no rule covering the seed file at all.
+  Those are counted separately, not silently scored as misses (which would sink precision)
+  and not silently dropped (which would inflate it).
+- **code-maat's `--max-changeset-size 30` default is inert here**: no commit in this history
+  exceeds it, so it excluded nothing. It only starts biting at a cap of 10 (29 commits
+  dropped). Inherited defaults are not automatically active.
+
+#### Fixed — a presentation knob was changing the measurement
+
+Found by dogfooding the tool over MCP rather than by unit tests: `limit` (how many pairs to
+*return*) was passed straight into the validation, so asking for the top 5 pairs silently
+mined only 5 rules and reported different precision and baseline figures than the same call
+without a limit. `Evaluate` now drops `Limit` at its own boundary, so no caller can make a
+display preference change a measurement. Pinned by
+`TestEvaluate_LimitDoesNotChangeTheMeasurement`.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 18 new tests, including two falsifiability tests
+  (stale coupling must score **below** the baseline; a train window with no coupling
+  structure must return `valid=false` rather than a number)
+- `make verify` byte-for-byte reproducible
+  (`69624041b9e1e86657ce326b0b6f150e545bdce613b257d0ffb672649d2a40f8`); `go.sum` absent
+- Live-dogfooded through the running daemon over `/mcp`; the tool's figures match the
+  package-level harness exactly
+
+#### Counts
+
+- MCP tools: 106 → **107** · Internal packages: 94 → **95**
+- Consecutive reproducible releases: 123 → **124** (v0.6 → v0.128.0)
+
+#### What's not yet
+
+- **A repository whose history is not dominated by its own release ritual.** This is the
+  same open item v0.127.0 raised, and this release makes it sharper: the confound is now
+  visible in the data, not just suspected.
+- Coupling is **file-level and pairwise**. ROSE mined rules over larger itemsets and at
+  function/variable granularity; nothing here goes below the file.
+- The coupling signal is **not** wired into `yagura_process_risk` scoring. Feeding a signal
+  that loses to a frequency baseline into a risk ranking would be indefensible.
+- Suggestions are ranked by confidence **or** lift, chosen by the caller. Both validations
+  are always returned so neither can be cherry-picked; no default has been declared "the"
+  ranking on one repository's evidence.
+
+#### Sources
+
+- Gall, Hajek & Jazayeri, *Detection of Logical Coupling Based on Product Release History.*
+  ICSM 1998. https://doi.org/10.1109/ICSM.1998.738508
+- Zimmermann, Weißgerber, Diehl & Zeller, *Mining Version Histories to Guide Software
+  Changes.* IEEE TSE 31(6), 2005. https://doi.org/10.1109/TSE.2005.72
+- code-maat — https://github.com/adamtornhill/code-maat
+- CodeScene, *Temporal Coupling* —
+  https://docs.enterprise.codescene.io/versions/3.4.0/guides/technical/temporal-coupling.html
+
 ## [v0.127.0] - 2026-08-17
 
 ### Theme — "A sliding feature window, and a null result this repository cannot escape"

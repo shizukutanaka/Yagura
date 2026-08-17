@@ -18,6 +18,7 @@ import (
 	"github.com/shizukutanaka/yagura/internal/astcheck"
 	"github.com/shizukutanaka/yagura/internal/calibrate"
 	"github.com/shizukutanaka/yagura/internal/churn"
+	"github.com/shizukutanaka/yagura/internal/cochange"
 	"github.com/shizukutanaka/yagura/internal/codehealth"
 	"github.com/shizukutanaka/yagura/internal/cognit"
 	"github.com/shizukutanaka/yagura/internal/complexity"
@@ -2047,6 +2048,131 @@ func buildDefectDatasetTool(d Deps) *Tool {
 				out["rows"] = ds.Rows
 			}
 			return out, nil
+		},
+	}
+}
+
+// buildChangeCouplingTool は git 履歴から **進化的結合**(一緒に変わるファイル対)を
+// 算出し、その結合が将来の共変更を当てられるかを時系列分割で検証する(v0.128.0、tool #107)。
+//
+// 研究的根拠: Gall, Hajek & Jazayeri (ICSM 1998) の logical coupling と、
+// Zimmermann らの ROSE (ICSE 2004 / TSE 2005) ——版履歴の association rule で
+// 「次に変えるべき場所」を提案する。既定しきい値は同じ量を実装する code-maat の
+// CLI 既定(min-revs 5 / min-shared-revs 5 / min-coupling 30 / max-changeset-size 30)
+// に揃えてある。
+//
+// **検証は必ずベースラインと併記する。** 「よく変わるファイルを挙げるだけ」の頻度
+// ベースラインは驚くほど強く、実測ではこれを安定して上回れない。応答は confidence 順と
+// lift 順の **両方** の検証結果を返す——どちらか都合のいい方だけを見せないため。
+func buildChangeCouplingTool(d Deps) *Tool {
+	return &Tool{
+		Name:        "yagura_change_coupling",
+		Title:       "Change Coupling (files that change together)",
+		Description: "[S] Find files that change together in git history, and test whether that predicts future co-changes. Needs only a slug.",
+		Annotations: &ToolAnnotations{ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"slug":                map[string]any{"type": "string", "description": "registered project slug"},
+				"max_commits":         map[string]any{"type": "integer", "description": "commits to walk back (default 500)"},
+				"limit":               map[string]any{"type": "integer", "description": "max coupled pairs to return"},
+				"min_revs":            map[string]any{"type": "integer", "description": "minimum revisions per file (default 5, the code-maat default)"},
+				"min_shared_revs":     map[string]any{"type": "integer", "description": "minimum shared revisions per pair (default 5)"},
+				"min_degree":          map[string]any{"type": "number", "description": "minimum symmetric coupling degree 0-1 (default 0.30)"},
+				"max_changeset_files": map[string]any{"type": "integer", "description": "commits touching more files than this are excluded (default 30); sweeping commits fabricate coupling"},
+				"split_ratio":         map[string]any{"type": "number", "description": "share of history used to mine rules before validating on the rest (default 0.7)"},
+				"k":                   map[string]any{"type": "integer", "description": "suggestions per seed file when validating (default 3)"},
+			},
+			"required": []string{"slug"},
+		},
+		Handler: func(ctx context.Context, args json.RawMessage) (any, error) {
+			if d.Registry == nil {
+				return nil, &ToolError{Code: "unavailable", Message: "registry not configured"}
+			}
+			var in struct {
+				Slug              string   `json:"slug"`
+				MaxCommits        int      `json:"max_commits"`
+				Limit             int      `json:"limit"`
+				MinRevs           int      `json:"min_revs"`
+				MinSharedRevs     int      `json:"min_shared_revs"`
+				MinDegree         *float64 `json:"min_degree"`
+				MaxChangesetFiles int      `json:"max_changeset_files"`
+				SplitRatio        *float64 `json:"split_ratio"`
+				K                 int      `json:"k"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, &ToolError{Code: "invalid_input", Cause: err}
+			}
+			if in.Slug == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "slug required"}
+			}
+			p, err := d.Registry.Get(in.Slug)
+			if err != nil || p == nil {
+				return nil, &ToolError{Code: "not_found", Message: "project not registered"}
+			}
+			if p.LocalPath == "" {
+				return nil, &ToolError{Code: "invalid_input", Message: "project has no local_path; set it with yagura_update"}
+			}
+			logOut, err := churn.ReadGitLog(ctx, p.LocalPath, in.MaxCommits)
+			if err != nil {
+				return nil, &ToolError{Code: "no_history", Message: err.Error()}
+			}
+			commits, err := churn.Parse(logOut)
+			if err != nil {
+				return nil, &ToolError{Code: "parse_failed", Cause: err}
+			}
+
+			opts := cochange.DefaultOptions()
+			if in.MinRevs > 0 {
+				opts.MinRevs = in.MinRevs
+			}
+			if in.MinSharedRevs > 0 {
+				opts.MinSharedRevs = in.MinSharedRevs
+			}
+			if in.MinDegree != nil {
+				opts.MinDegree = *in.MinDegree
+			}
+			if in.MaxChangesetFiles > 0 {
+				opts.MaxChangesetFiles = in.MaxChangesetFiles
+			}
+			opts.Limit = in.Limit
+
+			rep := cochange.Analyze(commits, opts)
+
+			ratio := 0.7
+			if in.SplitRatio != nil {
+				ratio = *in.SplitRatio
+			}
+			k := in.K
+			if k <= 0 {
+				k = 3
+			}
+			train, test := cochange.Split(commits, ratio)
+			// **limit は表示用であって検証用ではない**。同じ opts をそのまま渡すと
+			// 「上位 N 件だけ返して」という要求が、測定に使う規則の数まで黙って
+			// 削ってしまい、precision も baseline も変わってしまう(実測で発見)。
+			evalOpts := opts
+			evalOpts.Limit = 0
+			// confidence 順と lift 順の **両方** を返す。lift は基準率交絡
+			// (毎回変わるファイルがどの相手からも高 confidence に見える)の補正。
+			byConfidence := cochange.Evaluate(train, test, evalOpts, k)
+			liftOpts := evalOpts
+			liftOpts.RankByLift = true
+			byLift := cochange.Evaluate(train, test, liftOpts, k)
+
+			return map[string]any{
+				"slug":   in.Slug,
+				"report": rep,
+				"validation": map[string]any{
+					"by_confidence": byConfidence,
+					"by_lift":       byLift,
+					"note": "Both rankings are returned so neither can be cherry-picked. Read each " +
+						"precision against ITS OWN baseline: a frequency baseline that always names the " +
+						"most-changed files of the train window is a strong opponent in repositories with " +
+						"a release ritual, and beating it is the only thing that makes mined coupling " +
+						"worth anything. lift < 1 means the mined rules did WORSE than naming busy files.",
+				},
+			}, nil
 		},
 	}
 }

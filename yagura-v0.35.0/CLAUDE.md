@@ -23,7 +23,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 94 internal packages
+## Map — 95 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -341,6 +341,45 @@ cortex flywheel 4 段階すべてを単体で機械化:
   assertcheck)を package 別 grade(A-F)へ合成(ソクラテス新視点 synthesis)。
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
+
+### 進化的結合は「頻度ベースライン」に勝てて初めて意味がある(★ v0.128.0、論文 + 関連ソフト由来)
+- `internal/cochange` — git 履歴から **一緒に変わるファイル対**(logical / temporal /
+  evolutionary coupling)を算出する。**`internal/coupling` とは別物**(あちらは静的な
+  import 結合をソースから測る)。名前が近いので混同しないこと。
+- 根拠は **Gall, Hajek & Jazayeri (ICSM 1998)** の logical coupling と、
+  **Zimmermann, Weißgerber, Diehl & Zeller の ROSE (ICSE 2004 / IEEE TSE 31(6) 2005)**
+  ——版履歴の association rule で「次に変えるべき場所」を提案する。
+  既定しきい値は同じ量を実装する **code-maat**(Tornhill)の CLI 既定に揃えた:
+  min-revs 5 / min-shared-revs 5 / min-coupling 30 / **max-changeset-size 30**。
+  sum-of-coupling は **CodeScene** がアーキテクチャ上重要なファイルを surface するのに
+  使う量。**関連ソフトウェアの既定値を採るときは出典を doc に書くこと。**
+- **degree(対称)と confidence(方向つき)を混同しない。** A が 10 回・B が 2 回変わり
+  共変更 2 回なら P(A|B)=1.0 だが P(B|A)=0.2。対称値 1 本だけ出すと読み手は必ず
+  「A を触ったら B も触る確率」と誤読する——両方返す。
+- **confidence は基準率に交絡する。** 毎コミット変わるファイルはどの相手からも
+  confidence ≈ 1.0 に見えるが情報が無い。補正は **lift = P(A,B)/(P(A)P(B))**
+  (association rule mining の interest、Brin et al. の指摘した confidence 単独の不足)。
+  lift は confidence と違い **対称**。
+- **検証は必ず頻度ベースラインと併記する。** 「訓練期で最も変わった K 件を常に挙げる」
+  だけの相手は驚くほど強い。実測(このリポジトリ、split 0.7):
+
+  | k | confidence 順 | lift 順 | baseline |
+  |---|---|---|---|
+  | 1 | 0.848(lift **0.97 = 負け**)| 0.940(**1.07**)| 0.876 |
+  | 3 | 0.855(**1.49**)| 0.748(1.30)| 0.575 |
+  | 5 | 0.730(0.98 = 負け)| 0.750(1.01)| 0.744 |
+
+  **結論: このリポジトリでは進化的結合は頻度ベースラインに安定して勝てない。**
+  k=1 でのみ lift 順が一貫して勝つ(基準率補正が効く場所)。原因は明白で、
+  version bump 4 ファイル(main.go / main_test.go / dashboard.go / tray)が全 81
+  リリースで共変更され degree 1.00 の対を作る——**リリース儀式であってアーキテクチャ
+  ではない**。同じ理由でベースラインも極端に強くなる。都合の良い k だけ載せないこと。
+- **提案を出せなかったケースは coverage として別に数える**(実測 0.687)。黙って外れに
+  混ぜると precision が沈み、黙って捨てると浮く。どちらも嘘。
+- **表示用の絞り込みを測定条件に混ぜない**(v0.128.0 の live dogfood で発見した実バグ)。
+  `limit` を Evaluate にそのまま渡していたため、「上位 5 件だけ返して」という要求が
+  検証に使う規則を 39→5 に削り precision も baseline も変えていた。`Evaluate` 側で
+  `Limit=0` に落として封じ、`TestEvaluate_LimitDoesNotChangeTheMeasurement` が固定。
 
 ### feature 窓は expanding / sliding を選べる(★ v0.127.0、論文由来 + null result)
 - `walkforward.Options.WindowDays` — 0(既定)は **expanding**(履歴先頭から cut まで)、
