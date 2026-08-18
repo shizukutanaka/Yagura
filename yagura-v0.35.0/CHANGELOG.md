@@ -4,6 +4,114 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.129.0] - 2026-08-17
+
+### Theme — "Delete 29 tools. The best part is no part."
+
+Sixteen releases (v0.113 → v0.128) added capability and **removed nothing**. `lensoverlap`
+was built in v0.100 specifically to produce evidence for retiring lenses; it has never
+retired one. This release applies Musk's five-step algorithm — question every requirement,
+**delete**, simplify, accelerate, automate — and the order turns out to matter more than the
+steps.
+
+#### The requirement that was never questioned
+
+Every one of the 29 structural code lenses was exposed as its own MCP tool, and **all 29
+required a `files` parameter**: a map of filename → content. To ask "how complex is this
+repository?", the caller had to push the entire source tree through the model's context —
+**3.3 MB ≈ 824,000 tokens** for this repository — to get back a number that a `slug`
+(≈10 tokens) is enough to compute.
+
+v0.118.0 identified this exact contradiction, fixed it for **one** tool
+(`yagura_portfolio_quality`), and wrote in its CHANGELOG that the daemon reads disk so
+"source content does not pass through the LLM context by a single byte." The fix was never
+propagated to the other 29.
+
+Worse, v0.21 had already *optimized* this surface: tool descriptions were compressed to
+~50 bytes each ("caveman mode"). That is **step 3 applied to parts that step 2 should have
+deleted** — precisely the error the algorithm warns about. Deleting the 29 tools makes the
+work of shrinking their descriptions retroactively unnecessary.
+
+#### Deleted — 29 MCP tools
+
+`yagura_api_doc`, `yagura_assert_check`, `yagura_ast_check`, `yagura_calibrate`,
+`yagura_cognit`, `yagura_complexity`, `yagura_coupling`, `yagura_ctx_check`,
+`yagura_dead_code`, `yagura_dep_rank`, `yagura_err_discard`, `yagura_err_policy`,
+`yagura_err_wrap`, `yagura_flag_arg`, `yagura_global_check`, `yagura_hotspot`,
+`yagura_ifacebloat`, `yagura_lens_overlap`, `yagura_naked_ret`, `yagura_name_check`,
+`yagura_nest_depth`, `yagura_param_check`, `yagura_prealloc`, `yagura_predeclared`,
+`yagura_recv_check`, `yagura_return_check`, `yagura_sync_check`, `yagura_thelper`,
+`yagura_type_assert`.
+
+**This is a breaking change.** Callers migrate to `yagura_lens` with the corresponding
+`lens` name (`yagura_nest_depth` → `{"lens":"nest_depth"}`).
+
+#### Added — one tool, and one table
+
+`internal/lens` is now the **single source of truth** for which lenses exist and how they
+run — a deterministic dispatch table over the existing pure `Scan(files, …)` functions. No
+lens logic was reimplemented or changed. `yagura_lens` reads the tree through the
+`internal/srcfiles` seam (v0.118.0) and dispatches.
+
+Add-back ratio: 29 deleted, 1 added — **3.4%**. Capability lost: **none**. `lens_overlap`'s
+own measurements support that: apart from `cognit`↔`complexity` at Jaccard 0.38, the lenses
+are near-orthogonal, so the *lenses* carry information. What carried no information was
+**29 doors into the same room**.
+
+Omitting `lens` returns finding counts for all 29 **with one-line summaries** — the whole
+repository's quality picture in one round trip. Pass `lens` to get that lens's full report.
+
+#### Simplify — including a mistake made and corrected inside this release
+
+The first version of `yagura_lens` embedded all 29 lens summaries in its input schema
+description: **3,575 bytes**, i.e. bloat created moments after deleting bloat. Discovery
+belongs in the *call*, not in the fixed cost every session pays before doing anything. Moving
+the summaries into the no-`lens` response cut the tool to **1,611 bytes**.
+
+#### Measured
+
+| | before | after |
+|---|---|---|
+| MCP tools | 107 | **79** |
+| `tools/list` handshake | 60,690 B (~15,200 tok) | **46,665 B (~11,700 tok)** — −23.1% |
+| lens surface in handshake | 18,747 B | **1,611 B** |
+| whole-repo quality read | ~3.3 MB of source (~824,000 tok) | **3,377 B (~850 tok)** |
+
+Verified live over `/mcp`: 29 lenses across 346 files read from disk, `incomplete=false`,
+drill-down and the unknown-lens error path (which lists valid names rather than returning an
+empty result) both behave.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 7 new tests including a pinned lens count, a
+  threshold-actually-applies test, and one asserting **every** registered lens executes
+  (a table can otherwise carry a name with no working runner)
+- `make verify` byte-for-byte reproducible
+  (`94068321416016171df003a91f585f986adc092b121f7c9149d3eddf9f0fad1c`); `go.sum` absent
+
+#### Counts
+
+- MCP tools: 107 → **79** · Internal packages: 95 → **96**
+- Consecutive reproducible releases: 124 → **125** (v0.6 → v0.129.0)
+
+#### What's not yet — the remaining steps
+
+- **The CLI still calls the lenses itself** and does not share the table. That is the same
+  duplication in the other direction, and propagating this deletion to the CLI is the next
+  step — v0.118.0's mistake was stopping at one caller, and this release has so far fixed
+  only the MCP side.
+- **Step 4 (accelerate) and step 5 (automate) have not been started.** They come after
+  deletion is finished, not before.
+- 79 tools is still a lot. The next question to ask is which of the remaining ones anybody
+  has actually called.
+
+#### Sources
+
+- Isaacson, *Elon Musk* (2023) — the five-step algorithm: question every requirement, delete
+  any part or process you can, simplify and optimize, accelerate cycle time, automate; and
+  its central warning that the most common error is optimizing something that should not
+  exist.
+
 ## [v0.128.0] - 2026-08-17
 
 ### Theme — "Files that change together — and a frequency baseline that mostly beats them"

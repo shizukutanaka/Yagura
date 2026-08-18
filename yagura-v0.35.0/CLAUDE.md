@@ -23,7 +23,7 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - マルチエージェント orchestrator(MCP server 一品)
 - code generation tool(yagura は audit/orchestrate のみ)
 
-## Map — 95 internal packages
+## Map — 96 internal packages
 
 ### Core orchestration
 - `internal/registry` — 23+ projects の inventory CRUD
@@ -341,6 +341,34 @@ cortex flywheel 4 段階すべてを単体で機械化:
   assertcheck)を package 別 grade(A-F)へ合成(ソクラテス新視点 synthesis)。
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
+
+### 削除は機能である —— Musk アルゴリズムの適用(★ v0.129.0)
+- v0.113→v0.128 の 16 リリースは **一度も何も削除しなかった**。`lensoverlap`(v0.100)は
+  まさに「淘汰の根拠」を出すために作られたのに、その根拠で退役したレンズは 0 件。
+- 適用したのは Musk の 5 段アルゴリズム。**順序が本質**:
+  ① 要求を疑う ② **削除する** ③ 単純化する ④ 速くする ⑤ 自動化する。
+  「最も多い誤りは、存在すべきでないものを最適化すること」——v0.21 の caveman
+  description(tool 説明を ~50 byte に圧縮)は **② を飛ばして ③ をやった** 実例だった。
+  29 個の tool そのものを消せば、その説明文を縮める仕事は最初から要らなかった。
+- **① 疑った要求**: 「レンズ tool は `files` を受け取る」。29 レンズ全部が
+  ファイル名→内容の map を **必須** にしていたので、複雑度を 1 つ測るために
+  ソース全体(このリポジトリで 3.3 MB ≒ 82 万トークン)を LLM context に通す必要があった。
+  v0.118.0 は同じ矛盾を `yagura_portfolio_quality` **1 つだけ**で解消して
+  「token 経済の矛盾解消」と書いたが、**波及させていなかった**。
+- **② 削除**: MCP tool 29 個を削除(107 → **79**)。追加は `yagura_lens` 1 個だけ
+  (add-back 3.4%)。能力は 1 つも失っていない——29 レンズは `internal/lens` の
+  **単一の表**に全て在り、`lens` パラメータで選ぶ。
+- **③ 単純化**: 最初 29 レンズの説明文を `yagura_lens` の description に詰めて
+  3,575 byte にしてしまった(削った直後に自分で bloat を作った)。説明は
+  **`lens` を省いた 1 回の呼び出し**が summary つき件数で返すので、handshake の
+  固定費から外して 1,611 byte に。**発見は 1 往復、本文は選んでから**。
+- 実測: `tools/list` が **60,690 → 46,665 byte(-23.1%、~3,500 トークン/セッション)**。
+  リポジトリ全体の品質把握は **3,377 byte(~850 トークン)**——従来はソース全部を
+  貼る必要があったので ~82 万トークン。
+- **新しいレンズを足すときは `internal/lens` の表に 1 行足すだけ**。MCP tool を
+  増やしてはいけない。表の件数は `TestNames_AreSortedAndPinned` が固定している。
+- 未了(意図的に残す): CLI 側はまだ独自にレンズを呼んでおり、表を共有していない
+  ——**同じ削除を CLI にも波及させること**(v0.118.0 の失敗を繰り返さない)。
 
 ### 進化的結合は「頻度ベースライン」に勝てて初めて意味がある(★ v0.128.0、論文 + 関連ソフト由来)
 - `internal/cochange` — git 履歴から **一緒に変わるファイル対**(logical / temporal /

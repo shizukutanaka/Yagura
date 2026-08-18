@@ -1,6 +1,6 @@
 # MCP tools reference
 
-Generated from a live yagura — **107 tools**.
+Generated from a live yagura — **79 tools**.
 
 Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per the [Fowler harness taxonomy](https://martinfowler.com/articles/harness-engineering.html).
 
@@ -9,12 +9,12 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 ## Table of contents
 
 - [Alerts](#alerts) (3)
-- [Code quality (guides)](#code-quality-guides) (9)
+- [Code quality (guides)](#code-quality-guides) (1)
 - [Graph](#graph) (3)
 - [Handoff](#handoff) (1)
 - [Harness (guides)](#harness-guides) (8)
 - [Inventory](#inventory) (8)
-- [Misc](#misc) (59)
+- [Misc](#misc) (39)
 - [Observability](#observability) (4)
 - [Plan tracking](#plan-tracking) (2)
 - [Security (sensors)](#security-sensors) (10)
@@ -68,42 +68,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ## Code quality (guides)
 
-### `yagura_api_doc`
-
-[G] Exported-API doc discipline (Go). Documented ratio + undocumented exported funcs/types/consts/vars/methods.
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ | map of filename → content for .go files to analyse |
-
----
-
-### `yagura_assert_check`
-
-[G] Test assertion density analysis. Detects hollow test files (zero assertions), reports avg density per test function.
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ | map of filename → content for *_test.go files to analyse |
-
----
-
-### `yagura_ast_check`
-
-[G] Go AST structural audit. os.Exit in library, empty != nil branch, defer in loop, err-string compare, parse errors.
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-
----
-
 ### `yagura_code_health`
 
 [G] Composite maintainability grade (Go). Per-package A-F from complexity/apidoc/deadcode/recvcheck/assertcheck/astcheck.
@@ -113,68 +77,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `files` (object) | ★ | map of filename → content for .go files (paths relative to module root) |
-
----
-
-### `yagura_complexity`
-
-[G] Cyclomatic complexity (Go, gocyclo-compatible). Per-function McCabe score; flags functions over threshold (default 10).
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ | map of filename → content for .go files to analyse |
-| `threshold` (integer) |  | complexity threshold for findings (default 10) |
-
----
-
-### `yagura_coupling`
-
-[G] Package import coupling (Go). Fan-in/out + instability (Ce/(Ca+Ce)) + Stable Dependencies Principle violations.
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ | map of filename → content for .go files (paths relative to module root) |
-| `module_path` (string) |  | go.mod module path for internal-import detection (defaults to the server's main module) |
-
----
-
-### `yagura_dead_code`
-
-[G] Dead unexported declarations (Go). Package-level funcs/types/consts/vars never referenced within their package.
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ | map of filename → content for .go files (paths relative to package root) |
-
----
-
-### `yagura_err_policy`
-
-[G] Error-context discipline (Go). Wrap ratio (fmt.Errorf %w vs naked return err) + blank-discard (`_ = call()`) detection.
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ | map of filename → content for .go files to analyse |
-
----
-
-### `yagura_recv_check`
-
-[G] Method receiver consistency (Go). Inconsistent receiver names, mixed value/pointer receivers, un-idiomatic names (this/self).
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ | map of filename → content for .go files to analyse |
 
 ---
 
@@ -467,18 +369,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ---
 
-### `yagura_calibrate`
-
-[Q] Threshold calibration: percentile distributions of complexity/params/returns/func-lines to set data-driven --max gates
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-
----
-
 ### `yagura_cc_security`
 
 [Q] Claude Code project security posture audit. Client supplies gathered facts (gitignore/CLAUDE.md/settings.json contents); server scores deterministically.
@@ -547,19 +437,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ---
 
-### `yagura_cognit`
-
-[Q] Cognitive complexity per function (human reading cost; nesting-weighted, switch=1; gocognit-style — complements McCabe)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-| `max` (integer) |  | cognitive-complexity threshold above which a function is flagged (default 15) |
-
----
-
 ### `yagura_coverage`
 
 [Q] Blind-spot meta lens: classifies paths analyzable/uncovered/non-source. Reports both sensor-tier and Go-only AST-lens-tier ratios.
@@ -569,18 +446,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `paths` (array) | ★ |  |
-
----
-
-### `yagura_ctx_check`
-
-[Q] context.Context discipline: must be first param (not in struct fields). Go convention (containedctx-style)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
 
 ---
 
@@ -605,20 +470,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ---
 
-### `yagura_dep_rank`
-
-[Q] Package dependency rank: internal packages by import in-degree (blast radius when changed)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-| `module_prefix` (string) | ★ | Go module path prefix (e.g. github.com/shizukutanaka/yagura) |
-| `threshold` (integer) |  | Minimum in-degree to flag (default 5) |
-
----
-
 ### `yagura_diff_scan`
 
 [Q] Unified-diff delta lens: added lines, removed lines, and removed safety guards (error-check/recover/cleanup).
@@ -628,44 +479,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `diff` (string) | ★ |  |
-
----
-
-### `yagura_err_discard`
-
-[Q] Error-discard smell: call sites where a returned error is silently ignored
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-| `strict` (boolean) |  |  |
-
----
-
-### `yagura_err_wrap`
-
-[Q] Error-wrapping discipline (Go 1.13): %w not %v, errors.Is over ==, errors.As over type assert (errorlint-style)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-
----
-
-### `yagura_flag_arg`
-
-[G] Boolean flag-argument smell (Go, Fowler). Detects functions with bool parameters that encode hidden control-flow branches. A bool arg that selects behavior ('if verbose', 'if dryRun') is opaque at call sites; consider splitting into two clearly named functions.
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ | map of filename → content for .go files to analyse |
-| `threshold` (integer) |  | minimum number of bool params to flag (default 1; set 2 to skip single-bool cases) |
 
 ---
 
@@ -681,18 +494,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ---
 
-### `yagura_global_check`
-
-[Q] Mutable global state: package-level vars actually mutated somewhere (testability + data-race hazard; gochecknoglobals-style)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-
----
-
 ### `yagura_heartbeat`
 
 [S] Agent heartbeat (~5min). Detects stale agents.
@@ -702,32 +503,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `agent` (string) | ★ |  |
-
----
-
-### `yagura_hotspot`
-
-[Q] Convergent-signal hotspots: functions flagged by 2+ of 12 independent lenses (complexity, params, returns, cognit, nestdepth, and more)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-| `min_lenses` (integer) |  | Minimum number of lenses that must converge to report a hotspot (default 2) |
-
----
-
-### `yagura_ifacebloat`
-
-[Q] Interface design: named interfaces with too many methods (Rob Pike "bigger interface = weaker abstraction"; interfacebloat-style)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-| `threshold` (integer) |  | method-count threshold above which an interface is flagged (default 10) |
 
 ---
 
@@ -743,15 +518,21 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ---
 
-### `yagura_lens_overlap`
+### `yagura_lens`
 
-[Q] Meta: Jaccard overlap between hotspot's 12 lenses — high overlap flags consolidation candidates, near-zero confirms orthogonal axes
+[G] Run any of 29 structural code lenses over a project the daemon reads from disk. Omit `lens` for finding counts across all 29. Needs a slug or dir — never source in context.
 
 **Arguments:**
 
 | Name | Required | Description |
 |---|---|---|
-| `files` (object) | ★ |  |
+| `dir` (string) |  | absolute directory to scan; alternative to slug |
+| `ignore` (array) |  | identifiers to allow (predeclared) |
+| `lens` (string) |  | which lens to run; omit for finding counts across all of them. api_doc — exported API doc coverage (godoc discipline); assert_check — assertion density; hollow tests prove nothing; ast_check — structural checks regex cannot do (os.Exit in library, empty nil branch); calibrate — threshold calibration from the corpus itself (distributions + outliers); cognit — cognitive complexity (nesting-weighted human reading cost); complexity — cyclomatic complexity (McCabe, gocyclo-compatible); coupling — package import coupling (fan-in/fan-out/instability); ctx_check — context.Context discipline (first arg, not in structs); dead_code — unreferenced unexported declarations; dep_rank — package in-degree (blast radius of a change); err_discard — errors dropped at the call site; err_policy — error diagnosability (wrap rate, blank discards); err_wrap — Go 1.13 error wrapping (%w, errors.Is/As); flag_arg — boolean flag arguments (Fowler flag-argument smell); global_check — mutable package-level globals; hotspot — functions independently flagged by several lenses (convergence); ifacebloat — interface method count (the bigger the interface, the weaker the abstraction); lens_overlap — Jaccard overlap between lenses (evidence for retiring one); naked_ret — naked returns in long functions with named results; name_check — name/behaviour agreement (is/has predicates, error naming); nest_depth — maximum control-flow nesting depth; param_check — parameter count (Fowler long-parameter-list smell); prealloc — slices grown by append in a range loop without preallocation; predeclared — declarations shadowing Go builtins (len/cap/min/max/…); recv_check — method receiver consistency (name and value/pointer mixing); return_check — return-value count (how wide the exit is); sync_check — copying types that contain sync locks; thelper — test helpers that never call t.Helper(); type_assert — single-value type assertions that can panic |
+| `min_lenses` (integer) |  | lenses that must converge to count as a hotspot |
+| `module` (string) |  | module path for import resolution (coupling, dep_rank) |
+| `slug` (string) |  | registered project slug (daemon reads its local_path) |
+| `threshold` (integer) |  | lens threshold where applicable (0 = that lens's default) |
 
 ---
 
@@ -764,44 +545,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `content` (string) | ★ | full .mcp.json server config or a tools/list JSON |
-
----
-
-### `yagura_naked_ret`
-
-[Q] Naked-return readability: naked `return` in long named-result functions (nakedret-style, default >30 lines)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-| `max_lines` (integer) |  | function line-count threshold above which naked returns are flagged (default 30) |
-
----
-
-### `yagura_name_check`
-
-[Q] Name↔signature consistency: predicates (is/has) must return bool, getters/constructors must return a value
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-
----
-
-### `yagura_nest_depth`
-
-[Q] Max control-flow nesting depth per function (the pyramid-of-doom signal complexity misses; guard-clause discipline)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-| `max_depth` (integer) |  | nesting-depth threshold above which a function is flagged (default 4) |
 
 ---
 
@@ -847,19 +590,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ---
 
-### `yagura_param_check`
-
-[G] Long-parameter-list smell (Go, Fowler). Per-function param count; flags functions over threshold (default 5).
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ | map of filename → content for .go files to analyse |
-| `threshold` (integer) |  | parameter-count threshold for findings (default 5) |
-
----
-
 ### `yagura_path_policy`
 
 [G] Gate changed paths against glob rules → deny/review/allow (strictest match wins).
@@ -894,31 +624,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | Name | Required | Description |
 |---|---|---|
 | `limit` (integer) |  | max ranked projects to return (default all) |
-
----
-
-### `yagura_prealloc`
-
-[Q] Performance: slices grown by append in a range loop without preallocation (make([]T,0,len); prealloc-style)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-
----
-
-### `yagura_predeclared`
-
-[Q] Predeclared-identifier shadowing: vars/params/types/funcs that shadow Go builtins (predeclared-style)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-| `ignore` (array) |  | predeclared identifiers to allow shadowing (e.g. ["cap","min","max"]) |
 
 ---
 
@@ -989,19 +694,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 | `new` (object) | ★ | current file set (path→content) |
 | `old` (object) | ★ | baseline file set (path→content) |
 | `thresholds` (object) |  | optional per-metric Crossed-gate overrides (complexity/params/returns/func_lines), e.g. from calibrate's suggested_threshold; omit to use conventional defaults |
-
----
-
-### `yagura_return_check`
-
-[G] Many-return-values smell (Go). Counts return values per function; flags functions over threshold (default 3). Complements param_check (input width) with output width — together they form a complete function-signature profile.
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ | map of filename → content for .go files to analyse |
-| `threshold` (integer) |  | return-value count threshold for findings (default 3; flags 4+ returns) |
 
 ---
 
@@ -1120,30 +812,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 ---
 
-### `yagura_sync_check`
-
-[Q] sync-lock copy discipline: methods/params/returns must not copy types containing sync.Mutex/RWMutex/etc (copylocks-style)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-
----
-
-### `yagura_thelper`
-
-[Q] Test quality: test helpers (take *testing.T/B/TB) that never call t.Helper() (failures point at the helper; thelper-style)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
-
----
-
 ### `yagura_token_stats`
 
 [S] Per-tool byte counts since daemon start.
@@ -1160,18 +828,6 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 |---|---|---|
 | `name` (string) |  |  |
 | `query` (string) |  |  |
-
----
-
-### `yagura_type_assert`
-
-[Q] Panic-safety: single-value type assertions x.(T) that panic on mismatch (use comma-ok; forcetypeassert-style)
-
-**Arguments:**
-
-| Name | Required | Description |
-|---|---|---|
-| `files` (object) | ★ |  |
 
 ---
 

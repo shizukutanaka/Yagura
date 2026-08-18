@@ -162,53 +162,24 @@ func TestIntegration_MCPToolsList(t *testing.T) {
 		// v0.25-26 — AI verify + test audit
 		"yagura_ai_verify", "yagura_test_audit",
 		// v0.36 — Go AST structural audit (Roadmap #6)
-		"yagura_ast_check",
 		// v0.36 — test assertion density (hollow test detection)
-		"yagura_assert_check",
 		// v0.36 — error-context discipline (wrap ratio + blank-discard)
-		"yagura_err_policy",
 		// v0.36 — cyclomatic complexity (testability precondition)
-		"yagura_complexity",
 		// v0.65 — long-parameter-list smell (complexity's horizontal pair)
-		"yagura_param_check",
 		// v0.66 — boolean flag-argument smell (Fowler; semantic coupling)
-		"yagura_flag_arg",
 		// v0.67 — many-return-values smell (output width; pair to param_check)
-		"yagura_return_check",
 		// v0.68 — error-discard smell (call sites silently ignoring returned errors)
-		"yagura_err_discard",
 		// v0.69 — package dependency rank (in-degree; blast radius when changed)
-		"yagura_dep_rank",
 		// v0.70 — convergent-signal hotspots (functions flagged by 2+ signature lenses)
-		"yagura_hotspot",
 		// v0.100 — meta: Jaccard overlap between hotspot's 12 lenses (consolidation signal)
-		"yagura_lens_overlap",
-		"yagura_name_check",
-		"yagura_ctx_check",
-		"yagura_err_wrap",
-		"yagura_sync_check",
-		"yagura_naked_ret",
-		"yagura_predeclared",
-		"yagura_calibrate",
 		"yagura_regress",
-		"yagura_nest_depth",
-		"yagura_global_check",
-		"yagura_type_assert",
-		"yagura_cognit",
-		"yagura_prealloc",
-		"yagura_thelper",
 		// v0.94 — interface design (interfacebloat-style)
-		"yagura_ifacebloat",
 		// v0.36 — package import coupling (architecture / SDP)
-		"yagura_coupling",
 		// v0.36 — exported-API doc discipline (public contract)
-		"yagura_api_doc",
 		// v0.36 — dead unexported declarations (internal reachability)
-		"yagura_dead_code",
 		// v0.36 — method receiver consistency (self-consistency)
-		"yagura_recv_check",
 		// v0.36 — composite maintainability grade (synthesis)
-		"yagura_code_health", "yagura_portfolio_quality", "yagura_churn_risk", "yagura_ownership", "yagura_process_risk", "yagura_defect_dataset", "yagura_change_coupling",
+		"yagura_code_health", "yagura_portfolio_quality", "yagura_churn_risk", "yagura_ownership", "yagura_process_risk", "yagura_defect_dataset", "yagura_change_coupling", "yagura_lens",
 		// v0.27 — cortex flywheel ④ Alert-Fix
 		"yagura_alert_fix", "yagura_alert_resolve", "yagura_agents_md", "yagura_feature_list", "yagura_harness_coverage",
 		"yagura_hook_timeline", "yagura_hook_stats", "yagura_progress_file", "yagura_init_sh",
