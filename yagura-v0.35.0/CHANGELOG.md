@@ -4,6 +4,114 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.1.0] - 2026-08-18
+
+### Theme — "The release pipeline was never reached, because two tags had the wrong letter"
+
+With the surface frozen at 1.0.0, step ① turns to the claims the product makes to its
+**users**. The README promises pre-built binaries, signed SHA-256 checksums, and
+cross-compiled targets. Each was checked rather than assumed.
+
+#### What held up
+
+- `make build-all` produces all five targets (linux/darwin amd64+arm64, windows amd64) — 83 s,
+  exit 0.
+- `.github/workflows/release.yml` is genuinely complete: build matrix, per-artifact hashing,
+  CycloneDX SBOM, and **SLSA3 provenance** via the official generator, with all actions
+  pinned by commit SHA.
+- `ci.yml` runs the real gates, including `go test -race` and `make verify`.
+
+The distribution claims are honest. The pipeline is real.
+
+#### What did not — and the failure was silent by construction
+
+**It has never run.** The workflow triggers on `tags: ['v*']`. This repository has three
+tags:
+
+| tag | first character | matches `v*` |
+|---|---|---|
+| `v1.73.0` | `v` (U+0076) | yes |
+| `ｖ1.78.0` | **`ｖ` (U+FF56, full-width)** | **no** |
+| `ｖ1.79.0` | **`ｖ` (U+FF56, full-width)** | **no** |
+
+Two of the three tags begin with a full-width `ｖ` — a character a Japanese IME produces
+readily and which is **visually indistinguishable** from ASCII `v` in most fonts. They do not
+match the trigger, so those two releases produced no binaries, no SBOM, and no provenance.
+The failure mode is *nothing happening*, which is the hardest kind to notice: there is no red
+build to investigate, and the tag looks correct in every listing.
+
+This is not an attention problem. It is a design problem: **a machine-checked string was
+being typed by a human**, and the check lived only in a YAML glob that never reports a
+mismatch.
+
+#### Added — `make tag VERSION=x.y.z`
+
+`scripts/tag.sh` creates the annotated tag so nobody types it. It refuses any name that is
+not ASCII `v` + `X.Y.Z`, and additionally rejects any non-ASCII byte, so a full-width `ｖ`
+cannot survive even if the regex is later loosened. It also verifies the tree is at the
+version being tagged and that a CHANGELOG entry exists.
+
+Like `make release`, it **does not push**: pushing the tag is what publishes artifacts to
+the world, and that stays a human decision.
+
+The validation was written as a shell function and is tested by **executing it** from Go
+(`tagname_test.go`) rather than by reimplementing the rule in Go — a copy would only prove
+the copy correct. The test table is seeded with the two tag names that actually broke, plus
+`V1.0.0`, `1.0.0`, `v1.0`, `v1.0.0-rc`, whitespace and empty. A third test feeds it obvious
+garbage to confirm the checker can fail at all.
+
+The first implementation of the check was itself broken — `LC_ALL=C [[ ... ]]` is invalid
+because `[[` is a keyword, not a command, so every valid tag was rejected with
+`[[: command not found`. The tests caught it immediately. It now avoids locale-sensitive
+character classes entirely.
+
+#### Open decision for the maintainer — deliberately not made here
+
+The three existing tags are numbered **1.73.0 – 1.79.0**, and all three point at the *same*
+commit, whose subject is `v0.34`. That numbering has no relationship to the version lineage
+in the code, which this branch has carried from 0.6 to 1.0.0. Tagging `v1.1.0` today would
+therefore appear to move *backwards* relative to `ｖ1.79.0`.
+
+Reconciling that is a product decision — renumber, re-tag, or leave the malformed tags as
+historical noise — and it is not one a tool should make on its own. **No tag was created or
+pushed by this release.** The tooling is ready when the decision is.
+
+#### Fixed — the version-site guard, twice wrong, now right
+
+v1.0.0's guard scanned for the *current* version and collapsed because `1.0.0` is an ordinary
+fixture literal. Its replacement scanned for the *previous* version — and collapsed again on
+this very release, the moment the previous version **became** `1.0.0`: ten unrelated test
+files matched.
+
+The lesson is that a version number carries no signal as a bare string. What distinguishes
+yagura's own version from a third-party one is **position**. Every false positive was a
+dependency's version (`Version: "v1.0.0"`, `pkg:golang/…@1.0.0`, `LatestVersion`), while
+yagura states its own version in exactly three shapes: a `version = "X.Y.Z"` assignment, the
+`yagura X.Y.Z` CLI banner, and the `· vX.Y.Z` dashboard footer. The guard now matches only
+those.
+
+Its limitation is stated in the file rather than glossed: a fifth site written in some new
+shape would not be caught, and the explicit `versionSites` list is what covers that case.
+Verified falsifiable by reverting each of the three shapes in turn — all three are detected.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 3 new tests
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- `make build-all` — 5/5 targets built
+- Cut by `make release VERSION=1.1.0`
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (both unchanged — v1 compatibility holds)
+- Consecutive reproducible releases: 128 → **129** (v0.6 → v1.1.0)
+
+#### What's not yet
+
+- The `v1.73.0` tag matches the trigger but predates the workflow's current form; whether it
+  ever produced artifacts is unverified from inside the repository.
+- Publishing still requires a human to push a tag. That is the intended design, not a gap.
+
 ## [v1.0.0] - 2026-08-17
 
 ### Theme — "Ship it"

@@ -150,3 +150,8 @@ docs-mcp: build
 release:
 	@test -n "$(VERSION)" || { echo "usage: make release VERSION=x.y.z"; exit 2; }
 	@bash scripts/release.sh "$(VERSION)"
+
+.PHONY: tag
+tag:
+	@test -n "$(VERSION)" || { echo "usage: make tag VERSION=x.y.z"; exit 2; }
+	@bash scripts/tag.sh "$(VERSION)"

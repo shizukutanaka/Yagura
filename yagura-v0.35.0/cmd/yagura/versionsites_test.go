@@ -15,8 +15,22 @@
 //	ありふれた文字列で、9 個の無関係なファイルが誤検出された。
 //
 //	正しい問いは「現在の版はどこに在るか」ではなく **「古い版が残っていないか」**。
-//	リリースで防ぎたい失敗はまさにそれ(書き換え漏れ)であり、しかも古い版番号
-//	(例 0.131.0)は fixture にまず現れない。よって前版を探す形に直した。
+//	リリースで防ぎたい失敗はまさにそれ(書き換え漏れ)だから。
+//
+//	ただし「前版を素朴に探す」だけでも足りなかった(v1.1.0 で再発)。前版が 1.0.0 に
+//	なった瞬間、今度は **前版が** ありふれた fixture 文字列になり 10 件誤検出した。
+//	版番号は文字列としては何の目印にもならない。
+//
+//	決め手は **位置** である。誤検出はすべて「第三者パッケージのバージョン」
+//	(`Version: "v1.0.0"` / `pkg:golang/...@1.0.0` / `LatestVersion`)で、yagura 自身の
+//	版はこの 3 つの形でしか現れない:
+//	  1. `version = "X.Y.Z"`(識別子が literally version の代入)
+//	  2. `yagura X.Y.Z`(CLI バナー)
+//	  3. `· vX.Y.Z`(dashboard footer)
+//	よって「前版が **自分の版を名乗る形** で残っていないか」を見る。
+//
+//	限界を正直に言う: 4 つ目の新しい書き方で版を書いた箇所は検出できない。
+//	その場合に守るのは versionSites の明示リストの方(下の Test A)。
 //
 //	Go のコメントは除外する。このリポジトリは「★ v0.118.0」のように **由来** を
 //	コメントに書く習慣があり、それは書き換えるべき宣言ではない。
@@ -72,7 +86,9 @@ func TestVersionSites_NoStalePreviousVersionRemains(t *testing.T) {
 	if prev == "" {
 		t.Skip("no previous release recorded in CHANGELOG.md")
 	}
-	prevRe := regexp.MustCompile(regexp.QuoteMeta(prev))
+	// yagura が **自分の** 版を名乗る 3 つの形だけを見る(第三者の版は無視)。
+	q := regexp.QuoteMeta(prev)
+	ownVersion := regexp.MustCompile(`version\s*=\s*"` + q + `"|yagura\s+` + q + `|·\s*v` + q)
 
 	var stale []string
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -98,7 +114,7 @@ func TestVersionSites_NoStalePreviousVersionRemains(t *testing.T) {
 			return nil
 		}
 		// コメントは由来の記録であって宣言ではないので除外する。
-		if prevRe.MatchString(stripGoComments(string(b))) {
+		if ownVersion.MatchString(stripGoComments(string(b))) {
 			stale = append(stale, filepath.ToSlash(rel))
 		}
 		return nil
@@ -108,9 +124,9 @@ func TestVersionSites_NoStalePreviousVersionRemains(t *testing.T) {
 	}
 	if len(stale) > 0 {
 		sort.Strings(stale)
-		t.Errorf("%d file(s) still state the previous version %s in code (current is %s): %v\n"+
-			"If one of these is a version site, add it to versionSites here AND to SITES in "+
-			"scripts/release.sh, or `make release` will keep leaving it stale.",
+		t.Errorf("%d file(s) still declare the PREVIOUS version %s as yagura's own (current is %s): %v\n"+
+			"Add it to versionSites here AND to SITES in scripts/release.sh, or `make release` "+
+			"will keep leaving it stale.",
 			len(stale), prev, version, stale)
 	}
 }
