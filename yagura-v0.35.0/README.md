@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v1.1.0** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **129 consecutive reproducible releases**. The public surface is frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md), whose central rule is that a promise not enforced by a test is an intention, not a guarantee. This release audited the project's own distribution claims and found the release pipeline had **never run**: two of three git tags begin with a full-width `ｖ` (U+FF56), visually identical to ASCII `v` but not matched by the workflow's `tags: ['v*']` trigger, so those releases silently produced no binaries, SBOM or provenance. `make tag` now creates the tag so nobody types it. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v1.2.0** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **130 consecutive reproducible releases**. **Yagura now starts without a GitHub token.** It previously refused to, even though only 3 of its 79 tools need the network — so a product whose design tenet is *local-first* made you create a credential before you could lint a local directory. The proof it was wrong was already inside the product: the "no terminal required" tray launcher injected a fake token to defeat the daemon's own check, and that fake token was itself rejected, so the advertised onboarding path was broken for anyone without a PAT. Startup now names exactly which capabilities are idle instead of refusing to run. The public surface stays frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -126,10 +126,20 @@ The plugin connects to a locally running `yagura` daemon (HTTP MCP at
 
 ## Quickstart
 
+**No GitHub token needed.** Yagura starts and runs locally out of the box:
+
 ```bash
-export YAGURA_GITHUB_TOKEN=ghp_yourPersonalAccessToken
 export YAGURA_STATE_DIR=$HOME/.yagura
 ./bin/yagura
+```
+
+It will say which capabilities are idle without credentials, and everything else
+— all 29 code lenses, the registry, the dependency graph, plan artifacts and the
+harness audits — works immediately. Add a token only when you want the three
+network-backed sensors:
+
+```bash
+export YAGURA_GITHUB_TOKEN=ghp_yourPersonalAccessToken   # optional: vulns, scorecard, background scanner
 ```
 
 In another shell:
@@ -240,7 +250,7 @@ All configuration is via environment variables. See `.env.example` for the full 
 |---|---|---|
 | `YAGURA_ADDR` | `127.0.0.1:8090` | HTTP listen address |
 | `YAGURA_STATE_DIR` | `$HOME/.yagura` | State directory |
-| `YAGURA_GITHUB_TOKEN` | — | GitHub PAT for vulnerability / scorecard scans |
+| `YAGURA_GITHUB_TOKEN` | — | **Optional.** GitHub PAT. Without it the daemon runs in local-only mode; `yagura_vulns`, `yagura_scorecard` and the background scanner stay idle and say so at startup. |
 | `YAGURA_AUTH_TOKEN` | — | Bearer token required for `/mcp` if set |
 | `YAGURA_MCP_COMPACT` | `0` | `1` = compact tool descriptions to save context tokens |
 | `YAGURA_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
@@ -254,7 +264,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-129 consecutive releases (v0.6 → v1.1.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+130 consecutive releases (v0.6 → v1.2.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 

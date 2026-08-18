@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	version = "1.1.0" // updated together with main yagura version
+	version = "1.2.0" // updated together with main yagura version
 )
 
 func main() {
@@ -69,16 +69,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// GitHub token: -github-token flag overrides env. If neither set,
-	// supply a placeholder so the daemon's config validation doesn't reject
-	// startup (read-only ops will still work locally; scanner/vulns won't).
+	// GitHub token: -github-token flag overrides env. Absent is fine.
+	//
+	// v1.2.0 まではここで "tray-no-token-placeholder" という **偽の資格情報** を
+	// 注入していた。daemon が token 必須だったのを迂回するためだが、その偽 token は
+	// daemon 自身の書式検証に弾かれるので **結局起動しなかった** ——README が薦める
+	// 「端末不要」の導線が、PAT を持たない利用者には壊れていた。
+	// daemon 側で token を任意にしたので、迂回ごと削除する。
 	gh := *githubToken
 	if gh == "" {
 		gh = os.Getenv("YAGURA_GITHUB_TOKEN")
 	}
 	if gh == "" {
-		fmt.Fprintln(os.Stderr, "(no -github-token / YAGURA_GITHUB_TOKEN — scanner/vulns will not refresh)")
-		gh = "tray-no-token-placeholder"
+		fmt.Fprintln(os.Stderr, "(no GitHub token — starting in local-only mode; scanner/vulns/scorecard stay idle)")
 	}
 
 	// daemon launch
@@ -138,7 +141,21 @@ const defaultStopGrace = 3 * time.Second
 
 func (d *daemon) Start() error {
 	d.cmd = exec.Command(d.path)
-	env := append(os.Environ(),
+	d.cmd.Env = d.env(os.Environ())
+	d.cmd.Stdout = os.Stdout
+	d.cmd.Stderr = os.Stderr
+	return d.cmd.Start()
+}
+
+// env は子 daemon に渡す環境変数を組み立てる。
+//
+// **資格情報が無いときは変数を渡さない**。v1.2.0 まではここに
+// "tray-no-token-placeholder" という偽の token を注入していた——daemon が token 必須
+// だったのを迂回するためだが、その偽 token は daemon 自身の書式検証に弾かれるので
+// 結局起動せず、README が薦める「端末不要」の導線が壊れていた。daemon 側で token を
+// 任意にしたので、偽の資格情報を作る理由は無い。
+func (d *daemon) env(base []string) []string {
+	env := append(append([]string{}, base...),
 		"YAGURA_ADDR="+d.addr,
 		"YAGURA_STATE_DIR="+d.stateDir,
 	)
@@ -148,10 +165,7 @@ func (d *daemon) Start() error {
 	if d.mcpToken != "" {
 		env = append(env, "YAGURA_MCP_TOKEN="+d.mcpToken)
 	}
-	d.cmd.Env = env
-	d.cmd.Stdout = os.Stdout
-	d.cmd.Stderr = os.Stderr
-	return d.cmd.Start()
+	return env
 }
 
 func (d *daemon) Stop() {

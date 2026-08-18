@@ -829,10 +829,16 @@ func cliPinDrift(args []string, stdout, stderr io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return errUsage
 	}
-	// pin-drift だけ GitHub API が必須 → config.Load() で token を検証する。
+	// pin-drift は GitHub API が必須。**token が任意になった(v1.2.0)ので、
+	// 「daemon が起動しない」ことに頼らず、必要な場所で明示的に確かめる。**
+	// 必要とする側が必要な時に言うのが正しく、全員に前払いさせるのは誤り。
 	cfg, err := config.Load()
 	if err != nil {
-		return fmt.Errorf("pin-drift requires YAGURA_GITHUB_TOKEN (GitHub API SHA verification): %w", err)
+		return fmt.Errorf("pin-drift: %w", err)
+	}
+	if !cfg.GitHubEnabled() {
+		return fmt.Errorf("pin-drift requires YAGURA_GITHUB_TOKEN: it verifies action pins " +
+			"against the GitHub API. Everything else in yagura works without a token")
 	}
 	files, err := readWorkflowFiles(*dir)
 	if err != nil {

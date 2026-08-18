@@ -22,7 +22,7 @@ func TestDispatch_Version(t *testing.T) {
 	if code != 0 {
 		t.Errorf("expected 0, got %d", code)
 	}
-	if !strings.Contains(out.String(), "yagura 1.1.0") {
+	if !strings.Contains(out.String(), "yagura 1.2.0") {
 		t.Errorf("expected version in stdout, got: %q", out.String())
 	}
 	if !strings.Contains(out.String(), "go") {
@@ -138,6 +138,12 @@ func TestVerifyAudit_NoStateDirEnv(t *testing.T) {
 	// 通常は $HOME/.yagura/audit が使われ、ディレクトリ存在なしでも success。
 	t.Setenv("YAGURA_GITHUB_TOKEN", "")
 	t.Setenv("YAGURA_STATE_DIR", "")
+	// HOME を temp に向けて **密閉** する(v1.2.0)。
+	// 以前は token 必須のおかげで daemon がテスト中に起動できず、既定の
+	// $HOME/.yagura に何も書かれなかったので、このテストはたまたま通っていた。
+	// token を任意にした途端、他のテストが本物の $HOME に audit を書き、
+	// ここが落ちるようになった——**テストが実 HOME に依存していたのが元々の欠陥**。
+	t.Setenv("HOME", t.TempDir())
 
 	var out bytes.Buffer
 	err := verifyAudit(&out)
@@ -261,18 +267,32 @@ func TestDispatch_DaemonBootAndShutdown(t *testing.T) {
 	}
 }
 
-// TestDispatch_UnknownSubcommandFallsThrough は未知の subcommand を
-// daemon mode と区別せず処理することを確認する(現実装では run() に渡る)。
-func TestDispatch_UnknownSubcommandFallsThrough(t *testing.T) {
-	// 未知 subcommand "foo" は switch にヒットせず run() に渡る。
-	// run() は config 不足で即エラー終了するはず。
+// 未知の subcommand は **daemon を起動せず** usage を出して終わること(v1.2.0)。
+//
+// 旧テストは「run() が config 不足で即エラー終了するはず」という前提で code=1 だけを
+// 見ていた。token を任意にした途端その前提が崩れ、このテストは **実際に daemon を
+// 起動して**(既定の $HOME/.yagura に audit を書きながら)たまたま 1 を返していた。
+// タイプミスでサーバが起動するのは驚き最小の原則に反するので、挙動の方を直した。
+func TestDispatch_UnknownSubcommandDoesNotStartDaemon(t *testing.T) {
 	t.Setenv("YAGURA_GITHUB_TOKEN", "")
-	t.Setenv("YAGURA_STATE_DIR", "")
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
 	var errBuf bytes.Buffer
 	code := dispatch([]string{"definitely-not-a-subcommand"}, io.Discard, &errBuf)
 	if code != 1 {
 		t.Errorf("expected error exit, got %d", code)
+	}
+	if !strings.Contains(errBuf.String(), "unknown subcommand") {
+		t.Errorf("must name the mistake, got %q", errBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "Usage:") {
+		t.Error("must show usage so the user can recover")
+	}
+	// daemon が起動していないこと = 既定 state dir に何も書かれていないこと。
+	if _, err := os.Stat(filepath.Join(home, ".yagura")); err == nil {
+		t.Error("a typo must not boot a daemon or create state in $HOME")
 	}
 }
 
@@ -364,12 +384,12 @@ func TestSecretUnknownSubcommand(t *testing.T) {
 
 func TestBytesTrimTrailingNewline(t *testing.T) {
 	tests := map[string]string{
-		"hello":      "hello",
-		"hello\n":    "hello",
-		"hello\r\n":  "hello",
-		"hello\n\n":  "hello",
-		"\n":         "",
-		"":           "",
+		"hello":     "hello",
+		"hello\n":   "hello",
+		"hello\r\n": "hello",
+		"hello\n\n": "hello",
+		"\n":        "",
+		"":          "",
 	}
 	for in, want := range tests {
 		got := string(bytesTrimTrailingNewline([]byte(in)))

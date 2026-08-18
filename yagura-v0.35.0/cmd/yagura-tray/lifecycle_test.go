@@ -272,3 +272,39 @@ func TestDaemon_StopGraceDefault(t *testing.T) {
 		t.Error("a zero stopGrace must fall back to the production default")
 	}
 }
+
+// tray が **偽の資格情報を作らない** ことを固定する(v1.2.0)。
+//
+// 以前は token が無いと "tray-no-token-placeholder" を注入していた。daemon の
+// 書式検証に弾かれて起動しないので、PAT を持たない利用者にとって
+// 「yagura-tray をダブルクリック」という導線は壊れていた。要求を迂回する仕掛けが
+// 製品内に生えたら、その要求の方が間違っている——要求は削除済み。
+func TestDaemonEnv_NoFakeCredentialWhenTokenAbsent(t *testing.T) {
+	d := &daemon{addr: "127.0.0.1:1", stateDir: "/tmp/x"}
+	env := d.env(nil)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "YAGURA_GITHUB_TOKEN=") {
+			t.Errorf("no token was configured, yet the tray set %q — it must not invent credentials", kv)
+		}
+		if strings.Contains(kv, "placeholder") {
+			t.Errorf("placeholder credential leaked into the child env: %q", kv)
+		}
+	}
+}
+
+func TestDaemonEnv_PassesRealTokenThrough(t *testing.T) {
+	d := &daemon{addr: "127.0.0.1:1", stateDir: "/tmp/x", githubToken: "ghp_real", mcpToken: "secret"}
+	env := d.env(nil)
+	var sawGH, sawMCP bool
+	for _, kv := range env {
+		if kv == "YAGURA_GITHUB_TOKEN=ghp_real" {
+			sawGH = true
+		}
+		if kv == "YAGURA_MCP_TOKEN=secret" {
+			sawMCP = true
+		}
+	}
+	if !sawGH || !sawMCP {
+		t.Errorf("configured tokens must reach the child: gh=%v mcp=%v", sawGH, sawMCP)
+	}
+}

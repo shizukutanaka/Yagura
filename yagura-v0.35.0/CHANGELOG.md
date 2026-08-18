@@ -4,6 +4,141 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.2.0] - 2026-08-18
+
+### Theme — "It would not start without a credential it did not need"
+
+v1.1.0 audited how the product reaches users. This one audits **the first sixty seconds
+after it does** — and found the worst defect of the whole cleanup.
+
+#### Question the requirement
+
+Running the daemon as a new user, exactly as documented:
+
+```
+$ ./bin/yagura
+yagura: config: YAGURA_GITHUB_TOKEN required (PAT or fine-grained token)
+```
+
+Yagura **refused to start without a GitHub Personal Access Token**. Of its 79 tools, three
+need GitHub or the network — `yagura_vulns`, `yagura_scorecard`, and the background scanner.
+The other 76 — all 29 code lenses, the registry, the dependency graph, the plan artifacts,
+the harness audits, the hook receiver — are entirely local. A product whose own design tenet
+is *"Local-first. Binds to 127.0.0.1 by default"* was requiring users to go create a GitHub
+credential before they could run a linter on a local directory.
+
+#### The proof was already inside the product
+
+`cmd/yagura-tray` — the "no terminal required" path the README recommends to non-technical
+users — contained this:
+
+```go
+if gh == "" {
+    fmt.Fprintln(os.Stderr, "(no -github-token / YAGURA_GITHUB_TOKEN — scanner/vulns will not refresh)")
+    gh = "tray-no-token-placeholder"   // fake credential to get past our own validation
+}
+```
+
+The GUI launcher **invented a fake credential** to defeat the daemon's own check. When a
+workaround for a requirement grows inside the product itself, the requirement is wrong.
+
+**And the workaround did not even work.** The daemon validates token *shape*, so
+`tray-no-token-placeholder` was rejected:
+
+```
+$ YAGURA_GITHUB_TOKEN=tray-no-token-placeholder ./bin/yagura
+yagura: config: YAGURA_GITHUB_TOKEN should start with 'ghp_', 'github_pat_', or 'gho_'
+```
+
+So for every user without a PAT, double-clicking `yagura-tray` started a daemon that
+immediately exited, then displayed a tray icon for a dead process. **The primary onboarding
+path advertised for non-technical users was broken**, by a self-imposed requirement, via a
+workaround the product itself rejected.
+
+#### Deleted — the requirement, and the workaround it spawned
+
+- `YAGURA_GITHUB_TOKEN` is now **optional**. A *malformed* token is still an error: an absent
+  credential is a choice, a broken one is a mistake, and the two deserve different answers.
+- The tray's fake-credential injection is gone. Env construction moved into a testable
+  `daemon.env` so the behaviour is pinned rather than trusted.
+
+#### Added — saying what is off, instead of refusing to run
+
+Starting without a token now logs a warning naming each unavailable capability:
+
+```
+level=WARN msg="running in local-only mode: no GitHub token configured"
+  disabled=["yagura_vulns (OSV lookups need repository metadata)",
+            "yagura_scorecard (OpenSSF Scorecard API)",
+            "background scanner (GitHub repository metadata refresh)"]
+  hint="set YAGURA_GITHUB_TOKEN to enable these; everything else works without it"
+```
+
+This matters more than it looks. **Silently degrading is worse than refusing to start**,
+because a user cannot tell "scanned and found nothing" from "never scanned". Naming the gap
+is what makes optional credentials honest rather than merely convenient.
+
+#### Verified end to end, with no token present
+
+- daemon starts; `/healthz` returns `ok`
+- `tools/list` → 79 tools
+- `yagura_register` succeeds; `yagura_lens` reads **349 files** from disk and returns findings
+
+#### A deliberate specification change
+
+`TestLoad_MissingToken` previously pinned "missing token is an error". That test encoded the
+requirement being deleted, so it was **replaced**, not quietly deleted, by
+`TestLoad_MissingTokenStartsInLocalOnlyMode`. `TestLoad_MultipleErrors` now uses a malformed
+token instead of an absent one. Both changes are spec changes made on purpose and recorded
+here — not tests bent to fit an implementation.
+
+#### Four consequences the tests caught, all fixed properly
+
+Removing the requirement broke several tests. Every one of them turned out to be a defect the
+requirement had been *hiding*, not a regression the change introduced:
+
+- **`pin-drift` genuinely needs a token**, and had been relying on the daemon refusing to
+  boot to enforce that. It now checks at the point of use and says so plainly: *"pin-drift
+  requires YAGURA_GITHUB_TOKEN: it verifies action pins against the GitHub API. Everything
+  else in yagura works without a token."* **The feature that needs a credential asks for it;
+  it does not make everyone pay up front.**
+- **A typo started a server.** `yagura definitely-not-a-subcommand` fell through to daemon
+  mode — an unknown subcommand silently booted the daemon. Nobody noticed because the
+  mandatory token made it exit immediately. Unknown subcommands now print
+  `unknown subcommand "…"` plus usage and exit 1. **A typo must not start a server.**
+- **The test suite was writing into the developer's real `$HOME`.** With startup working,
+  runs began creating `~/.yagura/state` and appending audit records there, which broke
+  `TestVerifyAudit_NoStateDirEnv` (it asserts the default state directory is empty — it had
+  only ever passed because no daemon could start during tests). Rather than patch the one
+  test, `TestMain` now points `HOME`/`USERPROFILE` at a temp directory for the whole package,
+  making the failure impossible by construction, with a test asserting the isolation is in
+  effect so nobody can quietly delete it.
+- **And that isolation cost 3× cycle time until it was done right.** `GOCACHE` defaults to a
+  path under `$HOME`, so moving `HOME` made the child `go build` in
+  `TestRecovery_AfterSIGKILL` miss the build cache entirely: **5.9 s → 19.6 s**. Resolving
+  `GOCACHE`/`GOMODCACHE`/`GOPATH` explicitly *before* swapping `HOME` keeps both properties —
+  the package now runs in **8.5 s**, slightly faster than before the isolation was added.
+  Trading away cycle time for hygiene would have undone v0.130.0.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 5 new tests
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- Cut by `make release VERSION=1.2.0`
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (unchanged — v1 compatibility holds)
+- Consecutive reproducible releases: 129 → **130** (v0.6 → v1.2.0)
+
+#### What's not yet
+
+- The other advertised entry points — the PWA install flow and the Claude Code plugin
+  marketplace path — have not been exercised end to end. This release checked the CLI and
+  tray paths only.
+- Environment-variable requirements are now covered by `docs/COMPATIBILITY.md`: an optional
+  variable stays optional, and making an optional one required is a major change.
+
 ## [v1.1.0] - 2026-08-18
 
 ### Theme — "The release pipeline was never reached, because two tags had the wrong letter"

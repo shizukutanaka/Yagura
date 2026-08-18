@@ -47,6 +47,15 @@ and `CGO_ENABLED=0`. Unbroken since v0.6.
 Binds `127.0.0.1`. Origin header validated on every route. Write endpoints require a bearer
 token when one is configured, and enforce body size limits.
 
+### Environment-variable requirements
+A variable that is **optional** in a v1 release stays optional. Making a required variable
+optional is backwards compatible (v1.2.0 did exactly that with `YAGURA_GITHUB_TOKEN`);
+making an optional one required is **not**, and needs a major bump — it breaks every
+working deployment at once, and does so at startup rather than at the call site.
+
+Where a credential is genuinely needed, the tool that needs it says so **when it is called**.
+The daemon does not demand credentials on behalf of features you are not using.
+
 ### CLI subcommand names
 Existing subcommands keep their names and their `--flag` meanings. Output *formatting* is not
 covered — see below.

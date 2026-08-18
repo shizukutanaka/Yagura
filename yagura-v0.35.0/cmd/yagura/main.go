@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "1.1.0"
+	version     = "1.2.0"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -115,6 +115,15 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		if isCLIVerb(args[0]) {
 			return runCLI(args[0], args[1:], stdout, stderr)
 		}
+		// 未知のサブコマンドは **daemon を起動しない**(v1.2.0)。
+		//
+		// それまでは switch にも isCLIVerb にも当たらない引数がそのまま run() へ落ち、
+		// `yagura definitel-not-a-subcommand` が黙って daemon を起動していた。
+		// v1.2.0 以前は token 必須のおかげで即エラー終了していたため誰も気づかなかった
+		// ——要求を消したら、その裏に隠れていた本当の挙動が出てきた形。
+		// タイプミスがサーバ起動になるのは驚き最小の原則に反する。
+		fmt.Fprintf(stderr, "yagura: unknown subcommand %q\n\n%s", args[0], usageText)
+		return 1
 	}
 	if err := run(); err != nil {
 		fmt.Fprintf(stderr, "yagura: %v\n", err)
@@ -357,6 +366,15 @@ func run() error {
 		"version", version,
 		"go", runtime.Version(),
 		"config", cfg.String())
+
+	// 資格情報が無くて動かない機能は **起動時に名指しする**(v1.2.0)。
+	// 黙って劣化した状態で動く方が起動拒否より質が悪い——利用者は
+	// 「スキャンして 0 件」と「スキャンしていない」を区別できないから。
+	if disabled := cfg.DisabledCapabilities(); len(disabled) > 0 {
+		logger.Warn("running in local-only mode: no GitHub token configured",
+			"disabled", disabled,
+			"hint", "set YAGURA_GITHUB_TOKEN to enable these; everything else works without it")
+	}
 
 	// 3. Metrics
 	mreg := metrics.NewRegistry()

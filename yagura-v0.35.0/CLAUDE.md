@@ -342,6 +342,25 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### 要らない資格情報を要求しない(★ v1.2.0)
+- v1.1.0 まで daemon は `YAGURA_GITHUB_TOKEN` **必須** で、無いと起動を拒否していた。
+  だが GitHub/ネットワークが要るのは 79 tool 中 3 つ(vulns / scorecard / scanner)だけ。
+  残り 76(29 レンズ・registry・graph・plan・harness 監査・hook 受信)は完全にローカル。
+  **「ローカル優先」を掲げる製品が、ローカルの lint のために PAT 発行を強制していた。**
+- **要求が間違っている証拠は製品の中に生えていた**: `cmd/yagura-tray` は token 不在時に
+  `"tray-no-token-placeholder"` という **偽の資格情報を注入** して自分の検証を迂回していた。
+  しかもその偽 token は書式検証に弾かれるので daemon は起動せず、README が薦める
+  「端末不要」の導線は PAT を持たない利用者にとって **壊れていた**。
+  → **要求を迂回する仕掛けが自製品内に生えたら、疑うのは迂回ではなく要求の方。**
+- 直し方: token を任意にし、迂回(偽 token 注入)も一緒に削除。
+  **無いのは選択、壊れているのは事故** ——空は許し、書式不正は今も error。
+- **黙って劣化させない**: 起動時に「今どの機能が動かないか」を名指しで WARN する。
+  利用者は「スキャンして 0 件」と「スキャンしていない」を区別できないので、
+  黙って縮退する方が起動拒否より質が悪い。
+- 仕様を意図的に変えた場合、**それを固定していた既存テストは「置き換える」**
+  (`TestLoad_MissingToken` → `TestLoad_MissingTokenStartsInLocalOnlyMode`)。
+  実装に合わせてテストを曲げたのではないことを、テストと CHANGELOG に明記すること。
+
 ### 機械が読む文字列を人間に打たせない(★ v1.1.0)
 - 実際の事故: タグ 3 本のうち 2 本(`ｖ1.78.0` / `ｖ1.79.0`)が **全角 'ｖ'(U+FF56)**
   で打たれており、`release.yml` の `tags: ['v*']`(ASCII)に一致せず、

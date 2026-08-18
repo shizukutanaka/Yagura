@@ -33,11 +33,21 @@ func TestLoad_Success(t *testing.T) {
 	}
 }
 
-func TestLoad_MissingToken(t *testing.T) {
+// v1.2.0 で **仕様を意図的に変えた**: token が無いことは error ではなくなった。
+// 旧 TestLoad_MissingToken(「無ければ error」を固定していた)はここで置き換わる。
+// 実装に合わせてテストを書き換えたのではなく、要求そのものを削除した結果である
+// ——理由は config.go の該当箇所と CHANGELOG v1.2.0 に書いてある。
+func TestLoad_MissingTokenStartsInLocalOnlyMode(t *testing.T) {
 	clearAll(t)
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "YAGURA_GITHUB_TOKEN") {
-		t.Errorf("expected token error, got %v", err)
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("a missing token must not prevent startup: %v", err)
+	}
+	if c.GitHubEnabled() {
+		t.Error("GitHubEnabled() must be false without a token")
+	}
+	if len(c.DisabledCapabilities()) == 0 {
+		t.Error("must name the capabilities that are unavailable")
 	}
 }
 
@@ -52,8 +62,9 @@ func TestLoad_InvalidTokenFormat(t *testing.T) {
 
 func TestLoad_MultipleErrors(t *testing.T) {
 	clearAll(t)
-	// Token も log level も間違える
-	t.Setenv("YAGURA_GITHUB_TOKEN", "")
+	// token の「形が壊れている」+ log level + addr の 3 つを同時に間違える
+	// (「token が無い」はもう error ではないので、壊れた token を使う)
+	t.Setenv("YAGURA_GITHUB_TOKEN", "not-a-token")
 	t.Setenv("YAGURA_LOG_LEVEL", "trace")
 	t.Setenv("YAGURA_ADDR", ":not-numeric")
 	_, err := Load()
@@ -434,5 +445,62 @@ func TestLoad_GitHubBaseInvalidScheme(t *testing.T) {
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "YAGURA_GITHUB_BASE") {
 		t.Errorf("expected github-base scheme error, got %v", err)
+	}
+}
+
+// GitHub token は **任意** であること(v1.2.0)。
+//
+// なぜ変えたか:
+//
+//	v1.1.0 まで、token が無いと daemon は起動を拒否していた。しかし 79 tool のうち
+//	GitHub / ネットワークを要するのは vulns・scorecard・scanner だけで、29 レンズも
+//	registry も graph も plan も harness 監査も、まったく必要としない。
+//	「ローカル優先」を掲げる製品が、ローカル作業のために PAT の発行を強制していた。
+//
+//	決定的な証拠は製品自身の中にあった: cmd/yagura-tray は token が無いとき
+//	"tray-no-token-placeholder" という **偽の資格情報を注入** して、この検証を
+//	すり抜けようとしていた。しかもその偽 token は looksLikeGitHubToken に弾かれるので
+//	daemon は結局起動せず、**README が薦める「端末不要」の導線が壊れていた**。
+//	要求を回避する仕掛けが製品内に生えたら、その要求の方が間違っている。
+func TestLoad_GitHubTokenIsOptional(t *testing.T) {
+	t.Setenv("YAGURA_GITHUB_TOKEN", "")
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("a missing GitHub token must not prevent startup: %v", err)
+	}
+	if cfg.GitHubToken != "" {
+		t.Errorf("want empty token, got %q", cfg.GitHubToken)
+	}
+	if cfg.GitHubEnabled() {
+		t.Error("GitHubEnabled() must be false without a token")
+	}
+	dis := cfg.DisabledCapabilities()
+	if len(dis) == 0 {
+		t.Error("the daemon must state which capabilities are disabled, not fail silently")
+	}
+}
+
+// 一方、**間違った** token は今も error。無いのは選択だが、壊れているのは事故。
+func TestLoad_MalformedGitHubTokenIsStillAnError(t *testing.T) {
+	t.Setenv("YAGURA_GITHUB_TOKEN", "tray-no-token-placeholder")
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	if _, err := Load(); err == nil {
+		t.Error("a malformed token must still be reported — it is a mistake, not a choice")
+	}
+}
+
+func TestLoad_ValidGitHubTokenEnablesCapabilities(t *testing.T) {
+	t.Setenv("YAGURA_GITHUB_TOKEN", "ghp_0123456789abcdef0123456789abcdef0123")
+	t.Setenv("YAGURA_STATE_DIR", t.TempDir())
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.GitHubEnabled() {
+		t.Error("GitHubEnabled() must be true with a well-formed token")
+	}
+	if len(cfg.DisabledCapabilities()) != 0 {
+		t.Errorf("nothing should be disabled, got %v", cfg.DisabledCapabilities())
 	}
 }
