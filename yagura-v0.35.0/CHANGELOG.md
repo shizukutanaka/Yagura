@@ -4,6 +4,98 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.130.0] - 2026-08-17
+
+### Theme — "Step 4: accelerate. The tests were waiting on constants nobody could change."
+
+v0.129.0 did step 2 (delete). This is **step 4 (accelerate cycle time)**, and — per the
+algorithm's insistence on order — it comes only after the deletion, not before.
+
+#### Question the requirement
+
+The `-race` suite is the release gate this project runs on every release, and it took
+**67.4 seconds**. Profiling it found the time was not spread across the codebase; it sat in
+three places, all the same mistake:
+
+| where | cost | why |
+|---|---|---|
+| `internal/secrets` | 7.4 s | every test encrypted at the production PBKDF2 count (600,000 iterations ≈ 0.3 s per call) |
+| `cmd/yagura-tray` | 3.0 s | `daemon.Stop` hardcoded a 3-second grace before force-kill, so the test waited 3 real seconds |
+| `cmd/yagura` | 5.9 s | a real `go build` plus a real SIGKILL |
+
+The first two share a root cause: **a production timing constant was baked in, so tests had
+no choice but to spend real time on it**. That is not a test problem; it is a design problem
+that happened to show up as slowness.
+
+#### Fixed — make the constants injectable, and pin the production values
+
+- **`internal/secrets`**: `Encrypt` now delegates to an **unexported** `encryptWithIter`, and
+  `Store` carries an unexported `iter` field. Tests use 1,000 iterations; production still
+  uses 600,000. The knob is deliberately unexported so no caller can pick a weak value for
+  speed. Because the iteration count was **already written into each file's header**, cheap
+  and production ciphertexts interoperate — no format change, and a test proves a
+  low-iteration file still decrypts through the ordinary `Decrypt`.
+- **`cmd/yagura-tray`**: `daemon.stopGrace` with `defaultStopGrace = 3s` preserved; the
+  force-kill test injects 200 ms and now asserts against **the injected grace** rather than
+  the literal 3 seconds it previously hardcoded.
+- **`cmd/yagura`'s 5.9 s stays.** It builds the real binary and kills it for real, which is
+  the point of a crash-recovery test. Deleting cost here would delete the evidence.
+
+**Security did not move, and is now better guarded than before.** Two of the three edits
+could have quietly weakened production defaults, so each is pinned by an explicit test:
+`TestDefaultIterations_StayAtOWASPRecommendation` (600,000 is the OWASP PBKDF2-SHA256
+recommendation), `TestEncrypt_AlwaysUsesProductionIterations` (the public API cannot reach
+the cheap path), `TestNewStore_UsesProductionIterations`, and `TestDaemon_StopGraceDefault`.
+Previously these values were implicit constants that any edit could have changed silently.
+
+#### Measured
+
+| suite | before | after |
+|---|---|---|
+| `go test ./...` | 15.07 s | **10.91 s** (−27.6%) |
+| `go test -race ./...` | 67.38 s | **40.74 s** (−39.6%) |
+| `internal/secrets` alone | 7.41 s | **0.71 s** (10.4×) |
+| `cmd/yagura-tray` alone | 3.76 s | **0.97 s** |
+
+#### Correction to v0.129.0
+
+v0.129.0's "What's not yet" said the CLI's lens commands were "the next deletion". Having
+now read them: **that was wrong, and the plan is withdrawn.** Each CLI lens command is ~23
+lines of which the lens call is one; the rest is flag parsing, a bespoke human-readable
+formatter, and a per-lens `--strict` condition — all genuinely different per lens, and none
+of it costs tokens the way the MCP surface did. Routing them through the dynamic registry
+would force type assertions on `any` and make the code worse to save nothing. The MCP
+consolidation was worth doing because 29 tool schemas were a fixed cost on every session;
+the CLI has no such cost. Deleting for symmetry rather than for a measured cost is not the
+algorithm, it is cargo-culting it.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green (exit 0), 4 new pinning tests
+- `make verify` byte-for-byte reproducible
+  (`6281d68513b1853ed022c2fa2814fda0454524b82fe7c1e2c1646d098be4d128`); `go.sum` absent
+- `dead-code` run over `internal/mcp` after v0.129.0's deletion: **0 dead declarations** —
+  the deletion left nothing stranded
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (both unchanged)
+- Consecutive reproducible releases: 125 → **126** (v0.6 → v0.130.0)
+
+#### What's not yet
+
+- **Step 5 (automate) has not started.** It is last for a reason.
+- The remaining 40.7 s is now dominated by the race detector itself plus one real build and
+  one real SIGKILL. Further gains would mean deleting evidence, not waste.
+- 79 tools is still a lot; which of them anybody actually calls remains unanswered, and this
+  repository's audit log only contains its own dogfooding, so it cannot answer it honestly.
+
+#### Sources
+
+- Isaacson, *Elon Musk* (2023) — the five-step algorithm, and its ordering constraint:
+  accelerate comes fourth, after delete and simplify.
+- OWASP *Password Storage Cheat Sheet* — PBKDF2-HMAC-SHA256 at 600,000 iterations.
+
 ## [v0.129.0] - 2026-08-17
 
 ### Theme — "Delete 29 tools. The best part is no part."

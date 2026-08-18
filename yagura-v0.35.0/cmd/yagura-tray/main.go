@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	version = "0.129.0" // updated together with main yagura version
+	version = "0.130.0" // updated together with main yagura version
 )
 
 func main() {
@@ -127,7 +127,14 @@ type daemon struct {
 	githubToken string
 	mcpToken    string
 	cmd         *exec.Cmd
+	// stopGrace は SIGTERM 後に force kill するまでの猶予。0 は既定
+	// (defaultStopGrace)。テストが実時間を待たずに force-kill 経路を通すために在る
+	// ——本番の既定値は TestDaemon_StopGraceDefault が固定する。
+	stopGrace time.Duration
 }
+
+// defaultStopGrace は graceful stop を待つ既定時間。
+const defaultStopGrace = 3 * time.Second
 
 func (d *daemon) Start() error {
 	d.cmd = exec.Command(d.path)
@@ -157,10 +164,18 @@ func (d *daemon) Stop() {
 	go func() { done <- d.cmd.Wait() }()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(d.grace()):
 		d.cmd.Process.Kill()
 		<-done
 	}
+}
+
+// grace は force kill までの猶予を返す(0 なら本番既定)。
+func (d *daemon) grace() time.Duration {
+	if d.stopGrace > 0 {
+		return d.stopGrace
+	}
+	return defaultStopGrace
 }
 
 // resolveDaemonPath finds the yagura daemon binary.

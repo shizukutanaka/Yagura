@@ -4,17 +4,18 @@
 // Windows system tray implementation using user32.dll + shell32.dll directly.
 //
 // Why no external deps:
-//   getlantern/systray works but pulls cgo + multi-deps. yagura's ADR-0001
-//   forbids external Go modules. Windows tray is achievable with raw
-//   syscalls; the message loop is ~150 lines.
+//
+//	getlantern/systray works but pulls cgo + multi-deps. yagura's ADR-0001
+//	forbids external Go modules. Windows tray is achievable with raw
+//	syscalls; the message loop is ~150 lines.
 //
 // Architecture:
-//   1. RegisterClassExW + CreateWindowExW → invisible message-only window
-//   2. Shell_NotifyIconW (NIM_ADD) → tray icon
-//   3. WndProc receives WM_USER+1 messages on tray events
-//   4. Right-click → CreatePopupMenu + TrackPopupMenu → command dispatch
-//   5. Left-click (single) → open dashboard
-//   6. WM_COMMAND from menu → handlers (open / restart / quit)
+//  1. RegisterClassExW + CreateWindowExW → invisible message-only window
+//  2. Shell_NotifyIconW (NIM_ADD) → tray icon
+//  3. WndProc receives WM_USER+1 messages on tray events
+//  4. Right-click → CreatePopupMenu + TrackPopupMenu → command dispatch
+//  5. Left-click (single) → open dashboard
+//  6. WM_COMMAND from menu → handlers (open / restart / quit)
 //
 // Limitations (v0.32 — kept intentionally simple):
 //   - Icon is generic system icon (IDI_APPLICATION) — no custom .ico
@@ -115,22 +116,22 @@ var (
 	shell32  = syscall.NewLazyDLL("shell32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
 
-	procRegisterClassExW   = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW    = user32.NewProc("CreateWindowExW")
-	procDefWindowProcW     = user32.NewProc("DefWindowProcW")
-	procDestroyWindow      = user32.NewProc("DestroyWindow")
-	procGetMessageW        = user32.NewProc("GetMessageW")
-	procTranslateMessage   = user32.NewProc("TranslateMessage")
-	procDispatchMessageW   = user32.NewProc("DispatchMessageW")
-	procPostQuitMessage    = user32.NewProc("PostQuitMessage")
-	procLoadIconW          = user32.NewProc("LoadIconW")
-	procGetCursorPos       = user32.NewProc("GetCursorPos")
-	procCreatePopupMenu    = user32.NewProc("CreatePopupMenu")
-	procAppendMenuW        = user32.NewProc("AppendMenuW")
-	procDestroyMenu        = user32.NewProc("DestroyMenu")
-	procTrackPopupMenu     = user32.NewProc("TrackPopupMenu")
+	procRegisterClassExW    = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW     = user32.NewProc("CreateWindowExW")
+	procDefWindowProcW      = user32.NewProc("DefWindowProcW")
+	procDestroyWindow       = user32.NewProc("DestroyWindow")
+	procGetMessageW         = user32.NewProc("GetMessageW")
+	procTranslateMessage    = user32.NewProc("TranslateMessage")
+	procDispatchMessageW    = user32.NewProc("DispatchMessageW")
+	procPostQuitMessage     = user32.NewProc("PostQuitMessage")
+	procLoadIconW           = user32.NewProc("LoadIconW")
+	procGetCursorPos        = user32.NewProc("GetCursorPos")
+	procCreatePopupMenu     = user32.NewProc("CreatePopupMenu")
+	procAppendMenuW         = user32.NewProc("AppendMenuW")
+	procDestroyMenu         = user32.NewProc("DestroyMenu")
+	procTrackPopupMenu      = user32.NewProc("TrackPopupMenu")
 	procSetForegroundWindow = user32.NewProc("SetForegroundWindow")
-	procGetModuleHandleW   = kernel32.NewProc("GetModuleHandleW")
+	procGetModuleHandleW    = kernel32.NewProc("GetModuleHandleW")
 
 	procShellNotifyIconW = shell32.NewProc("Shell_NotifyIconW")
 

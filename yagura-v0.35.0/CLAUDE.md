@@ -342,6 +342,30 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### 本番のタイミング定数は注入可能にする(★ v0.130.0、Musk ④ accelerate)
+- `-race` スイートは毎リリースのゲートなのに **67.4 秒** かかっていた。原因は分散して
+  おらず 3 箇所に集中——うち 2 つは同じ設計上の誤り: **本番のタイミング定数が
+  ハードコードされていて、テストが実時間を待つしかなかった**。
+  - `internal/secrets` 7.4s = 全テストが本番 PBKDF2(60 万回 ≒ 0.3 秒/呼び出し)を実行
+  - `cmd/yagura-tray` 3.0s = `daemon.Stop` の force-kill 猶予 3 秒がベタ書き
+- 直し方は 1 つ: **定数を注入可能にし、本番既定値はテストで固定する**。
+  - `Encrypt` は unexported な `encryptWithIter` に委譲(公開面から安い経路を選べない)。
+    反復回数は元々ファイル header に刻まれているので **形式変更なしで相互運用できる**。
+  - `Store.iter` も unexported。`daemon.stopGrace` は 0 で本番既定にフォールバック。
+- **速くする改変が本番の安全側の値を黙って弱めうる場合、必ず固定テストを置くこと**:
+  `TestDefaultIterations_StayAtOWASPRecommendation` / `TestEncrypt_AlwaysUsesProductionIterations` /
+  `TestNewStore_UsesProductionIterations` / `TestDaemon_StopGraceDefault`。
+  以前は「暗黙の定数」で、誰かが黙って変えても気づけなかった——今の方が安全。
+- **テストの assertion も本番定数をベタ書きしない**。force-kill テストは「3 秒」ではなく
+  **注入した猶予**に対して assert する(検証したいのは数値ではなく挙動)。
+- 実測: race 67.4→**40.7 秒(-39.6%)**、plain 15.1→**10.9 秒**、secrets 7.4→**0.71 秒**。
+- **残りは削らない**: `TestRecovery_AfterSIGKILL` の 5.9 秒は実バイナリの build と実 SIGKILL。
+  ここを削るのは無駄ではなく **証拠** を削ることになる。
+- v0.129.0 の予告の撤回: 「次は CLI のレンズ削除」は **誤りだったので取り下げ**。
+  CLI の各レンズ関数 23 行のうちレンズ呼び出しは 1 行で、残りは flag・専用の人間向け
+  整形・レンズ固有の `--strict` 条件——どれも本当にレンズごとに違い、しかも MCP と違い
+  **トークン費用が無い**。対称性のために消すのはアルゴリズムではなく物真似。
+
 ### 削除は機能である —— Musk アルゴリズムの適用(★ v0.129.0)
 - v0.113→v0.128 の 16 リリースは **一度も何も削除しなかった**。`lensoverlap`(v0.100)は
   まさに「淘汰の根拠」を出すために作られたのに、その根拠で退役したレンズは 0 件。
