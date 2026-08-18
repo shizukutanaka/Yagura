@@ -1126,7 +1126,7 @@ a:focus-visible {
   {{end}}
   </main>
 
-  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.130.0</footer>
+  <footer role="contentinfo">櫓 Yagura — Portfolio Orchestrator · v0.131.0</footer>
 </div>
 <script nonce="{{.Nonce}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/dashboard/sw.js',{scope:'/dashboard'}).catch(function(){});}</script>
 <script nonce="{{.Nonce}}">(function(){var b=document.getElementById('theme-toggle');if(!b)return;b.addEventListener('click',function(){var cur=document.documentElement.getAttribute('data-theme');var osDark=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;var next=cur==='dark'?'light':cur==='light'?'dark':osDark?'light':'dark';document.documentElement.setAttribute('data-theme',next);try{localStorage.setItem('yagura-theme',next);}catch(e){}});})();</script>

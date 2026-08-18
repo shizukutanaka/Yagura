@@ -4,6 +4,102 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v0.131.0] - 2026-08-17
+
+### Theme — "Step 5: automate — last, and only the part that stopped needing judgment"
+
+The final step of the algorithm, and the one whose *position* carries the whole lesson.
+Releases v0.113 → v0.130 — **eighteen of them** — ran this checklist by hand. Automating it
+in v0.113 would have been faster every single time, and would have been a mistake: the thing
+being automated still had 29 tools that should not have existed and a test suite waiting on
+constants nobody could change. **Automating a process cements it.** Deletion and
+simplification had to come first, or this script would now be efficiently producing the
+wrong release.
+
+#### Added — `make release VERSION=x.y.z`
+
+`scripts/release.sh` performs the mechanical half of the recipe:
+
+- rewrites the version at **all four** code sites
+- regenerates `docs/MCP_TOOLS.md`
+- runs the gates: `go vet`, gofmt, `go test -race`, `make verify`
+- builds `yagura-vX.Y.Z-source.tar.gz` and deletes the previous tarball
+
+It refuses to run, with a specific reason, when: the version is malformed, not newer than
+the current one, or already current; `CHANGELOG.md` has no entry for it; `README.md` or
+`CLAUDE.md` still describe the old version; a version site has drifted; touched files are
+not gofmt-clean; or any gate fails.
+
+#### What it deliberately does **not** do
+
+**Write the CHANGELOG, commit, tag, or push.**
+
+The CHANGELOG is where a release says what it learned — half of this project's releases
+exist to record that a previous release was wrong. A generated entry would be filler, so the
+script *requires* the entry to already exist and stops if it does not: "the entry is the
+release, the tarball is only its packaging." Commit and push are outward-facing and hard to
+walk back, so they stay a judgment call.
+
+Automation removes toil, not judgment. A script that also committed and pushed would have
+turned each of the last eighteen releases into an unreviewable event.
+
+#### The gofmt subtlety it encodes
+
+The script checks gofmt on **only the files the release touched**, not the whole repository.
+This repo carries pre-existing alignment drift in ~30 untouched files; a naive `gofmt -l .`
+gate would either fail every release or tempt a sweeping reformat that buries the real diff
+— which happened once in this project's history. The narrow check is the lesson made
+executable.
+
+#### Added — a guard for the automation's own assumption
+
+`TestVersionSites_AreExactlyTheKnownSet` walks the repository and asserts that the set of
+files containing the current version is exactly the four code sites plus the two prose docs.
+Automated rewriting is only correct while that set is fixed, so the moment a fifth place
+starts stating the version, the test fails and names both places to update. Without it,
+`make release` would silently leave the new site stale — exactly the failure mode the
+automation is supposed to eliminate.
+
+#### Proof
+
+**This release was cut by the script.** Version bumps, doc regeneration, all four gates, and
+packaging for v0.131.0 were performed by `make release VERSION=0.131.0`, not by hand.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- All six refusal paths exercised (missing/malformed/stale/equal version, missing CHANGELOG
+  entry, un-updated prose)
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (both unchanged)
+- Consecutive reproducible releases: 126 → **127** (v0.6 → v0.131.0)
+
+#### The algorithm, closed
+
+| step | release | result |
+|---|---|---|
+| ① question every requirement | v0.129.0 | found 29 tools demanding source through the model's context |
+| ② delete | v0.129.0 | 107 → 79 tools; handshake −23%; whole-repo read ~824,000 → ~850 tokens |
+| ③ simplify | v0.129.0 | caught itself re-bloating the replacement, 3,575 → 1,611 bytes |
+| ④ accelerate | v0.130.0 | race suite 67.4s → 40.7s (−39.6%) |
+| ⑤ automate | v0.131.0 | `make release`, with judgment deliberately left out |
+
+#### What's not yet
+
+- 79 tools remains unjustified by usage data. This repository's audit log contains only its
+  own dogfooding, so the honest answer is that the question is still open, not that the
+  count is right.
+- The release script does not sign or publish artifacts; GitHub release creation stays
+  manual.
+
+#### Sources
+
+- Isaacson, *Elon Musk* (2023) — "automate" is step five, and the order is the argument:
+  automating a process before deleting and simplifying it makes the wrong thing efficient.
+
 ## [v0.130.0] - 2026-08-17
 
 ### Theme — "Step 4: accelerate. The tests were waiting on constants nobody could change."

@@ -342,6 +342,25 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### 自動化は最後(★ v0.131.0、Musk ⑤ automate)
+- `make release VERSION=x.y.z`(`scripts/release.sh`)がリリース手順の **機械的な半分**
+  を実行する: 版番号 4 箇所の書換 / MCP ドキュメント再生成 / 全 gate(vet・gofmt・
+  race・verify)/ tarball 作成と前版削除。
+- **なぜ v0.113 でやらなかったのが正しいか**: 自動化は手順を固定する。18 リリース
+  分の手作業は無駄に見えるが、当時自動化していたら「存在すべきでない 29 tool を配る
+  手順」を効率よく回し続けていた。**② 削除と ③ 単純化の後にしか ⑤ は来ない。**
+- **やらないことを決めるのが設計**: CHANGELOG 執筆 / commit / push / tag はしない。
+  CHANGELOG は「今回何を学んだか」を書く場所(このリポジトリの半分の release は
+  前の release の誤りを記録するために在る)で、機械に書かせると埋め草になる。
+  よって script は **entry が既に在ることを要求して落ちる**。
+  **自動化が消してよいのは toil であって judgment ではない。**
+- gofmt gate は **今回触ったファイルだけ** を見る。repo 全体には以前からの整形ゆれが
+  あり、`gofmt -l .` にすると毎回落ちるか、無関係な一括整形で差分が埋もれる
+  (過去に一度やらかしている)。教訓をスクリプトに焼いた形。
+- **自動化の前提自体を守るテスト**: `TestVersionSites_AreExactlyTheKnownSet` が
+  「版番号を含むファイル集合 = コード 4 + 散文 2」を固定する。5 つ目が増えた瞬間に
+  落ちるので、`make release` が新しい箇所を放置したまま緑になることがない。
+
 ### 本番のタイミング定数は注入可能にする(★ v0.130.0、Musk ④ accelerate)
 - `-race` スイートは毎リリースのゲートなのに **67.4 秒** かかっていた。原因は分散して
   おらず 3 箇所に集中——うち 2 つは同じ設計上の誤り: **本番のタイミング定数が

@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v0.130.0** — 79 MCP tools, 96 internal packages, 24 computational sensors. Applying Musk's algorithm in order: v0.129.0 **deleted 29 tools** (the `tools/list` handshake fell 23%, and a whole-repository quality read went from ~824,000 tokens to ~850). This release is **step 4, accelerate**: three production timing constants were hardcoded, so the test suite waited on them in real time. Injecting them — with the production defaults now pinned by explicit tests — cut the race suite **67.4s → 40.7s (−39.6%)**. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v0.131.0** — 79 MCP tools, 96 internal packages, 24 computational sensors. Musk's algorithm applied in order across three releases: **delete** (v0.129.0 — 29 tools removed, handshake −23%, a whole-repository quality read went from ~824,000 tokens to ~850), **accelerate** (v0.130.0 — race suite −39.6%), and now **automate** (`make release`). Automation came last on purpose: doing it eighteen releases earlier would only have made the wrong release efficiently. It rewrites versions and runs every gate, but deliberately will not write the CHANGELOG, commit, or push — it removes toil, not judgment. Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -254,7 +254,7 @@ make verify
 # → ✓ reproducible: byte-for-byte identical (SHA256: ...)
 ```
 
-126 consecutive releases (v0.6 → v0.130.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
+127 consecutive releases (v0.6 → v0.131.0) have shipped with identical SHA-256 across independent builds on the same Go version, `-trimpath`, `-buildvcs=false`, and `CGO_ENABLED=0`.
 
 Released binaries are accompanied by `SHA256SUMS`. Verify before running:
 
