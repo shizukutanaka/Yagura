@@ -4,6 +4,91 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.0.0] - 2026-08-17
+
+### Theme — "Ship it"
+
+Yagura has shipped **127 consecutive reproducible releases** and has been used to audit its
+own portfolio throughout. What kept it at 0.x was not a missing feature; it was the absence
+of a decision. This release makes the decision.
+
+1.0 is not a claim that the software is finished. It is a specific, narrower promise: **the
+public surface stops moving**. That promise is only worth making now because v0.129.0–
+v0.131.0 removed the parts that should never have been in it.
+
+#### Why now, and not earlier or later
+
+The right moment to freeze an interface is **immediately after** removing what does not
+belong in it. v0.129.0 deleted 29 tools that forced callers to push entire source files
+through a model's context. Had 1.0 been declared before that, those 29 would now be frozen
+in, and every v1 client would still be paying for them. Had it been delayed, the 79 tools
+that survived would keep drifting with no promise attached.
+
+#### Added — `docs/COMPATIBILITY.md`, and tests that enforce it
+
+The contract states what is stable (tool names, input compatibility, the scanner-only trust
+base, zero dependencies, reproducible builds, loopback defaults, CLI subcommand names, state
+and audit formats) and — just as explicitly — what is not (internal packages, human-readable
+CLI output, prose inside JSON responses, finding counts and scores, dashboard markup).
+
+Two are worth calling out because they are the ones a user would otherwise assume:
+
+- **Scores and thresholds are not frozen.** Several releases exist *because* an earlier
+  number was wrong. Freezing scores would mean preserving known errors for compatibility, so
+  v1 explicitly refuses to; corrections ship with old and new numbers side by side.
+- **Prose inside responses is not an API.** `note` and `summary` fields exist to be read.
+  Their presence is stable; their wording is not.
+
+`TestAPIStability_V1ToolsAreAllStillRegistered` holds all 79 names and fails if any is
+removed or renamed. Additions are allowed and reported by a companion test, so growth is
+visible but never silent. The compatibility document says outright: **if a promise is not
+enforced by a test, treat it as an intention, not a guarantee.**
+
+#### The state at 1.0
+
+| | |
+|---|---|
+| MCP tools | 79 |
+| Internal packages | 96 |
+| Code quality lenses | 29, behind one tool |
+| External Go dependencies | 0 |
+| Consecutive reproducible releases | **128** (v0.6 → v1.0.0) |
+| `tools/list` handshake | 46,665 bytes |
+| `go test -race ./...` | ~41 s |
+
+#### Honest limitations carried into 1.0
+
+These are unchanged by the version number and are stated so nobody infers otherwise:
+
+- **The defect-prediction work is single-repository.** Every measured result — churn,
+  ownership, process risk, walk-forward, change coupling — comes from this repository's own
+  ~150-commit history. v0.127.0 reported a null result it could not escape; v0.128.0
+  reported that mined coupling barely beats naming the busiest files. Those results stand.
+- **79 tools is not justified by usage data.** The audit log contains only this project's own
+  dogfooding, so the honest position is that the question is open.
+- **SZZ stops at stage 1.** Fix commits are identified by message; the blame trace to
+  bug-introducing commits is not implemented.
+- **Product metrics are reported, not scored**, following Rahman & Devanbu and
+  Majumder et al. That is a deliberate choice, not an oversight.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- Cut by `make release VERSION=1.0.0` — the automation from v0.131.0 producing the release
+  it was built for
+
+#### The five steps, complete
+
+| step | release |
+|---|---|
+| ① question every requirement | v0.129.0 — 29 tools demanded source through the model's context |
+| ② delete | v0.129.0 — 107 → 79 tools; handshake −23%; whole-repo read ~824,000 → ~850 tokens |
+| ③ simplify | v0.129.0 — caught its own replacement re-bloating, 3,575 → 1,611 bytes |
+| ④ accelerate | v0.130.0 — race suite 67.4 s → 40.7 s |
+| ⑤ automate | v0.131.0 — `make release`, with judgment deliberately excluded |
+| ship | **v1.0.0** |
+
 ## [v0.131.0] - 2026-08-17
 
 ### Theme — "Step 5: automate — last, and only the part that stopped needing judgment"

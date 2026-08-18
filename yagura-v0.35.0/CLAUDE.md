@@ -342,6 +342,24 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### v1.0.0 — 約束はテストで守る(★ v1.0.0)
+- 1.0 は「完成した」という主張ではなく **「公開面をもう動かさない」という限定的な約束**。
+  この約束が今できるのは、v0.129.0 で公開面から **不要なものを先に消した** から。
+  1.0 を先に切っていたら、29 個の「ソースを context に流させる tool」が永久に凍結されていた。
+- `docs/COMPATIBILITY.md` が契約。**中心規則: テストで守られていない約束は
+  guarantee ではなく intention**。
+- 守るもの: MCP tool 名 79 個 / 入力の後方互換 / sensor は scanner だけが書ける
+  trust base / zero-dep / reproducible build / loopback 既定 / CLI サブコマンド名 /
+  state・audit 形式。
+- **守らないものを明示するのが要点**: internal パッケージ / CLI の人間向け出力 /
+  JSON 内の散文(`note`・`summary` は読むためのもので match するためのものではない)/
+  **スコアとしきい値**(このリポジトリの release の半分は「前の数字が誤りだった」と
+  記録するために在る。スコアを凍結することは既知の誤りを互換性のために保存すること)。
+- `TestAPIStability_V1ToolsAreAllStillRegistered` が 79 名を保持し、削除・改名で落ちる。
+  **追加は許す**(集合の増加は互換を壊さない)が、companion test が log で可視化する。
+- **破壊的変更をするときは major を上げ、同じ commit で `v1ToolNames` を更新する。**
+  この手作業は省略しないこと——「今あなたは約束を破っている」と自覚させるために在る。
+
 ### 自動化は最後(★ v0.131.0、Musk ⑤ automate)
 - `make release VERSION=x.y.z`(`scripts/release.sh`)がリリース手順の **機械的な半分**
   を実行する: 版番号 4 箇所の書換 / MCP ドキュメント再生成 / 全 gate(vet・gofmt・
