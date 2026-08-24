@@ -37,6 +37,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -52,6 +53,9 @@ var versionSites = []string{
 	"cmd/yagura/main.go",
 	"cmd/yagura/main_test.go",
 	"internal/dashboard/dashboard.go",
+	// v1.2.2 で追加。JSON なので下の「自分の版を名乗る 3 形」には引っかからず、
+	// "0.35.0" のまま ~130 リリース放置されていた——このリストの方が最後の砦。
+	".claude-plugin/plugin.json",
 }
 
 var changelogHeading = regexp.MustCompile(`(?m)^## \[v(\d+\.\d+\.\d+)\]`)
@@ -211,5 +215,32 @@ func TestStripGoComments_KeepsStringsDropsComments(t *testing.T) {
 	got := stripGoComments("// note 1.2.3\nx := \"1.2.3\" // trailing 1.2.3\n/* block 1.2.3 */\ny := `raw 1.2.3`\n")
 	if strings.Count(got, "1.2.3") != 2 {
 		t.Errorf("want the two string literals kept and the three comments dropped, got %q", got)
+	}
+}
+
+// plugin manifest の version は **プロダクトの版と一致** すること(v1.2.2)。
+//
+// Go の宣言ではないので stripGoComments 系の走査には掛からない。実際 v1.2.1 まで
+// "0.35.0" のままで、プラグイン経由の利用者には ~130 リリース前の版が見えていた。
+// 「新しい書き方の版番号は自動検出できない」と versionsites の doc に書いたとおりの
+// 抜けが実在したので、明示的に固定する。
+func TestPluginManifest_VersionMatchesProduct(t *testing.T) {
+	if version == "" || version == "dev" {
+		t.Skipf("version is %q (ldflags-injected build)", version)
+	}
+	b, err := os.ReadFile("../../.claude-plugin/plugin.json")
+	if err != nil {
+		t.Fatalf("read plugin manifest: %v", err)
+	}
+	var m struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("parse plugin manifest: %v", err)
+	}
+	if m.Version != version {
+		t.Errorf("plugin.json declares version %q but the product is %s — plugin users would "+
+			"see the wrong version. Add it to SITES in scripts/release.sh if it is missing there.",
+			m.Version, version)
 	}
 }

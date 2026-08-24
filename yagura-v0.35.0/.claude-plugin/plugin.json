@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "yagura",
+  "displayName": "Yagura",
+  "version": "1.2.2",
+  "description": "Zero-dependency Go MCP server for orchestrating a solo-dev project portfolio: registry, security sensors (SBOM/vulns/secrets/GHA/pin-drift), harness artifacts, composite risk reasoning, and .claude/ artifact auditing.",
+  "author": {
+    "name": "shizukutanaka",
+    "url": "https://github.com/shizukutanaka/yagura"
+  },
+  "homepage": "https://github.com/shizukutanaka/yagura",
+  "repository": "https://github.com/shizukutanaka/yagura",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "portfolio",
+    "orchestrator",
+    "security",
+    "sbom",
+    "vulnerability",
+    "harness",
+    "risk-reasoning"
+  ],
+  "skills": ["./.claude/skills/"],
+  "agents": ["./.claude/agents/yagura-reviewer.md"],
+  "mcpServers": {
+    "yagura": {
+      "type": "http",
+      "url": "http://127.0.0.1:8090/mcp"
+    }
+  }
+}

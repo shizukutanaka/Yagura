@@ -342,6 +342,18 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### 「既知の限界」と書いても限界は消えない(★ v1.2.2)
+- `.claude-plugin/plugin.json` は `"version": "0.35.0"` のまま **~130 リリース** 放置され、
+  プラグイン経由の利用者には 130 版前が見えていた。
+- 原因は versionsites ガードが **Go の 3 形**(`version = "X.Y.Z"` / `yagura X.Y.Z` /
+  `· vX.Y.Z`)しか見ないこと。JSON の `"version": "..."` はどれにも当たらない。
+- **v1.1.0 の時点でこの抜けは doc コメントに明記してあった**——「4 つ目の新しい書き方は
+  検出できない」。それでも起きた。**限界を書き留めることは、限界を塞ぐことではない。**
+  書いたら塞ぐか、塞げないなら明示リスト(versionSites / SITES)に載せること。
+- 版番号を持つ新しいファイル形式を足したら、**必ず** `scripts/release.sh` の SITES と
+  `versionSites` の両方に追加し、専用テストで固定する
+  (`TestPluginManifest_VersionMatchesProduct`)。
+
 ### 部分的なガードは「守られている」という嘘をつく(★ v1.2.1)
 - README 本文に「93 MCP tools」が **3 箇所** 残っていた(実際は 79)。ヘッダ行だけを
   検査する旧ガードが通り続けたため、図と散文は 93 のまま現実が 107 → 79 と二度

@@ -40,6 +40,9 @@ SITES=(
 	"cmd/yagura/main_test.go"
 	"cmd/yagura-tray/main.go"
 	"internal/dashboard/dashboard.go"
+	# v1.2.2: plugin manifest。ここに無かったため "0.35.0" のまま ~130 リリース
+	# 放置され、プラグイン利用者には 0.35.0 が見えていた。
+	".claude-plugin/plugin.json"
 )
 
 CURRENT="$(sed -nE 's/^\tversion[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' cmd/yagura/main.go | head -1)"

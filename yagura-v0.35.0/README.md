@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v1.2.1** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **131 consecutive reproducible releases**. A claims audit of this README found the prose still describing a product 28 tools bigger and 3 MB smaller than the one that ships: a stale tool count (93, three places) survived where the header guard never looked, "~9 MB" was 12.5 MB, and "24 computational sensors" traced to nothing in the codebase — an invented number, now replaced by the three named sensor sources. Every `N MCP tools` mention is now guard-tested against the live registry, not just the header. The public surface stays frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v1.2.2** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **132 consecutive reproducible releases**. Every advertised entry point has now been exercised end to end — CLI, tray, PWA, plugin manifest, cross-compiled binaries, checksums and SLSA3 provenance. The audit found the Claude Code plugin manifest still declaring **v0.35.0** after ~130 releases, because it is JSON and the version guard only understood Go-shaped declarations — the exact blind spot that guard's own documentation had predicted. It is now a tracked version site with its own test. The public surface stays frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

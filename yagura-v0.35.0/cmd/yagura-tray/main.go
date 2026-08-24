@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	version = "1.2.1" // updated together with main yagura version
+	version = "1.2.2" // updated together with main yagura version
 )
 
 func main() {
@@ -71,7 +71,7 @@ func main() {
 
 	// GitHub token: -github-token flag overrides env. Absent is fine.
 	//
-	// v1.2.1 まではここで "tray-no-token-placeholder" という **偽の資格情報** を
+	// v1.2.2 まではここで "tray-no-token-placeholder" という **偽の資格情報** を
 	// 注入していた。daemon が token 必須だったのを迂回するためだが、その偽 token は
 	// daemon 自身の書式検証に弾かれるので **結局起動しなかった** ——README が薦める
 	// 「端末不要」の導線が、PAT を持たない利用者には壊れていた。
@@ -149,7 +149,7 @@ func (d *daemon) Start() error {
 
 // env は子 daemon に渡す環境変数を組み立てる。
 //
-// **資格情報が無いときは変数を渡さない**。v1.2.1 まではここに
+// **資格情報が無いときは変数を渡さない**。v1.2.2 まではここに
 // "tray-no-token-placeholder" という偽の token を注入していた——daemon が token 必須
 // だったのを迂回するためだが、その偽 token は daemon 自身の書式検証に弾かれるので
 // 結局起動せず、README が薦める「端末不要」の導線が壊れていた。daemon 側で token を

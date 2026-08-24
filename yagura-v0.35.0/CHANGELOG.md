@@ -4,6 +4,71 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.2.2] - 2026-08-24
+
+### Theme — "The plugin manifest had been shipping v0.35.0 for 130 releases"
+
+v1.2.0 listed two advertised entry points as unverified: the PWA install flow and the
+Claude Code plugin. Both were exercised end to end. One holds; the other was shipping a
+version from ~130 releases ago.
+
+#### The PWA claim holds
+
+`/dashboard`, `/dashboard/manifest.webmanifest` and `/dashboard/sw.js` all return 200 and
+serve a real manifest. (An initial check against root paths returned 404 — that was a
+wrong-path guess on my part, not a defect: the assets are correctly scoped under
+`/dashboard`.) `.well-known/mcp` also returns 200. `yagura plugin-audit` scores the manifest
+**100/100**, and every path it references — the skill directory and the reviewer agent —
+exists.
+
+#### The defect the audit found
+
+```json
+{ "name": "yagura", "version": "0.35.0", ... }
+```
+
+`.claude-plugin/plugin.json` declared **0.35.0** while the product was at 1.2.1. Anyone
+installing through the marketplace path the README advertises would see a version from
+roughly 130 releases ago.
+
+**This is the exact blind spot the guard's own documentation predicted.** v1.1.0's
+version-site test says, in its header: *"a fifth site written in some new shape would not be
+caught."* The manifest is JSON, so it matches none of the three Go-shaped patterns
+(`version = "X.Y.Z"`, the `yagura X.Y.Z` banner, the `· vX.Y.Z` footer) the scan looks for.
+A documented limitation is still a limitation; writing it down did not stop it happening.
+
+#### Fixed
+
+- `.claude-plugin/plugin.json` synced, and added to `SITES` in `scripts/release.sh` so
+  `make release` rewrites it like every other version site from now on.
+- `TestPluginManifest_VersionMatchesProduct` parses the manifest and compares against the
+  running version. Verified falsifiable: restoring `0.35.0` fails it with the exact message
+  a maintainer would need; syncing passes.
+- Added to `versionSites` in the guard, whose explicit list is the backstop for shapes the
+  pattern scan cannot see.
+
+`marketplace.json` carries no version field, so nothing to sync there.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 1 new guard test
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- `yagura plugin-audit` → score 100, 0 flagged
+- Cut by `make release VERSION=1.2.2` (now rewriting **5** version sites)
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (unchanged — v1 compatibility holds)
+- Consecutive reproducible releases: 131 → **132** (v0.6 → v1.2.2)
+
+#### What's not yet
+
+- Both remaining entry points from v1.2.0's list are now verified. The advertised surface —
+  CLI, tray, PWA, plugin, pre-built binaries, checksums, provenance — has been checked end
+  to end, with one exception: **the release workflow has still never actually run**, because
+  publishing requires pushing a tag, and the tag-numbering conflict (existing tags say
+  1.73–1.79) is a maintainer decision this session deliberately does not make.
+
 ## [v1.2.1] - 2026-08-24
 
 ### Theme — "The README was still describing a product 28 tools bigger and 3 MB smaller"
