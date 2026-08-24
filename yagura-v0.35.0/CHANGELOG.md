@@ -4,6 +4,53 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.2.1] - 2026-08-24
+
+### Theme — "The README was still describing a product 28 tools bigger and 3 MB smaller"
+
+A claims audit of the README body — everything the guards did *not* cover. Three
+quantitative claims failed verification:
+
+- **"93 MCP tools" appeared three times** (the architecture diagram, the desktop section,
+  the agent-agnostic section) while the actual count is 79. The header said 79 — because
+  `TestReadmeDoc_ToolCountMatchesRegistered` only checks the `## MCP tools (N total)`
+  header line. The prose drifted from 93 → (reality passed through 107 → 79) untouched,
+  because **a partial guard creates false confidence that the whole document is guarded**.
+- **"~9 MB single binary"** twice; the actual release build is 12.5 MB (12,484,792 bytes).
+- **"24 computational sensors"** traces to nothing: no code, no doc, no test defines 24 of
+  anything. The scanner writes ~14 sensor fields from three network sources. An invented
+  number is worse than no number, so the claim now names what is checkable — GitHub
+  repository metadata, OSV.dev vulnerabilities, OpenSSF Scorecard, plus the on-demand
+  local scans — with no count at all.
+
+#### Fixed
+
+All three claims corrected. No code changed.
+
+#### Added — the guard the drift proved was missing
+
+`TestReadmeDoc_EveryToolCountMentionMatches` checks **every** `N MCP tools` occurrence in
+the README against the live registry, not just the section header. Verified falsifiable:
+reintroducing a single stale "93 MCP tools" into the diagram makes it fail; restoring
+passes.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 1 new guard test
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- Cut by `make release VERSION=1.2.1`
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (unchanged — v1 compatibility holds)
+- Consecutive reproducible releases: 130 → **131** (v0.6 → v1.2.1)
+
+#### What's not yet
+
+- The binary-size claim ("~12 MB") is prose without a guard; it varies with the Go
+  toolchain, so pinning it to a byte count would fail on every Go upgrade. It stays
+  approximate and unguarded, stated here so nobody mistakes it for an enforced promise.
+
 ## [v1.2.0] - 2026-08-18
 
 ### Theme — "It would not start without a credential it did not need"

@@ -41,3 +41,28 @@ func TestReadmeDoc_ToolCountMatchesRegistered(t *testing.T) {
 			path, stated, registered)
 	}
 }
+
+// ヘッダ 1 行だけを見る旧ガードの盲点(v1.2.1 で実際に露呈): README 本文の
+// ASCII 図と散文に「93 MCP tools」が 3 箇所残ったまま、ヘッダだけが 107 → 79 と
+// 更新され続けていた。**部分的なガードは「守られている」という誤った安心を作る**
+// ——本文のツール数表記は全数を検査する。
+func TestReadmeDoc_EveryToolCountMentionMatches(t *testing.T) {
+	reg, err := registry.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := mcp.New("", nil)
+	mcp.RegisterDefaultTools(s, mcp.Deps{Registry: reg, Now: func() time.Time { return time.Unix(0, 0) }})
+	registered := len(s.ToolNames())
+
+	b, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range regexp.MustCompile(`(\d+) MCP tools`).FindAllStringSubmatch(string(b), -1) {
+		if stated, _ := strconv.Atoi(m[1]); stated != registered {
+			t.Errorf("README says %q but %d tools are registered — every mention must match, "+
+				"not just the section header", m[0], registered)
+		}
+	}
+}

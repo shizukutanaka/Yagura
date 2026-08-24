@@ -342,6 +342,18 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### 部分的なガードは「守られている」という嘘をつく(★ v1.2.1)
+- README 本文に「93 MCP tools」が **3 箇所** 残っていた(実際は 79)。ヘッダ行だけを
+  検査する旧ガードが通り続けたため、図と散文は 93 のまま現実が 107 → 79 と二度
+  変わっても誰も気づかなかった。**一部だけ守るガードは、文書全体が守られているという
+  誤った安心を作る**。`TestReadmeDoc_EveryToolCountMentionMatches` が全出現を検査する。
+- 「~9 MB」は実測 12.5 MB、「24 computational sensors」は **出典ゼロの発明された数**
+  だった(scanner が書くのは 3 ソース ~14 フィールド)。**ソースから再生成できない数を
+  散文に書かない**——数えられないなら数を書かず、検証可能な名前(GitHub metadata /
+  OSV / Scorecard)を書く。
+- バイナリサイズのような **toolchain 依存の数値はガードしない** と決めたら、
+  「これは enforce されていない近似値」と CHANGELOG に明記する(黙って通すのとは違う)。
+
 ### 要らない資格情報を要求しない(★ v1.2.0)
 - v1.1.0 まで daemon は `YAGURA_GITHUB_TOKEN` **必須** で、無いと起動を拒否していた。
   だが GitHub/ネットワークが要るのは 79 tool 中 3 つ(vulns / scorecard / scanner)だけ。

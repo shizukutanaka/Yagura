@@ -22,7 +22,7 @@ func TestDispatch_Version(t *testing.T) {
 	if code != 0 {
 		t.Errorf("expected 0, got %d", code)
 	}
-	if !strings.Contains(out.String(), "yagura 1.2.0") {
+	if !strings.Contains(out.String(), "yagura 1.2.1") {
 		t.Errorf("expected version in stdout, got: %q", out.String())
 	}
 	if !strings.Contains(out.String(), "go") {
@@ -138,7 +138,7 @@ func TestVerifyAudit_NoStateDirEnv(t *testing.T) {
 	// 通常は $HOME/.yagura/audit が使われ、ディレクトリ存在なしでも success。
 	t.Setenv("YAGURA_GITHUB_TOKEN", "")
 	t.Setenv("YAGURA_STATE_DIR", "")
-	// HOME を temp に向けて **密閉** する(v1.2.0)。
+	// HOME を temp に向けて **密閉** する(v1.2.1)。
 	// 以前は token 必須のおかげで daemon がテスト中に起動できず、既定の
 	// $HOME/.yagura に何も書かれなかったので、このテストはたまたま通っていた。
 	// token を任意にした途端、他のテストが本物の $HOME に audit を書き、
@@ -267,7 +267,7 @@ func TestDispatch_DaemonBootAndShutdown(t *testing.T) {
 	}
 }
 
-// 未知の subcommand は **daemon を起動せず** usage を出して終わること(v1.2.0)。
+// 未知の subcommand は **daemon を起動せず** usage を出して終わること(v1.2.1)。
 //
 // 旧テストは「run() が config 不足で即エラー終了するはず」という前提で code=1 だけを
 // 見ていた。token を任意にした途端その前提が崩れ、このテストは **実際に daemon を

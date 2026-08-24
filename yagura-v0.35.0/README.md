@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v1.2.0** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **130 consecutive reproducible releases**. **Yagura now starts without a GitHub token.** It previously refused to, even though only 3 of its 79 tools need the network — so a product whose design tenet is *local-first* made you create a credential before you could lint a local directory. The proof it was wrong was already inside the product: the "no terminal required" tray launcher injected a fake token to defeat the daemon's own check, and that fake token was itself rejected, so the advertised onboarding path was broken for anyone without a PAT. Startup now names exactly which capabilities are idle instead of refusing to run. The public surface stays frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v1.2.1** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **131 consecutive reproducible releases**. A claims audit of this README found the prose still describing a product 28 tools bigger and 3 MB smaller than the one that ships: a stale tool count (93, three places) survived where the header guard never looked, "~9 MB" was 12.5 MB, and "24 computational sensors" traced to nothing in the codebase — an invented number, now replaced by the three named sensor sources. Every `N MCP tools` mention is now guard-tested against the live registry, not just the header. The public surface stays frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -21,7 +21,7 @@ If you maintain more than a handful of repositories at once, the cost of context
 Yagura sits in that gap. It is **one process you run locally** that:
 
 - Knows about all your repositories (registered once with `yagura_register`).
-- Scans them for vulnerabilities, secrets, GitHub Actions drift, and pin staleness (24 computational sensors).
+- Scans them in the background via three network sensors — GitHub repository metadata (stars, issues, PRs, CI status, activity), OSV.dev vulnerabilities, and OpenSSF Scorecard — plus on-demand local scans (secrets, GitHub Actions drift, pin staleness).
 - Generates the cross-tool agent harness artifacts that Anthropic's 2-agent long-running pattern needs (`AGENTS.md`, `feature-list.json`, `claude-progress.txt`, `init.sh` / `init.ps1`).
 - Receives Claude Code's HTTP hooks at `/hooks/claude-code` and turns them into Prometheus metrics and queryable timelines.
 - Tracks alert lifecycle (active / resolved / snoozed) so the same problem is not nagged twice.
@@ -35,8 +35,8 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
 │        │ JSON-RPC over HTTP           │ /hooks POST  │
 │        ▼                              │              │
 │  ┌────────────────────────────────────────────────┐  │
-│  │  yagura daemon (single binary, ~9 MB)          │  │
-│  │  - 93 MCP tools                                │  │
+│  │  yagura daemon (single binary, ~12 MB)         │  │
+│  │  - 79 MCP tools                                │  │
 │  │  - HTTP hook receiver                          │  │
 │  │  - Prometheus /metrics                         │  │
 │  │  - .well-known/mcp (2026 spec)                 │  │
@@ -53,7 +53,7 @@ It exposes all of this via the [Model Context Protocol](https://modelcontextprot
 ## Design tenets
 
 - **Zero external Go dependencies.** Only the standard library. `go.sum` is empty by policy ([ADR-0001](docs/adr/0001-zero-dependencies.md)).
-- **Single binary.** ~9 MB statically linked. No runtime, no installer, no daemon manager required.
+- **Single binary.** ~12 MB statically linked. No runtime, no installer, no daemon manager required.
 - **Reproducible build.** `-trimpath -buildvcs=false` + pinned Go version. Verified on every release.
 - **Local-first.** Binds to `127.0.0.1` by default. State lives in `~/.yagura/state/` as JSON files.
 - **Read-default, write-explicit.** Yagura never writes back to GitHub. Disk writes require `write: true`.
@@ -69,7 +69,7 @@ icon that opens in its own window, like a native app. On Windows, double-click
 as an app window; on macOS/Linux, run `yagura-tray` for the same one-click
 launch. From the app you can **register your first project with a form** (no
 terminal needed) — it goes through the MCP server and is audited like any other
-call. This adds nothing to the core — the daemon and the 93 MCP tools are
+call. This adds nothing to the core — the daemon and the 79 MCP tools are
 unchanged; the desktop app is just the dashboard made installable via web
 standards. See [docs/desktop.md](docs/desktop.md).
 
@@ -191,7 +191,7 @@ Now `yagura_hook_timeline` and `yagura_hook_stats` show what Claude Code has bee
 
 ### Other agents (Gemini CLI, Codex, custom)
 
-Yagura is agent-agnostic. Its 93 MCP tools work with **any** MCP client, and the
+Yagura is agent-agnostic. Its 79 MCP tools work with **any** MCP client, and the
 daemon's hook ingestion is agent-neutral too: **point any agent's lifecycle
 hooks at `/hooks/agent`** (Gemini CLI, Codex, raw OpenTelemetry, or a generic
 shape) and the receiver normalizes them via `internal/agentevent` — aligned to
