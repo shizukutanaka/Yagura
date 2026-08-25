@@ -238,3 +238,51 @@ func Do() error {
 		t.Errorf("Errorf without %%w should not count as wrapped: got %d", r.WrappedReturns)
 	}
 }
+
+// _test.go は対象外(v1.3.0)。
+//
+// 自リポジトリ実測: blank-discard の指摘 **396 件がすべて _test.go**、production は 0 件。
+// テストで `_ = os.WriteFile(...)` や `defer func(){ _ = f.Close() }()` と書くのは
+// 完全に通常であり、しかも `_ =` は「黙って捨てる」の **反対**——明示的に捨てる
+// Go の作法そのもの。このリポジトリの他レンズ(errdiscard/complexity/nestdepth…)は
+// 一様に _test.go を除外しており、errpolicy だけが揃っていなかった。
+//
+// 「技術的には正しいが誰も行動しない指摘」は effective false positive
+// (Sadowski et al., CACM 2018)であり、偽陽性と同じ害がある。
+func TestScan_SkipsTestFiles(t *testing.T) {
+	files := map[string]string{
+		"a_test.go": `package p
+
+func TestX() {
+	_ = doThing()
+}
+
+func doThing() error { return nil }
+`,
+	}
+	rep := errpolicy.Scan(files)
+	if len(rep.Findings) != 0 {
+		t.Errorf("_test.go must not produce findings, got %d: %+v", len(rep.Findings), rep.Findings)
+	}
+	if rep.FilesScanned != 0 {
+		t.Errorf("test files should not count as scanned, got %d", rep.FilesScanned)
+	}
+}
+
+// production の blank discard は今も検出する(recall を捨てていないこと)。
+func TestScan_StillFlagsProductionBlankDiscard(t *testing.T) {
+	files := map[string]string{
+		"a.go": `package p
+
+func caller() {
+	_ = doThing()
+}
+
+func doThing() error { return nil }
+`,
+	}
+	rep := errpolicy.Scan(files)
+	if rep.BlankDiscards != 1 {
+		t.Errorf("production blank discard must still be reported, got %d", rep.BlankDiscards)
+	}
+}

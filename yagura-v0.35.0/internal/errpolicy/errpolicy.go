@@ -62,6 +62,15 @@ func Scan(files map[string]string) Report {
 			r.FilesScanned-- // 非 Go は対象外(カウントから除く)
 			continue
 		}
+		// _test.go は対象外(v1.3.0)。テストで `_ = f.Close()` と書くのは通常であり、
+		// しかも `_ =` は「黙って捨てる」の反対=明示的に捨てる Go の作法。
+		// 自リポジトリ実測で指摘 396 件が **全て** テストファイル、production は 0 件だった
+		// ——行動につながらない指摘は effective false positive(Sadowski et al., CACM 2018)。
+		// 他レンズ(errdiscard/complexity/nestdepth…)と走査対象を揃える。
+		if strings.HasSuffix(path, "_test.go") {
+			r.FilesScanned--
+			continue
+		}
 		scanFile(path, src, &r)
 	}
 	if d := r.WrappedReturns + r.NakedReturns; d > 0 {

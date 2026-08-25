@@ -199,9 +199,15 @@ func scanFile(path, src string, errorFuncs map[string]bool, r *Report) {
 func calleeName(call *ast.CallExpr) string {
 	switch fn := call.Fun.(type) {
 	case *ast.Ident:
+		// 裸の呼び出し = 同一パッケージの関数。名前で解決できる **唯一** の形。
 		return fn.Name
 	case *ast.SelectorExpr:
-		return fn.Sel.Name
+		// `x.Foo(...)` のレシーバ型は型情報なしでは決定できない。名前だけで
+		// 同名の error 返し関数に結び付けると、まったく無関係な
+		// `w.Header().Set(...)`(戻り値なし)まで「error を捨てた」と報告してしまう
+		// ——自リポジトリで実際に 107 件中の大半がこれだった(v1.3.0 で修正)。
+		// 決定不能なものは **報告しない**(このリポジトリの保守的規約)。
+		return ""
 	}
 	return ""
 }

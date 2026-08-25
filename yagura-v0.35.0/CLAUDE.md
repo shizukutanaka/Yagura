@@ -342,6 +342,22 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### レンズは「件数」ではなく「指摘の中身」で評価する(★ v1.3.0)
+- 自リポジトリ ~930 件の指摘のうち **503 件が純粋なノイズ** だった。件数だけ見て
+  「よく検出している」と評価してはいけない。**必ず実際の finding を読むこと。**
+- `err_discard` は **偽陽性率 100%**。callee を `SelectorExpr.Sel.Name` で解決し
+  レシーバを捨てていたため、内部に `Store.Set() error` が在るだけで
+  `w.Header().Set(…)`(**戻り値なし**)まで「error を捨てた」と報告していた。
+  `atomicfile.Write` → 全 `buf.Write`、`audit.Logger.Close` → 全 `conn.Close()` も同様。
+  **型情報が無いなら `x.Foo()` は決定不能——推測せず報告しない**(裸の呼び出しのみ)。
+- `err_policy` の 396 件は **全て _test.go**、production は 0。他の全レンズは
+  `_test.go` を除外しているのに、これだけ揃っていなかった。加えて `_ =` は
+  「黙って捨てる」の **反対**(明示的に捨てる Go の作法)——前提から誤っていた。
+- 判断基準は **effective false positive**(Sadowski et al., CACM 2018):
+  技術的に正しくても誰も行動しない指摘は、間違った指摘と同じ害。
+- **新しいレンズを足したら、必ず自リポジトリで finding を読んで偽陽性率を確かめる。**
+  残る 27 レンズはこの検査を受けていない——件数が clean である保証はない。
+
 ### 「既知の限界」と書いても限界は消えない(★ v1.2.2)
 - `.claude-plugin/plugin.json` は `"version": "0.35.0"` のまま **~130 リリース** 放置され、
   プラグイン経由の利用者には 130 版前が見えていた。

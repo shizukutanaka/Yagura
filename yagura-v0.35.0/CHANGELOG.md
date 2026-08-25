@@ -4,6 +4,109 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.3.0] - 2026-08-24
+
+### Theme — "The quality tool was crying wolf 503 times"
+
+Every claim this product makes to users has now been verified. This release turns the
+question inward: **the product's own lenses reported ~930 findings on the product itself.**
+A quality tool that cannot pass its own inspection is not finished — but the first question
+is not "fix the code", it is **"are the findings real?"**
+
+They were not. Two lenses accounted for 503 findings and **every single one was noise.**
+
+#### `err_discard`: 107 findings, 107 false positives
+
+The lens resolves a call's callee by name and then checks whether any function in the file
+set with that name returns an error. It discarded the receiver entirely
+(`SelectorExpr.Sel.Name`), so a name collision was enough to trigger it:
+
+| an internal function… | …flagged every unrelated call to |
+|---|---|
+| `secrets.Store.Set() error` | `w.Header().Set(…)`, `gauge.Set(1)` — **neither returns anything** |
+| `atomicfile.Write() error` | `buf.Write(…)`, `w.Write(…)` |
+| `audit.Logger.Close() error` | `conn.Close()`, `resp.Body.Close()` |
+
+`http.Header.Set` has no return value at all. There was no error to discard. The lens was
+reporting a **100% false-positive rate** on this repository.
+
+The package doc had claimed since inception that the lens "only applies to same-package
+calls" — but nothing in the implementation checked the package or the receiver. **The
+documented scope and the actual behaviour had never agreed**, which is the same
+doc-says-X/code-does-Y defect class this project has found repeatedly.
+
+Fixed by reporting only what can actually be established without type information: **bare,
+unqualified calls**, which are necessarily same-package. `x.Foo()` is undecidable without
+types, so it is no longer guessed at — matching this repository's standing rule that a lens
+must not emit findings it cannot justify. Recall is deliberately traded for precision, and
+`TestScan_StillFlagsBarePackageLocalCalls` pins that the lens can still fire.
+
+**107 → 0.**
+
+#### `err_policy`: 396 findings, 100% in test files
+
+Every one of the 396 blank-discard findings was in a `_test.go` file; production code had
+**zero**. Two things were wrong at once:
+
+1. **Scope.** Every other lens here excludes `_test.go` — `err_discard`'s own doc says so
+   explicitly. `err_policy` alone scanned tests, and `_ = os.WriteFile(…)` or
+   `defer func(){ _ = f.Close() }()` in test setup is entirely normal.
+2. **The premise.** The message read *"discarded via `_ =` — the failure is silently
+   dropped"*, but `_ =` is the **opposite** of silent: it is Go's explicit idiom for
+   deliberately ignoring a value.
+
+Fixed by aligning the scan scope with every other lens. The wrap ratio is now measured over
+**156 production files** instead of 350 mixed ones — and barely moved (0.40 → 0.41), which
+is itself informative: the tests were not skewing the ratio, only the discard count.
+
+**396 → 0.**
+
+#### Why this counts as a defect and not a preference
+
+CLAUDE.md already cites Sadowski et al., *Lessons from Building Static Analysis Tools at
+Google* (CACM 2018) and its notion of the **effective false positive**: a finding that is
+technically defensible but leads to no action does the same damage as a wrong one. 503
+findings that no reasonable maintainer would ever act on is exactly that, and this project
+had been carrying them while advertising the lenses as a feature.
+
+#### Measured on this repository
+
+| | before | after |
+|---|---|---|
+| total findings across 29 lenses | ~933 | **430** |
+| lenses reporting zero | 14 / 29 | **16 / 29** |
+| `err_discard` | 107 | **0** |
+| `err_policy` | 396 | **0** |
+
+The remaining 430 are dominated by `complexity` (134), `cognit` (98) and `hotspot` (66) —
+**threshold readings, not defects.** They report that a function exceeds a conventional
+limit, which is a judgment, and the compatibility contract already says to treat a score as
+a reading rather than a constant. They are left as they are, deliberately.
+
+#### Compatibility
+
+Permitted explicitly by `docs/COMPATIBILITY.md`: *"Finding counts and scores … may be
+recalibrated as evidence accumulates."* No tool name, input or output shape changed.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 4 new tests, each pinning both the false positive
+  and the retained true positive
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- Cut by `make release VERSION=1.3.0`
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (unchanged — v1 compatibility holds)
+- Consecutive reproducible releases: 132 → **133** (v0.6 → v1.3.0)
+
+#### What's not yet
+
+- **No lens has had its false-positive rate measured except these two.** Both were found by
+  reading findings rather than trusting counts. The other 27 have not had the same
+  treatment, and their counts should not be assumed clean because these two were fixed.
+- `complexity`/`cognit`/`hotspot` findings are unaddressed by choice, not by oversight.
+
 ## [v1.2.2] - 2026-08-24
 
 ### Theme — "The plugin manifest had been shipping v0.35.0 for 130 releases"
