@@ -342,6 +342,21 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### 「母数が痩せた」は「きれいになった」と見分けがつかない(★ v1.3.2)
+- `hotspot` は収束(複数レンズが独立に同じ関数を指摘)を報告する。**束ねる母数が
+  古くなると収束判定が静かに弱くなり、findings が減っても「改善した」としか見えない。**
+  実際 v0.70→v0.95 の間、21 レンズ中 4(19%)のまま放置され、12 に拡張した瞬間に
+  収束ホットスポットが 0 → 69 件に急増した。
+- **今回の仮説「29 レンズ中 12 でまた陳腐化している」は誤りだった**: 関数キーを持つ
+  レンズは **13 個だけ**(残り 16 は file/package/symbol/interface 単位で、関数レベルの
+  収束に原理的に参加できない)。hotspot は該当 12/12 を束ねている。thelper だけは
+  テスト専用ファイルが主題で非テストに絞る hotspot では常に 0 件 → 意図的除外。
+  **調べて何も無いなら「無い」と報告する。埋め合わせの作業を作らない。**
+- 足りなかったのは **再発防止**。`hotspot.BundledLenses()` を公開し、
+  `TestHotspot_BundlesEveryFunctionKeyedLens` がレンズ表を reflect で走査して
+  「Func フィールドを持つのに束ねられていないレンズ」を落とす。
+  **意図的除外は理由つきで map に書く**——「忘れた」と「決めた」を区別するため。
+
 ### 曖昧なものは曖昧なまま報告する(★ v1.3.1)
 - 残り 27 レンズの finding を実際に読んだ結果: **大半は本物** だった
   (360 件は threshold reading、prealloc/global_check/api_doc は既知の真陽性)。

@@ -60,7 +60,7 @@ import (
 
 const (
 	serviceName = "yagura"
-	version     = "1.3.1"
+	version     = "1.3.2"
 
 	// graceful shutdown 関連
 	readyDrainGrace   = 5 * time.Second
@@ -115,11 +115,11 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		if isCLIVerb(args[0]) {
 			return runCLI(args[0], args[1:], stdout, stderr)
 		}
-		// 未知のサブコマンドは **daemon を起動しない**(v1.3.1)。
+		// 未知のサブコマンドは **daemon を起動しない**(v1.3.2)。
 		//
 		// それまでは switch にも isCLIVerb にも当たらない引数がそのまま run() へ落ち、
 		// `yagura definitel-not-a-subcommand` が黙って daemon を起動していた。
-		// v1.3.1 以前は token 必須のおかげで即エラー終了していたため誰も気づかなかった
+		// v1.3.2 以前は token 必須のおかげで即エラー終了していたため誰も気づかなかった
 		// ——要求を消したら、その裏に隠れていた本当の挙動が出てきた形。
 		// タイプミスがサーバ起動になるのは驚き最小の原則に反する。
 		fmt.Fprintf(stderr, "yagura: unknown subcommand %q\n\n%s", args[0], usageText)
@@ -367,7 +367,7 @@ func run() error {
 		"go", runtime.Version(),
 		"config", cfg.String())
 
-	// 資格情報が無くて動かない機能は **起動時に名指しする**(v1.3.1)。
+	// 資格情報が無くて動かない機能は **起動時に名指しする**(v1.3.2)。
 	// 黙って劣化した状態で動く方が起動拒否より質が悪い——利用者は
 	// 「スキャンして 0 件」と「スキャンしていない」を区別できないから。
 	if disabled := cfg.DisabledCapabilities(); len(disabled) > 0 {

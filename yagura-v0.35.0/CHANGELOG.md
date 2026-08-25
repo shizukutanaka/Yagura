@@ -4,6 +4,72 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.3.2] - 2026-08-24
+
+### Theme — "A hypothesis that was wrong, and the guard it produced anyway"
+
+CLAUDE.md records that `hotspot` — the lens that reports *convergence*, where several
+independent lenses flag the same function — once went stale: it bundled the 4 lenses it
+launched with while the project grew to 21, sat at **19% coverage** unnoticed, and only at
+v0.95 was expanded to 12, at which point convergent hotspots jumped from **0 to 69**.
+
+The registry now holds 29 lenses and `hotspot` still bundles 12. That looked like the same
+defect recurring at 41%.
+
+#### The hypothesis was wrong
+
+Only **13 of the 29 lenses are function-keyed.** The other 16 report at file, package,
+symbol or interface level — `coupling` and `dep_rank` are per-package, `api_doc` per-symbol,
+`ifacebloat` per-interface, `calibrate` per-distribution. A lens with no function key
+**cannot participate in function-level convergence** at all, so 12/29 was never the right
+denominator.
+
+Of the 13, `hotspot` bundles 12. The one it omits is `thelper`, whose subject is `_test.go`
+files while `hotspot` deliberately scopes to non-test files — it would contribute zero by
+construction, and CLAUDE.md already records that exclusion.
+
+**`hotspot` is complete: 12 of the 12 applicable lenses.** No defect. Reporting that
+plainly matters more than finding something to fix — the alternative was inventing work to
+justify the investigation.
+
+#### What was actually missing
+
+Nothing *prevents* the recurrence. Coverage is correct today because someone remembered in
+v0.95; the population is a hardcoded list of twelve `X.Scan(…)` calls with no relationship
+to the registry. Lens #30 arriving with a `Func` field would silently sit outside it, and
+the symptom — **fewer convergent hotspots** — reads as "the code got cleaner" rather than
+"the measurement got weaker." That is precisely how the first staleness survived so long.
+
+#### Added
+
+- `hotspot.BundledLenses()` — the aggregation set, made inspectable rather than implicit.
+- `TestHotspot_BundlesEveryFunctionKeyedLens` walks the lens registry, uses reflection to
+  detect which lenses expose a `Func` field on their findings, and fails if any is not
+  bundled. Deliberate exclusions must be recorded **with a reason** in a map, so omitting a
+  lens becomes a decision someone wrote down rather than an oversight.
+- `TestHotspot_BundledNamesAllExist` catches a typo'd name claiming coverage that is not
+  real.
+
+Verified falsifiable: removing `prealloc` from the set fails with the exact instruction a
+maintainer needs; restoring passes.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 2 new tests
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- Cut by `make release VERSION=1.3.2`
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (unchanged — v1 compatibility holds)
+- Consecutive reproducible releases: 134 → **135** (v0.6 → v1.3.2)
+
+#### What's not yet
+
+- The guard covers *function-keyed* convergence only. If a file-level or package-level
+  convergence lens is ever wanted, it needs its own population and its own guard; this test
+  will not notice its absence.
+
 ## [v1.3.1] - 2026-08-24
 
 ### Theme — "Reading the other 27 lenses, and refusing to invent a rule for the ambiguous ones"

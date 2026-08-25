@@ -234,3 +234,19 @@ func buildMessage(fn string, lenses []string) string {
 	return fmt.Sprintf("%s flagged by %d independent lenses (%v) — convergent signal, high-confidence refactor target",
 		fn, len(lenses), lenses)
 }
+
+// BundledLenses は hotspot が収束判定に使うレンズ名を返す(v1.3.2)。
+//
+// なぜ公開するか: この集合が **陳腐化しても誰も気づかない** から。
+// CLAUDE.md が記録しているとおり、hotspot は v0.70 発足時の 4 レンズのまま
+// 21 レンズ中 4(19%)まで放置され、v0.95 でようやく 12 に拡張された
+// ——「hotspot 自身がソクラテスの盲点になっていた」。同じことは黙って再発しうる。
+//
+// この関数は `internal/hotspot/coverage_test.go` のガードが参照し、
+// 「関数キーを持つレンズが新設されたのに hotspot に足されていない」状態を落とす。
+func BundledLenses() []string {
+	return []string{
+		"cognit", "complexity", "ctxcheck", "errwrap", "flagarg", "nakedret",
+		"namecheck", "nestdepth", "paramcheck", "prealloc", "returncheck", "typeassert",
+	}
+}
