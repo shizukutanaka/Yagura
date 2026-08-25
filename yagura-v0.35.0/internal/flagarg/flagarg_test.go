@@ -261,3 +261,49 @@ func B(y string, verbose bool) {}
 		t.Errorf("FuncsScanned: want 2, got %d", r.FuncsScanned)
 	}
 }
+
+// 引数が bool **1 つだけ** の関数は flag argument ではない(v1.3.1)。
+//
+// Fowler の "flag argument" smell は、**他の引数と並んだ bool が呼び出し側で
+// 振る舞いを切り替える**ことを問題にする(`process(data, true)` の true が何か
+// 分からない)。引数が bool 1 つしか無い関数は、その bool が **データそのもの** で
+// あって modulate する対象が存在しない。`yesNo(true)` は関数名と合わせて曖昧さがない。
+//
+// 自リポジトリ実測: 17 件中 2 件(`yesNo(b bool) string` / `yesNoMark(ok bool) string`)
+// がこの型の誤検出だった。
+func TestScan_SingleBoolParamIsAConverterNotAFlag(t *testing.T) {
+	files := map[string]string{
+		"a.go": `package p
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+`,
+	}
+	rep := Scan(files, 1)
+	if len(rep.Findings) != 0 {
+		t.Errorf("a lone bool parameter is the function's subject, not a flag: %+v", rep.Findings)
+	}
+}
+
+// 他の引数と並んだ bool は今も検出する(規則を弱めすぎていないこと)。
+func TestScan_StillFlagsBoolAlongsideOtherParams(t *testing.T) {
+	files := map[string]string{
+		"a.go": `package p
+
+func emit(data string, jsonOut bool) string {
+	if jsonOut {
+		return data
+	}
+	return data
+}
+`,
+	}
+	rep := Scan(files, 1)
+	if len(rep.Findings) != 1 {
+		t.Fatalf("a bool alongside another parameter is the real smell, got %d: %+v", len(rep.Findings), rep.Findings)
+	}
+}

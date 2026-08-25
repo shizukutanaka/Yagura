@@ -116,6 +116,13 @@ func scanFile(path, src string, threshold int, r *Report) {
 		}
 		r.FuncsScanned++
 		boolCount, boolNames := countBoolParams(fn.Type)
+		// 引数が bool 1 つだけの関数は **converter** であって flag argument ではない
+		// (v1.3.1)。Fowler の smell は「他の引数と並んだ bool が呼び出し側で振る舞いを
+		// 切り替える」こと——modulate する相手が居ない `yesNo(b bool) string` は
+		// bool そのものが主題であり、`yesNo(true)` に曖昧さはない。
+		if boolCount == 1 && totalParams(fn.Type) == 1 {
+			continue
+		}
 		if boolCount < threshold {
 			continue
 		}
@@ -218,4 +225,20 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// totalParams は関数の引数の総数を名前単位で数える(`a, b int` は 2)。
+func totalParams(ft *ast.FuncType) int {
+	if ft.Params == nil {
+		return 0
+	}
+	n := 0
+	for _, f := range ft.Params.List {
+		if len(f.Names) == 0 {
+			n++ // 無名引数も 1 つ
+			continue
+		}
+		n += len(f.Names)
+	}
+	return n
 }

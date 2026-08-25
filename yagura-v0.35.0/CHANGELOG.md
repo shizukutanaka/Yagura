@@ -4,6 +4,83 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.3.1] - 2026-08-24
+
+### Theme — "Reading the other 27 lenses, and refusing to invent a rule for the ambiguous ones"
+
+v1.3.0 closed with an explicit admission: only two lenses had had their findings actually
+*read*, and the other 27 should not be assumed clean. This reads the rest.
+
+#### The audit
+
+| lens | findings | verdict |
+|---|---|---|
+| `complexity` 134, `cognit` 99, `hotspot` 67, `calibrate` 60 | 360 | **threshold readings, not defects.** They report that a function exceeds a conventional limit. That is a judgment the contract already says to treat as a reading. |
+| `prealloc` | 31 | **true positives, known.** CLAUDE.md already records these as a performance backlog from the v0.92 dogfood. |
+| `global_check` | 5 | **true positives, intentional.** Four Win32 tray callback globals and `serverVersion`'s init injection — already documented as deliberate. |
+| `api_doc` | 6 | **true positives.** Genuinely undocumented exported symbols. |
+| `flag_arg` | 17 → **14** | **3 false positives, fixed below.** |
+
+#### Fixed — `flag_arg` flagged converters as flag arguments
+
+`yesNo(b bool) string` and `yesNoMark(ok bool) string` were reported as Fowler's
+"flag argument" smell. They are the opposite of it. The smell is a boolean that **sits
+alongside other arguments and silently switches behaviour** — `process(data, true)`, where
+the reader cannot tell what `true` means. A function whose *only* parameter is a bool has
+nothing to modulate: the bool **is** the subject, and `yesNo(true)` is unambiguous read
+against the function's name.
+
+The rule now requires at least one other parameter. Three findings disappeared (one more
+than a visual scan of the list had predicted, which is the argument for encoding rules in
+code rather than eyeballing them). `TestScan_StillFlagsBoolAlongsideOtherParams` pins that
+the genuine shape is still caught.
+
+#### What was deliberately **not** changed
+
+Seven of the remaining `flag_arg` findings are genuinely ambiguous — booleans that carry a
+*fact* rather than a *mode*: `recordStats(…, errored)`, `ReleaseReadiness(…,
+hasProhibitedFindings)`, `qualityScoreFrom(…, hasProhibited)`, `pickReason(…, aiCritical)`.
+Whether those are flag arguments depends on intent, and **intent is not mechanically
+decidable**. Inventing a heuristic to make the number smaller would be tuning the
+measurement to flatter the code — exactly the failure this project keeps correcting. They
+stay reported.
+
+Note also that two of the confirmed true positives — `Suggest(…, rankByLift)` and
+`buildPartners(…, rankByLift)` — were introduced by v0.128.0 **in this session**. The lens
+was right about code written days ago.
+
+#### Measured
+
+| | v1.2.2 | v1.3.0 | v1.3.1 |
+|---|---|---|---|
+| total findings | ~933 | 430 | **429** |
+| lenses reporting zero | 14 / 29 | 16 / 29 | **16 / 29** |
+
+The large win was v1.3.0's 503. This release's single-finding delta is the honest result of
+reading the rest: **the remaining findings were mostly real.** That is the outcome worth
+reporting — an audit that finds little is still an audit, and reporting a small number
+truthfully is the point.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green; 2 new tests
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- Cut by `make release VERSION=1.3.1`
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (unchanged — v1 compatibility holds)
+- Consecutive reproducible releases: 133 → **134** (v0.6 → v1.3.1)
+
+#### What's not yet
+
+- The 360 threshold findings (`complexity`/`cognit`/`hotspot`/`calibrate`) are unaddressed
+  **by choice**. Acting on them means refactoring working code to satisfy a conventional
+  number, which needs a reason beyond the number itself.
+- `prealloc`'s 31 remain a performance backlog with no measured impact. Nothing here
+  measures whether preallocating those slices would matter, and shipping a change on the
+  assumption that it would is not this project's standard.
+
 ## [v1.3.0] - 2026-08-24
 
 ### Theme — "The quality tool was crying wolf 503 times"

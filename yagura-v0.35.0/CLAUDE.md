@@ -342,6 +342,20 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### 曖昧なものは曖昧なまま報告する(★ v1.3.1)
+- 残り 27 レンズの finding を実際に読んだ結果: **大半は本物** だった
+  (360 件は threshold reading、prealloc/global_check/api_doc は既知の真陽性)。
+  **少ししか見つからない監査も監査であり、少ないことを正直に報告するのが目的。**
+- 直したのは 1 種類だけ: `flag_arg` が `yesNo(b bool) string` のような
+  **引数が bool 1 つだけの converter** を Fowler の flag argument として報告していた。
+  smell の本体は「**他の引数と並んだ** bool が呼び出し側で振る舞いを切り替える」こと。
+  modulate する相手が居ないなら bool は主題であって旗ではない。
+- **残り 7 件の「fact か mode か」は機械的に決定不能なので、そのまま報告する。**
+  数を小さく見せるためにヒューリスティックを発明するのは、**計測をコードに合わせて
+  甘くする**行為であり、このプロジェクトが繰り返し是正してきた失敗そのもの。
+- 参考: 真陽性のうち 2 件(`Suggest(…, rankByLift)` / `buildPartners(…, rankByLift)`)は
+  v0.128.0 で **この一連の作業中に自分が書いたコード**。レンズは正しかった。
+
 ### レンズは「件数」ではなく「指摘の中身」で評価する(★ v1.3.0)
 - 自リポジトリ ~930 件の指摘のうち **503 件が純粋なノイズ** だった。件数だけ見て
   「よく検出している」と評価してはいけない。**必ず実際の finding を読むこと。**
