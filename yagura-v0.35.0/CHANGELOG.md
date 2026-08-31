@@ -4,6 +4,67 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.3.3] - 2026-08-25
+
+### Theme — "`null` cannot tell you whether anything was checked"
+
+Everything verified so far has been **single-project**. The product's stated purpose is
+orchestrating a portfolio, so this exercises the actual flywheel — plan → review → release →
+alert-fix — against a five-project registry.
+
+#### The flywheel works
+
+`yagura_today` ranked all five with reasons, `yagura_release_radar` scored them,
+`yagura_portfolio_quality` graded them, `yagura_graph_stats`, `yagura_stats` and
+`yagura_alert_fix` all responded. No crashes, no empty results where results were due.
+
+#### But three tools answered `null` where a list belongs
+
+Reading the responses rather than the status codes — the lesson from v1.3.0 — found that
+`alert_fix.alerts`, `graph_stats.dangling` and `health.needs_attention` marshalled as JSON
+**`null`**, not `[]`. A nil Go slice does that silently.
+
+These are exactly the *"is everything OK?"* fields, and **`null` destroys the distinction
+this project keeps insisting on**: it cannot say whether there were no alerts or whether
+alerts were never computed. `[]` asserts "checked, and found none." It is the same ambiguity
+v1.2.0 fixed at startup — where a user could not tell "scanned and found nothing" from
+"never scanned" — reappearing in the response shape.
+
+A client is harmed either way: `resp.alerts.length` throws, and `!resp.alerts` conflates the
+two states.
+
+#### Fixed — and the first fix was not enough
+
+Initialising the slice in `EvaluateAll` made the **unit test pass while the live tool still
+returned `null`.** Two filters — the lifecycle filter in `Store.FilterAlerts` and
+`filterBySeverity` — *rebuild* the report with `var kept []Alert`, which is nil whenever
+nothing survives. **An invariant has to hold at every producer, not just at the
+constructor**, and only end-to-end dogfooding surfaced that; the unit test was green and
+wrong.
+
+All three fields, and both filters, now yield `[]`.
+
+#### Verification
+
+- Live over `/mcp` against a five-project registry: `alerts` comes back as a list of length 0
+- `go test -race -count=1 ./...` — green; 3 new tests
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- Cut by `make release VERSION=1.3.3`
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (unchanged — v1 compatibility holds)
+- Consecutive reproducible releases: 135 → **136** (v0.6 → v1.3.3)
+
+#### What's not yet
+
+- The survey covered the tools callable with **no arguments**. Tools requiring a slug or
+  files were not swept for the same defect, so other `null` collections may remain. The
+  three fixed here were found by looking, not by an exhaustive check, and no guard prevents
+  a fourth from appearing.
+- Five projects all pointing at one path is a thin portfolio. It exercises the aggregation
+  paths but not genuinely heterogeneous project states.
+
 ## [v1.3.2] - 2026-08-24
 
 ### Theme — "A hypothesis that was wrong, and the guard it produced anyway"

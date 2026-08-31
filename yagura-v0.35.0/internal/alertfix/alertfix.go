@@ -2,19 +2,20 @@
 // rule-based な next-action recommendation を生成する。
 //
 // 動機 (v0.27.0):
-//   cortex (aircloset 2026/05) の 4 flywheel:
-//     ① Code (生成)       — Claude Code/Windsurf が担当
-//     ② Review (検証)     — yagura ai_verify + test_audit (v0.25-26)
-//     ③ Release (公開)    — yagura release_radar (v0.24)
-//     ④ Alert-Fix (再投入) — yagura alertfix (v0.27) ★
 //
-//   yagura は既に sensor data (VulnCritical, CIStatus, ScorecardScore, Plan.md)
-//   を持つが、これらを actionable な next-action として agent に提示する hub が
-//   欠けていた。本 package がそのハブ。
+//	cortex (aircloset 2026/05) の 4 flywheel:
+//	  ① Code (生成)       — Claude Code/Windsurf が担当
+//	  ② Review (検証)     — yagura ai_verify + test_audit (v0.25-26)
+//	  ③ Release (公開)    — yagura release_radar (v0.24)
+//	  ④ Alert-Fix (再投入) — yagura alertfix (v0.27) ★
 //
-//   重要原則 (m's harness G0.7 と整合): LLM を呼ばず rule-based。これにより
-//   determinism + reproducibility + zero-dep ADR-0001 を維持しつつ、agent が
-//   即実行可能な suggested_tool + args を出す。
+//	yagura は既に sensor data (VulnCritical, CIStatus, ScorecardScore, Plan.md)
+//	を持つが、これらを actionable な next-action として agent に提示する hub が
+//	欠けていた。本 package がそのハブ。
+//
+//	重要原則 (m's harness G0.7 と整合): LLM を呼ばず rule-based。これにより
+//	determinism + reproducibility + zero-dep ADR-0001 を維持しつつ、agent が
+//	即実行可能な suggested_tool + args を出す。
 //
 // 設計判断 (ADR-0001 ゼロ依存):
 //   - struct + 純関数
@@ -81,45 +82,45 @@ type Alert struct {
 	SuggestedArgs  map[string]any `json:"suggested_args,omitempty"`
 	DetectedAt     time.Time      `json:"detected_at,omitempty"`
 	// 数値 metric を flat に置く(LLM が判断材料にする)
-	MetricInt    int    `json:"metric_int,omitempty"`
-	MetricFloat  float64 `json:"metric_float,omitempty"`
+	MetricInt   int     `json:"metric_int,omitempty"`
+	MetricFloat float64 `json:"metric_float,omitempty"`
 }
 
 // Report は alert 集計。
 type Report struct {
-	Alerts       []Alert            `json:"alerts"`
-	Total        int                `json:"total"`
-	BySeverity   map[Severity]int   `json:"by_severity"`
-	BySource     map[Source]int     `json:"by_source"`
-	ByProject    map[string]int     `json:"by_project,omitempty"`
-	ProjectsScanned int             `json:"projects_scanned"`
-	GeneratedAt  time.Time          `json:"generated_at"`
-	HasCritical  bool               `json:"has_critical"`
+	Alerts          []Alert          `json:"alerts"`
+	Total           int              `json:"total"`
+	BySeverity      map[Severity]int `json:"by_severity"`
+	BySource        map[Source]int   `json:"by_source"`
+	ByProject       map[string]int   `json:"by_project,omitempty"`
+	ProjectsScanned int              `json:"projects_scanned"`
+	GeneratedAt     time.Time        `json:"generated_at"`
+	HasCritical     bool             `json:"has_critical"`
 }
 
 // ProjectSnapshot は alertfix への入力 (registry.Project から抽出した sensor 値)。
 //
 // registry を直接 import しないことで test しやすく + 循環 import 回避。
 type ProjectSnapshot struct {
-	Slug              string
-	Repository        string
-	VulnCritical      int
-	VulnHigh          int
-	CIStatus          string  // "passing"/"failing"/"unknown"
-	ScorecardScore    float64 // 0.0-10.0
-	OpenIssues        int
-	OpenPRs           int
-	LatestActivity    time.Time
+	Slug           string
+	Repository     string
+	VulnCritical   int
+	VulnHigh       int
+	CIStatus       string  // "passing"/"failing"/"unknown"
+	ScorecardScore float64 // 0.0-10.0
+	OpenIssues     int
+	OpenPRs        int
+	LatestActivity time.Time
 	// optional: plantracker 等から渡せる
-	PlanIsHealthy     bool
-	PlanProgressPct   int
-	PlanIssues        []string
-	HasPlanMd         bool
+	PlanIsHealthy   bool
+	PlanProgressPct int
+	PlanIssues      []string
+	HasPlanMd       bool
 	// visibility literacy: RepoPublic は scanner が観測した実際の公開状態
 	// (sensor、MCP からは詐称不可)。Tags は人間が宣言した分類(manual metadata)。
 	// 両者の不一致(sensitivity tag つきなのに Public)を Evaluate が alert する。
-	RepoPublic        bool
-	Tags              []string
+	RepoPublic bool
+	Tags       []string
 }
 
 // sensitivityTags は「本来 private であるべき」ことを示す宣言タグ群。
@@ -145,10 +146,10 @@ func findSensitivityTag(tags []string) (string, bool) {
 
 // Thresholds は alert 発火条件(調整可能)。
 type Thresholds struct {
-	StaleDays          int     // 最終 activity から N 日経過で stale
-	ScorecardMin       float64 // この値未満で alert
-	OpenIssuesHigh     int     // この値以上で alert
-	NowFn              func() time.Time
+	StaleDays      int     // 最終 activity から N 日経過で stale
+	ScorecardMin   float64 // この値未満で alert
+	OpenIssuesHigh int     // この値以上で alert
+	NowFn          func() time.Time
 }
 
 // DefaultThresholds は m's portfolio 想定で tuning した推奨値。
@@ -325,6 +326,10 @@ func EvaluateAll(snaps []ProjectSnapshot, th Thresholds) Report {
 		now = time.Now
 	}
 	report := Report{
+		// **空でも `[]`**(v1.3.3)。nil スライスは JSON で null になり、client は
+		// 「アラート 0 件」と「アラートを計算していない」を区別できなくなる——
+		// v1.2.0 で起動時に直したのと同じ曖昧さの、応答側での再演。
+		Alerts:          []Alert{},
 		BySeverity:      map[Severity]int{},
 		BySource:        map[Source]int{},
 		ByProject:       map[string]int{},

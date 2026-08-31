@@ -246,7 +246,10 @@ func (s *Store) FilterAlerts(alerts []Alert) []Alert {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	now := s.NowFn()
-	var out []Alert
+	// **空でも `[]`**(v1.3.3)。フィルタは Report を作り直す側なので、
+	// コンストラクタだけ直しても null は復活する——不変条件は
+	// **全ての生産点** で保たれなければ意味がない(実測で live tool が null を返した)。
+	out := []Alert{}
 	for _, a := range alerts {
 		st, ok := s.curr[a.ID]
 		if !ok {

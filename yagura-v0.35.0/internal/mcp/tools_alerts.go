@@ -173,7 +173,8 @@ func filterBySeverity(r alertfix.Report, minSev string) alertfix.Report {
 	if !ok {
 		return r
 	}
-	var kept []alertfix.Alert
+	// 空でも `[]`(v1.3.3)——理由は alertfix.FilterAlerts と同じ。
+	kept := []alertfix.Alert{}
 	for _, a := range r.Alerts {
 		if rank[string(a.Severity)] <= maxRank {
 			kept = append(kept, a)

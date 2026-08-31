@@ -342,6 +342,19 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### 空のコレクションは `null` ではなく `[]` を返す(★ v1.3.3)
+- Go の nil スライスは JSON で `null` になる。実測で `alert_fix.alerts` /
+  `graph_stats.dangling` / `health.needs_attention` が null を返していた——
+  いずれも「異常は無いか?」を訊く欄。
+- **`null` は「0 件だった」と「そもそも計算していない」を区別できない。**
+  `[]` は「調べた。無かった」と言い切る。v1.2.0 で起動時に直した
+  「スキャンして 0 件 / スキャンしていない」の曖昧さの、**応答側での再演**。
+- **不変条件はコンストラクタだけでなく *全ての生産点* で守ること。** EvaluateAll を
+  直しただけでは live tool は null を返し続けた——lifecycle filter と severity filter が
+  `var kept []Alert` で Report を作り直していたため。
+  **unit test は緑のまま間違っていた。end-to-end で叩いて初めて分かる。**
+- 新しい tool が配列を返すときは、空ケースを必ず実際に呼んで確認すること。
+
 ### 「母数が痩せた」は「きれいになった」と見分けがつかない(★ v1.3.2)
 - `hotspot` は収束(複数レンズが独立に同じ関数を指摘)を報告する。**束ねる母数が
   古くなると収束判定が静かに弱くなり、findings が減っても「改善した」としか見えない。**

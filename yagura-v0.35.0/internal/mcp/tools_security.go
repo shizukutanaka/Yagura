@@ -320,12 +320,16 @@ type portfolioHealth struct {
 	totalCritical, totalHigh          int
 	totalMedium, totalLow             int
 	notYetScanned                     int
-	needsAttention                    []map[string]any
+	// **空でも `[]`**(v1.3.3)。null は「注意の要る project 無し」と
+	// 「集計していない」を区別できない。初期化は build 関数側で行う。
+	needsAttention []map[string]any
 }
 
 // aggregatePortfolioHealth は active project 群の sensor field を 1 つの集計へ畳む。
 func aggregatePortfolioHealth(projects []*project.Project) portfolioHealth {
-	var agg portfolioHealth
+	// 空でも `[]` を返す(v1.3.3)。null は「注意の要る project 無し」と
+	// 「集計していない」を区別できない。
+	agg := portfolioHealth{needsAttention: []map[string]any{}}
 	for _, p := range projects {
 		if p.Stage == project.StageArchived {
 			continue
