@@ -4,6 +4,87 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.80.0] - 2026-08-25
+
+### Theme — "Shipping it, and reconciling the version with the users who can see it"
+
+Every prior release in this line was prepared but **never published**. This one is released:
+tagged, built and distributed by the workflow.
+
+#### The blocker, resolved by asking whose number matters
+
+v1.1.0 found that two of three git tags used a full-width `ｖ` and could not match
+`release.yml`'s `tags: ['v*']`. What was **not** checked until now is whether GitHub
+*releases* existed. They do — three of them:
+
+| release | published |
+|---|---|
+| `v1.73.0` | 2026-05-25 |
+| `ｖ1.78.0` | 2026-05-29 |
+| `ｖ1.79.0` | 2026-06-02 |
+
+So they were published **by hand**, not by the pipeline — which is why the malformed tags
+never mattered to anyone, and why the pipeline's own artifacts (SBOM, SLSA3 provenance,
+checksums) have never once been produced.
+
+That makes the numbering question decidable instead of a matter of taste. **A version number
+has exactly one job: telling a user which build is newer.** The public has seen
+1.73 → 1.78 → 1.79. The 0.6 → 1.3.3 line is this branch's *internal* history, visible only
+in this file. Publishing "1.3.3" would present every user with an apparent regression and
+break `releases/latest`.
+
+The internal lineage loses, because it was never the one users could see. **This release
+continues the public line: v1.80.0.** The 137 entries below keep their original numbers —
+rewriting history to look tidy would be worse than an honest discontinuity, and the jump is
+explained here rather than hidden.
+
+#### What ships
+
+Everything from v0.120.0 through v1.3.3, in one release:
+
+- **v0.129.0** deleted 29 MCP tools that forced callers to push whole source files through a
+  model's context (107 → 79 tools; handshake −23%; a whole-repository quality read went from
+  ~824,000 tokens to ~850).
+- **v0.130.0** cut the race suite 67.4s → 40.7s by making hardcoded production timing
+  constants injectable, with the production values now pinned by explicit tests.
+- **v0.131.0** added `make release`, deliberately refusing to automate the CHANGELOG, the
+  commit or the push.
+- **v1.0.0** froze the public surface under `docs/COMPATIBILITY.md`, enforced by tests.
+- **v1.1.0–v1.2.2** audited every advertised claim: the tag trigger, the mandatory GitHub
+  token that broke the "no terminal required" onboarding path, three stale README counts, an
+  invented "24 sensors" figure, and a plugin manifest that had declared v0.35.0 for ~130
+  releases.
+- **v1.3.0–v1.3.3** turned the lenses on the product: 503 of ~930 findings were noise, the
+  rest mostly real, `hotspot` proved *not* stale but now guarded, and three tools returned
+  `null` where a list belongs.
+
+#### This is the pipeline's first real run
+
+The tag is created by `make tag`, which rejects any non-ASCII byte, so the full-width `ｖ`
+that silently disabled two prior releases cannot recur. Pushing it triggers `release.yml`:
+cross-compiled binaries for five targets, per-artifact SHA-256, a CycloneDX SBOM, and SLSA3
+provenance — none of which has ever been generated for this repository before.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- Cut by `make release VERSION=1.80.0`
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96
+- Consecutive reproducible releases: 136 → **137** (v0.6 → v1.80.0)
+
+#### What's not yet
+
+- **The work is published from `claude/wizardly-goldberg-ZbjGY`, not from the default
+  branch.** Opening a pull request is not something this session does unasked; the branch is
+  pushed and ready for one whenever the maintainer wants it.
+- The three hand-published releases remain in the list with their original numbers, two of
+  them still carrying a full-width `ｖ`. Renaming or deleting published releases is
+  destructive and is left alone deliberately.
+
 ## [v1.3.3] - 2026-08-25
 
 ### Theme — "`null` cannot tell you whether anything was checked"

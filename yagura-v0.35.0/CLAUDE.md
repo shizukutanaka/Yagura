@@ -342,6 +342,20 @@ cortex flywheel 4 段階すべてを単体で機械化:
   reviewgate(security 合成)の maintainability 版。`Score`(純関数)+ `Analyze`
   (各レンズ実行)。CLI `code-health --dir . [--min-grade G]`、MCP `yagura_code_health`★ v0.36
 
+### バージョン番号は「利用者に見えている系列」に従う(★ v1.80.0)
+- 実測: GitHub には **3 つの release が既に公開されていた**(v1.73.0 / ｖ1.78.0 / ｖ1.79.0)。
+  全角タグの 2 本も release になっている = **workflow ではなく手作業で公開されていた**。
+  だから malformed タグが誰にも問題を起こさず、同時に **pipeline の成果物
+  (SBOM / SLSA provenance / checksum)は一度も生成されていなかった**。
+- ここで branch 内部の系列(0.6 → 1.3.3)で publish すると、利用者から見て **大幅な降格**
+  になり `releases/latest` が壊れる。
+- **バージョン番号の仕事は「どちらが新しいか」を利用者に伝えること、ただ 1 つ。**
+  よって「どちらの系列が正か」は決定可能: **利用者が見られた系列(1.79)が勝つ**。
+  内部系列は CHANGELOG にしか存在しなかったので負ける。次は **v1.80.0**。
+- **過去の CHANGELOG 番号は書き換えない。** 整合して見せるために歴史を改竄するより、
+  不連続を残して **理由をその場に書く** 方が正直。
+- 公開済み release の rename / delete は破壊的なので触らない(全角タグ 2 本もそのまま)。
+
 ### 空のコレクションは `null` ではなく `[]` を返す(★ v1.3.3)
 - Go の nil スライスは JSON で `null` になる。実測で `alert_fix.alerts` /
   `graph_stats.dangling` / `health.needs_attention` が null を返していた——

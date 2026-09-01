@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v1.3.3** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **136 consecutive reproducible releases**. Everything verified so far had been single-project, so this exercised the actual portfolio flywheel against a five-project registry. It works — but three tools answered **`null`** where a list belongs, and those were exactly the *is-everything-OK?* fields: `null` cannot say whether there were no alerts or whether alerts were never computed, which is the same ambiguity v1.2.0 fixed at startup, reappearing in the response shape. Fixing the constructor was not enough — two filters rebuild the report, so the unit test passed while the live tool still returned `null`. The public surface stays frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v1.80.0** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **137 consecutive reproducible releases**. This is the first release actually **published by the pipeline**: cross-compiled binaries, SHA-256 checksums, a CycloneDX SBOM and SLSA3 provenance. The version jumps from this branch's internal 1.3.3 to 1.80.0 because three releases were previously published *by hand* (1.73 → 1.78 → 1.79), and a version number has one job — telling users which build is newer. The internal lineage loses to the one users could actually see. The public surface stays frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
