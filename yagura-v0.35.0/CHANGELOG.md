@@ -4,6 +4,106 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.82.0] - 2026-08-26
+
+### Theme — "The multi-repository re-measurement, and the three conclusions it overturns"
+
+`docs/PRODUCT_ASSESSMENT.md` ranked multi-repository re-measurement as the single most
+valuable open item, on the grounds that every defect-prediction number in this project came
+from one repository whose history is mostly release ritual. It has now been done — against
+**groupcache (11 years), gorilla/mux (11.7 years) and sirupsen/logrus (12.5 years)** — using
+the existing code paths, not a special harness.
+
+The caveat turned out to be **material, not formal**. Three prior conclusions change.
+
+#### 1. This repository's own numbers are outliers
+
+Walk-forward lift, 3 folds, default settings:
+
+| repo | size_loc | churn_count | complexity | relative_churn | baseline |
+|---|---|---|---|---|---|
+| **yagura** | **6.27** | **7.34** | 2.99 | 2.49 | 0.100 |
+| groupcache | 2.84 | 0.00 | 0.00 | 0.00 | 0.214 |
+| mux | 1.30 | 1.30 | 1.30 | 0.83 | 0.794 |
+| logrus | 1.53 | 1.53 | 1.53 | 1.53 | 0.656 |
+
+**6–7× against 1.3–2.8× everywhere else.** The cause is this repository's structure: the
+release ritual makes the same four files appear in every commit while also being the largest
+and most-changed, so any ranking scores well. Every lift figure recorded from v0.119.0
+onward should be read as *yagura-specific*, not as an expected value.
+
+#### 2. `precision@K` saturates on small repositories — a limit not previously known
+
+On mux and logrus **all four scorers tie exactly, at precision 1.000**. With 17 and 53 files
+and baselines of 0.79 and 0.66, nearly every file is touched by a fix in the label window, so
+any ordering puts winners in the top K. Under those conditions **the metric cannot
+discriminate between scorers at all.**
+
+This matters for reading past releases: a lift pinned near 1.0 does not mean "no difference",
+it means **"this metric cannot detect a difference at this scale"**. The distinction was not
+drawn before because it never came up on a single repository.
+
+#### 3. v0.128.0's change-coupling conclusion was repository-specific
+
+| repo | k=1 (confidence) | k=1 (lift-ranked) | k=3 | coverage |
+|---|---|---|---|---|
+| yagura | 0.96 (**loses**) | 1.13 | 1.94 | 0.65 |
+| mux | 1.00 (ties) | 0.55 | 1.00 | 0.61 |
+| **logrus** | **1.32 (wins)** | 1.29 | **1.27 (wins)** | 0.35 |
+| groupcache | no rules at default thresholds | — | — | — |
+
+v0.128.0 reported that mined coupling "does not reliably beat naming the busiest files".
+**On logrus it does.** That release had correctly identified the release-ritual mechanism
+inflating its frequency baseline, but could not show the counterfactual. Now it can.
+
+#### 4. Sliding windows: expanding wins monotonically — and the reason is confounded
+
+v0.127.0 recorded a null result because a two-month history cannot exhibit year-scale decay.
+Re-measured on 12.5 years (churn_count lift):
+
+| window | logrus | mux |
+|---|---|---|
+| expanding | **1.53** | **1.30** |
+| 10 years | 1.53 | 1.30 |
+| 2 years | 1.47 | 1.23 |
+| 1 year | 1.34 | 1.08 |
+| 180 days | 1.25 | 1.00 |
+| 90 days | 1.23 | 1.00 |
+
+Monotonic decline on both. **This does not refute McIntosh & Kamei.** Shrinking the window
+simultaneously discards stale data (freshness ↑) and discards data (statistics ↓) — logrus's
+feature window falls from 468 to 22 commits — and this protocol cannot separate the two
+effects. The only supportable claim is: **the sliding window never once helped on any of the
+three repositories tested, so `expanding` remains the right default.** The baseline also
+climbs as the window shrinks (0.656 → 0.828), the population shift v0.127.0 flagged.
+
+#### Added
+
+`docs/MULTIREPO_FINDINGS.md` — the full tables, the mechanisms, and the reproduction steps.
+No experiment-only code is kept: the temporary harnesses were deleted deliberately, because
+the measurement uses ordinary `yagura_process_risk` / `yagura_change_coupling` calls against
+a registered slug, and a reproduction recipe beats a bespoke test that would rot.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- Cut by `make release VERSION=1.82.0`
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (unchanged — v1 compatibility holds)
+- Consecutive reproducible releases: 138 → **139** (v0.6 → v1.82.0)
+
+#### What's not yet
+
+- **All four repositories are small-to-medium Go libraries** (16–353 files). None is a large
+  application, and finding 2 says precision@K only starts discriminating at larger scale —
+  so the scorer comparison is still unresolved, now for a *known* reason rather than an
+  unexamined one.
+- `relative_churn` scored 0.00 on groupcache and 1.53 (tied) elsewhere; whether v0.125.0's
+  "weakest signal" verdict holds cannot be settled while the metric is saturated.
+
 ## [v1.81.0] - 2026-08-26
 
 ### Theme — "The assessment, with no unsourced adjective allowed"

@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v1.81.0** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **138 consecutive reproducible releases**. Adds [docs/PRODUCT_ASSESSMENT.md](docs/PRODUCT_ASSESSMENT.md) — strengths, weaknesses and improvements produced by Socratic cross-examination against this line's own measurements, with one rule: no claim without a cited measurement. It also closes a backlog by measuring instead of assuming: `RunAll` over 352 files takes ~4.0 s dominated by ~18,000 re-parses, so the 31-finding prealloc backlog is rounding error and is retired with a number attached. The public surface stays frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v1.82.0** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **139 consecutive reproducible releases**. Closes the assessment's top open item by re-measuring every defect-prediction claim against three real repositories (groupcache, gorilla/mux, sirupsen/logrus — up to 12.5 years of history), and **three prior conclusions change**: this repository's own lift figures (6.3–7.3×) are outliers against 1.3–2.8× elsewhere; `precision@K` **saturates on small repositories** so all scorers tie at 1.000, a limit not previously known; and change coupling, reported in v0.128.0 as barely beating a frequency baseline, **wins on logrus (1.32×)**. See [docs/MULTIREPO_FINDINGS.md](docs/MULTIREPO_FINDINGS.md) and [docs/PRODUCT_ASSESSMENT.md](docs/PRODUCT_ASSESSMENT.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
