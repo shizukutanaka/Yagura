@@ -10,7 +10,7 @@
 
 **A zero-dependency Go MCP server for orchestrating a portfolio of solo-developer projects** — and a working example of harness engineering as a deployable artifact.
 
-Status: **v1.80.0** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **137 consecutive reproducible releases**. This is the first release actually **published by the pipeline**: cross-compiled binaries, SHA-256 checksums, a CycloneDX SBOM and SLSA3 provenance. The version jumps from this branch's internal 1.3.3 to 1.80.0 because three releases were previously published *by hand* (1.73 → 1.78 → 1.79), and a version number has one job — telling users which build is newer. The internal lineage loses to the one users could actually see. The public surface stays frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
+Status: **v1.81.0** — 79 MCP tools, 96 internal packages, 0 external Go dependencies, **138 consecutive reproducible releases**. Adds [docs/PRODUCT_ASSESSMENT.md](docs/PRODUCT_ASSESSMENT.md) — strengths, weaknesses and improvements produced by Socratic cross-examination against this line's own measurements, with one rule: no claim without a cited measurement. It also closes a backlog by measuring instead of assuming: `RunAll` over 352 files takes ~4.0 s dominated by ~18,000 re-parses, so the 31-finding prealloc backlog is rounding error and is retired with a number attached. The public surface stays frozen under [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Full lens-by-lens release history: see [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

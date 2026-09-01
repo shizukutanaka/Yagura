@@ -4,6 +4,61 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.81.0] - 2026-08-26
+
+### Theme — "The assessment, with no unsourced adjective allowed"
+
+Adds `docs/PRODUCT_ASSESSMENT.md`: strengths, weaknesses and improvements, produced by
+Socratic cross-examination against this line's own measurements. The discipline is stated in
+the document and enforced by its author: **every claim cites a measurement or an
+implementation; a line without a source does not ship.**
+
+#### What survived questioning as a strength
+
+Reproducible builds (137 consecutive, gate-enforced, not a badge), promises-as-tests (with
+the guards' own two failures recorded), the habit of shipping self-refutations (503 findings
+declared noise, leaked headline numbers re-measured downward), token economy (whole-repo
+quality read ~824,000 → ~850 tokens), and local-first that is now actually credential-free.
+
+#### What is admitted as a weakness, with evidence
+
+A single-repository evidence base for every defect-prediction number; zero usage data behind
+the 79-tool surface frozen at 1.0; **hand-written PBKDF2** as the structural price of
+ADR-0001 (RFC-compliant, tested, OWASP-pinned — and still not an audited library); a
+measured ~4-second discovery call; and a publication pipeline that has never once run.
+
+#### One backlog closed by measurement instead of assumption
+
+`internal/lens/bench_test.go` (new, permanent): `RunAll` over 352 real files takes
+**~4.0 s**, dominated by re-parsing — 29 lenses plus the two meta-lens bundles perform
+roughly 18,000 `go/parser` runs per discovery call. Two decisions fall out with numbers
+attached:
+
+1. The **prealloc backlog (31 findings) is closed as measured-and-declined** — slice
+   regrowth cannot be more than rounding error against 4 s. It had been carried since v0.92
+   as an unmeasured "perf backlog"; carrying it further without a number would violate the
+   project's own standard.
+2. If the 4 s ever becomes a real cost, the correct move is **parse sharing**, not
+   preallocation — and it stays unpaid until then, because it breaks the zero-coupling
+   pure-function lens design that the price buys.
+
+#### Verification
+
+- `go test -race -count=1 ./...` — green (the benchmark does not run in normal suites)
+- `make verify` byte-for-byte reproducible; `go.sum` absent
+- Cut by `make release VERSION=1.81.0`
+
+#### Counts
+
+- MCP tools: 79 · Internal packages: 96 (unchanged — v1 compatibility holds)
+- Consecutive reproducible releases: 137 → **138** (v0.6 → v1.81.0)
+
+#### What's not yet
+
+- The four open items ranked in the assessment: multi-repository re-measurement, real usage
+  data, parse sharing (only if 4 s starts to matter), and false-positive reads for the
+  remaining lenses.
+
 ## [v1.80.0] - 2026-08-25
 
 ### Theme — "Shipping it, and reconciling the version with the users who can see it"

@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "yagura",
   "displayName": "Yagura",
-  "version": "1.80.0",
+  "version": "1.81.0",
   "description": "Zero-dependency Go MCP server for orchestrating a solo-dev project portfolio: registry, security sensors (SBOM/vulns/secrets/GHA/pin-drift), harness artifacts, composite risk reasoning, and .claude/ artifact auditing.",
   "author": {
     "name": "shizukutanaka",
