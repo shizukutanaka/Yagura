@@ -42,9 +42,24 @@ type Result struct {
 	// 応答は `incomplete: true` の 1 語だった。実際に読めたのは 5.6% だが、
 	// 利用者には 99% なのか 5% なのか判別できない。「不完全である」は
 	// 「どれだけ信用してよいか」を答えない。
-	Matched    int
-	Unreadable []string // ツリー内に在るが読めなかったソース
+	Matched int
+	// TruncatedBy は **どちらの上限で切れたか**("files" | "bytes" | "")。
+	//
+	// なぜ真偽値では足りないか(v1.87.0 の実測): kubernetes で max_files を
+	// 5,000 → 25,000 と上げても読めるのは 3,843 件のままだった——先に効いていたのは
+	// 50 MB のバイト上限だから。`Truncated` だけを見せると、利用者は
+	// **文書化された摘み(max_files)を上げ続けて何も起きない** ことになり、
+	// なぜ効かないかを知る手段が無い。「効かない対処を指す診断」は
+	// このプロジェクトが v1.86.0 で git log の timeout でも踏んだ型である。
+	TruncatedBy string
+	Unreadable  []string // ツリー内に在るが読めなかったソース
 }
+
+// TruncatedBy の取りうる値。
+const (
+	TruncatedByFiles = "files"
+	TruncatedByBytes = "bytes"
+)
 
 // Incomplete はスキャンが完全でなかったか(cap 到達 or 読取失敗)を返す。
 // true の場合、findings が空でも「クリーン」と結論してはならない。
@@ -104,6 +119,10 @@ func ReadLimited(dir string, maxFiles int, maxTotalBytes int64, accept func(name
 		res.Matched++
 		if len(res.Files) >= maxFiles {
 			res.Truncated = true
+			// 先に立った理由を保つ(後から来たバイト上限で上書きしない)。
+			if res.TruncatedBy == "" {
+				res.TruncatedBy = TruncatedByFiles
+			}
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
@@ -116,6 +135,9 @@ func ReadLimited(dir string, maxFiles int, maxTotalBytes int64, accept func(name
 		}
 		if totalBytes+int64(len(data)) > maxTotalBytes {
 			res.Truncated = true
+			if res.TruncatedBy == "" {
+				res.TruncatedBy = TruncatedByBytes
+			}
 			return nil
 		}
 		totalBytes += int64(len(data))

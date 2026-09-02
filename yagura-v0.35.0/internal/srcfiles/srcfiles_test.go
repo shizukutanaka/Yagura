@@ -172,3 +172,59 @@ func TestReadLimited_ReportsHowIncompleteTheScanWas(t *testing.T) {
 		t.Error("a complete scan must not report Incomplete")
 	}
 }
+
+// TestReadLimited_SaysWhichCapBoundTheScan は「どちらの上限で切れたか」を
+// 報告することを要求する。
+//
+// 発見の経緯(v1.87.0): kubernetes(13,424 Go ファイル)で上限を掃引したところ、
+// max_files を 5,000 → 10,000 → 25,000 と上げても読めるのは **3,843 件のまま**
+// だった。先に効いていたのは 50 MB のバイト上限だからである。
+//
+// 利用者から見ると、文書化された摘み(max_files)を上げても `incomplete: true` の
+// ままで、**なぜ効かないのかを知る手段が無い**。これは v1.86.0 で直した
+// 「履歴が大きすぎる → max_commits を下げよ」と同じ型の欠陥——
+// **効かない対処を指す診断**。同じ型を 3 度目に踏まないために形にする。
+func TestReadLimited_SaysWhichCapBoundTheScan(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 20; i++ {
+		body := "package p\n// " + strings.Repeat("x", 500) + "\n"
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%02d.go", i)), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	accept := func(n string) bool { return strings.HasSuffix(n, ".go") }
+
+	// ファイル数で切れた場合。
+	byFiles, err := ReadLimited(dir, 5, DefaultMaxBytes, accept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !byFiles.Truncated || byFiles.TruncatedBy != TruncatedByFiles {
+		t.Errorf("hitting the file cap must be attributed to %q, got %q (truncated=%v)",
+			TruncatedByFiles, byFiles.TruncatedBy, byFiles.Truncated)
+	}
+
+	// バイト数で切れた場合。ファイル上限は十分大きいので、こちらが binding。
+	byBytes, err := ReadLimited(dir, 1000, 2000, accept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !byBytes.Truncated || byBytes.TruncatedBy != TruncatedByBytes {
+		t.Errorf("hitting the byte cap must be attributed to %q, got %q (truncated=%v)",
+			TruncatedByBytes, byBytes.TruncatedBy, byBytes.Truncated)
+	}
+	// 「max_files を上げれば直る」と誤解させないことがこのテストの本体。
+	if byBytes.TruncatedBy == TruncatedByFiles {
+		t.Error("a byte-bound scan must NOT be reported as file-bound: raising max_files " +
+			"would change nothing and the caller would have no way to discover that")
+	}
+
+	// 完全スキャンでは空(常に何か言う報告器は何も報告していない)。
+	full, err := ReadLimited(dir, 1000, DefaultMaxBytes, accept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.Truncated || full.TruncatedBy != "" {
+		t.Errorf("a complete scan must attribute nothing, got %q", full.TruncatedBy)
+	}
+}

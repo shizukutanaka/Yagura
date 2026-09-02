@@ -4,6 +4,73 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.87.0] - 2026-09-02
+
+**Theme: the same defect, a third time — a diagnostic pointing at a remedy that cannot work.**
+
+Two of the assessment's open items closed, and closing the second one exposed a pattern this
+session has now hit three times.
+
+### The scan cap: the documented knob is not the one that binds
+
+"What is the right value for the 1,000-file cap?" had been open since v1.83.0 because nobody
+had measured the cost of raising it. Measured on kubernetes (13,424 Go files):
+
+| max_files | actually read | source | RunAll | heap | findings |
+|---|---|---|---|---|---|
+| 1,000 | 1,000 / 13,424 | 11.2 MB | **10.1 s** | 22 MB | 6,472 |
+| 2,500 | 2,500 / 13,424 | 33.5 MB | **28.5 s** | 67 MB | 15,574 |
+| 5,000 | **3,843** / 13,424 | **50.0 MB** | 39.6 s | 99 MB | 21,975 |
+| 10,000 | 3,843 | 50.0 MB | 40.9 s | 95 MB | 21,973 |
+| 25,000 | 3,843 | 50.0 MB | 40.4 s | 94 MB | 21,936 |
+
+Nothing changes above 5,000. **The 50 MB byte cap binds first**, not the file cap — so raising
+`max_files`, the documented knob, does nothing on a large repository, and `incomplete: true`
+gives the caller no way to discover that. They can raise it from 5,000 to 25,000 and watch
+nothing happen.
+
+That is the same shape as the bug fixed in v1.86.0, where a `git log` timeout said "history
+too large; lower max_commits" and lowering it did not help because the real cause was a
+blobless clone. **A diagnostic that names an ineffective remedy is worse than none**, and this
+session has now shipped that defect three times: the timeout misdiagnosis, `incomplete` as a
+bare boolean, and now the cap attribution.
+
+`Result.TruncatedBy` (`"files"` | `"bytes"` | `""`) is returned by all four producers as
+`truncated_by`.
+
+**The cap itself is unchanged, deliberately.** Going 1,000 → 5,000 raises kubernetes coverage
+from 7.4% to 28.6% and takes the discovery call from **10 s to 40 s**. Memory is not the
+constraint (22 → 99 MB); latency is. Which of coverage and speed matters is the caller's
+situation, not something one default can settle — so the honest move is to show which cap is
+binding rather than to pick for them.
+
+Incidentally the known "~4 s for RunAll" figure is for this repository's 352 files. At 1,000
+files it is 10 s. That had never been measured either.
+
+### Inf/NaN safety, mechanized at the seam
+
+v1.86.0 listed "Inf/NaN coverage is still guarded by human attention" as open. It is now
+guarded by the exit.
+
+When a tool result fails to marshal, the MCP seam walks it by reflection and names the
+**JSON path** of every non-finite float, honouring `json` tags so the path matches what the
+caller would have received. It also states the fix: an undefined ratio is `null`, not a
+fabricated finite value and not 0, which reads as "worse than random".
+
+Before, the caller got `json: unsupported value: +Inf` and no field name — the same
+class of unhelpful diagnostic as above, sitting in this project's own error path while it
+was busy writing about the pattern elsewhere. Covered by unit tests for the locator and an
+end-to-end test that registers a tool returning `+Inf` and asserts the response names
+`validation.lift`.
+
+### What's not yet
+
+- CI still does not exist. The workflows are committed inert under `ci-workflows-pending/`;
+  this session's GitHub App lacks `workflows` permission. Tag push is separately 403.
+- The real cost of opening a file is still unmeasured, so "which scorer is best" still has
+  no answer — only a known dependency.
+- Which of the 79 tools actually get called is still unknown.
+
 ## [v1.86.0] - 2026-09-02
 
 **Theme: the repository could not build, and CI had never run once.**

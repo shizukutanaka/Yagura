@@ -582,6 +582,15 @@ func (s *Server) handleToolsCall(ctx context.Context, w http.ResponseWriter,
 	// MCP convention: tool result is wrapped in `content` array.
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
+		// 一番多い原因は非有限の float(+Inf / NaN)で、encoding/json は
+		// **構造体ごと** 落とすため tool の応答が丸ごと消える。素の
+		// `json: unsupported value: +Inf` はどのフィールドか言わないので、
+		// 反射で場所を特定して名指しする——**直す場所を指さない診断は、
+		// 診断していないのとほぼ同じ**(v1.86.0 の partial-clone 誤診と同じ教訓)。
+		if detail := describeNonFinite(result); detail != "" {
+			writeJSONRPCError(w, id, -32603, "serialize error: "+detail, err)
+			return
+		}
 		writeJSONRPCError(w, id, -32603, "serialize error", err)
 		return
 	}

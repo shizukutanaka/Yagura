@@ -102,6 +102,7 @@ func buildLensTool(d Deps) *Tool {
 				"files_read":   len(sr.Files),
 				"files_total":  sr.Matched,
 				"incomplete":   sr.Incomplete(),
+				"truncated_by": sr.TruncatedBy,
 				"lenses_total": len(lens.Names()),
 			}
 			if in.Slug != "" {
