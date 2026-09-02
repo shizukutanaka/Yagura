@@ -4,6 +4,84 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.84.0] - 2026-09-02
+
+**Theme: we changed the metric to remove a confound, and every scorer we ship lost to reading the smallest files first.**
+
+v1.83.0 measured five large applications and reported an ordering: `size_loc` best in 4 of 5,
+`relative_churn` worst in 5 of 5. It also explained, in the same document, why that ordering
+could not be trusted — the label is "files touched by a fix commit in the next window", and
+bigger files are likelier to be touched, so a ranking can win on `precision@K` by preferring
+big files and nothing else. We wrote the caveat and then printed the ordering anyway.
+A caveat does not cancel a confound.
+
+**Research basis.** Effort-aware evaluation: Arisholm, Briand & Johannessen (JSS 2010) and
+Mende & Koschke (CSMR 2010). Instead of "the top K files", inspect files in ranked order
+until a budget of 20% of total LOC is spent, and measure recall. A 4,000-line file and a
+50-line file stop counting as one pick each — size gets paid for. The same literature
+supplies the control we were missing: **ManualUp**, ranking smallest-file-first, which is a
+known-strong effort-aware baseline. A comparison that omits it is not a fair fight.
+
+**Same repositories, same walk-forward folds, only the metric changed** (effort lift, 1.0 = random order):
+
+| repo | size_loc | **size_loc_asc** (ManualUp) | churn_count | complexity | relative_churn |
+|---|---|---|---|---|---|
+| groupcache | 0.89 | **1.50** | 0.83 | 0.83 | 0.33 |
+| gorilla/mux | 0.00 | **2.01** | 0.00 | 0.00 | 0.57 |
+| logrus | 0.29 | **2.29** | 0.58 | 0.93 | 0.74 |
+| prometheus | 0.30 | **1.69** | 0.48 | 1.02 | 1.16 |
+| hugo | 0.49 | **1.35** | 0.85 | 0.81 | 1.24 |
+| etcd | 0.42 | **1.43** | 0.97 | 0.90 | 1.36 |
+| moby | 0.59 | **1.72** | 0.98 | 0.59 | **1.92** |
+| kubernetes | 0.75 | **1.46** | 0.96 | **1.17** | 0.42 |
+
+- **ManualUp is best in 8 of 8** (1.35-2.29) — the scorer that `precision@K` ranked near last.
+- **`size_loc` is below random in 8 of 8** (0.00-0.89) — the scorer `precision@K` ranked first.
+- **`relative_churn` beats random in 4 of 8**, peaking at 1.92. v1.83.0's "weakest in 5 of 5"
+  was a property of the metric, not the signal.
+
+**v1.83.0's scorer ordering is retracted.**
+
+The uncomfortable part is not the retraction. It is that **reading the smallest files first —
+requiring no analysis, no git history, and none of this software — beat every signal we ship,
+on every repository we measured.** Under an effort budget, the ranking in
+`yagura_process_risk` is not justified. Rather than bury that, the walk-forward note now
+states it, so the tool tells you about its own weakness before you trust its ordering.
+
+**Why the weights still do not change.** v1.83.0 deferred re-weighting because the
+measurement was confounded. It is not confounded now, and the answer is still no — for a
+different and worse reason. The problem may not be the blend but the family: tuning the mix
+of five process signals that lose as a group is optimizing something that should perhaps not
+exist, which is the most common error there is. The next move is to isolate *when*
+effort-aware and precision@K disagree, not to re-weight inside a losing family.
+
+**And ManualUp's win should not be taken at face value either.** A LOC budget treats twenty
+50-line files as equal in cost to one 1,000-line file, which ignores context-switching
+entirely. Effort-aware is a better metric than precision@K; it is not true effort. What is
+established is that **two defensible metrics point in opposite directions** — not which one
+is right.
+
+### Added
+
+- `walkforward` reports `mean_recall_at_effort` and `mean_effort_lift` per scorer beside the
+  existing precision@K numbers, and `effort_budget` on the report. Both are returned, because
+  reporting only the flattering one is how v1.83.0 got it wrong.
+- `size_loc_asc` (ManualUp) joins the default scorers as a permanent control.
+- `largeapp_test.go` now fails loudly when the git-log paths and the scanned source paths do
+  not intersect. Pointing it at a subdirectory instead of a repository root produces "no fold
+  had positives", which reads exactly like a finding about the product — this session misread
+  it once before catching it. That is the second time a measurement fault impersonated a
+  product fault, so it is now a gate rather than a lesson.
+
+### What's not yet
+
+- Eight repositories, all open-source Go. Effort is approximated by LOC, which no developer
+  actually experiences.
+- The three options this opens — rebuild the signals, ship ManualUp as the default ranking, or
+  stop ranking and just report metrics — cannot be chosen on today's evidence. Filed as the
+  assessment's #1.
+- Publication is still blocked: tag push returns 403 from the organization egress policy.
+
 ## [v1.83.0] - 2026-09-02
 
 **Theme: the large-application re-measurement — and the two defects it exposed in us.**

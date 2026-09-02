@@ -71,13 +71,40 @@ func TestLargeApp(t *testing.T) {
 	t.Logf("=== %s n=%d: commits=%d files_read=%d/%d incomplete=%v span=%.0fd ===",
 		filepath.Base(dir), n, len(commits), len(sr.Files), sr.Matched, sr.Incomplete(), span)
 
+	// git log のパスと走査したソースのパスが **交わっているか** を先に確かめる。
+	//
+	// dir がリポジトリのルートでない場合(例: モノレポの部分ディレクトリ)、
+	// git log は "sub/dir/internal/x.go"、srcfiles は "internal/x.go" を返し、
+	// 交差が空になる。すると walkforward は「陽性が 1 つも無い」と報告し、
+	// **製品の所見のように見える**。このセッションで実際に一度読み違えた。
+	// 計測の失敗を製品の失敗と取り違えないための門。
+	touched := map[string]bool{}
+	for _, c := range commits {
+		for _, f := range c.Files {
+			touched[f.Path] = true
+		}
+	}
+	overlap := 0
+	for path := range sizes {
+		if touched[path] {
+			overlap++
+		}
+	}
+	if overlap == 0 {
+		t.Fatalf("no git-log path matches any scanned source file (%d logged, %d scanned): "+
+			"YAGURA_LARGE_DIR must be the repository ROOT, or the paths will not line up — "+
+			"this is a harness error, not a finding about the product", len(touched), len(sizes))
+	}
+	t.Logf("  path overlap: %d/%d scanned files appear in the log", overlap, len(sizes))
+
 	wf := walkforward.Run(commits, sizes, cx, walkforward.Options{})
 	if !wf.Valid {
 		t.Logf("  walkforward INVALID (no fold had positives)")
 	} else {
-		for _, name := range []string{"size_loc", "churn_count", "complexity", "relative_churn"} {
+		for _, name := range []string{"size_loc", "size_loc_asc", "churn_count", "complexity", "relative_churn"} {
 			s := wf.PerScorer[name]
-			t.Logf("  wf %-15s lift=%.3f prec=%.3f base=%.3f", name, s.MeanLift, s.MeanPrecision, s.MeanBaseline)
+			t.Logf("  wf %-14s prec=%.3f lift=%.3f | effort recall=%.3f lift=%.3f",
+				name, s.MeanPrecision, s.MeanLift, s.MeanRecallAtEffort, s.MeanEffortLift)
 		}
 		t.Logf("  wf best=%s folds=%d skipped=%d", wf.Best, len(wf.Folds), wf.SkippedFolds)
 	}

@@ -62,8 +62,16 @@ func DefaultScorers() []Scorer {
 		{"churn_count", func(r defectdataset.Row) float64 { return float64(r.ChurnCount) }},
 		{"complexity", func(r defectdataset.Row) float64 { return float64(r.Complexity) }},
 		{"size_loc", func(r defectdataset.Row) float64 { return float64(r.SizeLOC) }},
+		// ManualUp — 小さいファイルから読む。effort-aware 文献で知られた
+		// **強い対照群** で、これを置かない比較は都合の良い相手としか戦っていない
+		// (Menzies らが繰り返し指摘する落とし穴)。降順ソートなので符号を反転する。
+		{"size_loc_asc", func(r defectdataset.Row) float64 { return -float64(r.SizeLOC) }},
 	}
 }
+
+// DefaultEffortBudget は effort-aware 評価で読むと仮定する LOC の割合。
+// 20% は Arisholm らの CE / Mende & Koschke 以降、この文献で標準的に使われる値。
+const DefaultEffortBudget = 0.20
 
 // Options は評価条件。
 type Options struct {
@@ -76,6 +84,8 @@ type Options struct {
 	// 0(既定)は **expanding**(履歴の先頭から cut まで全部)。v0.127.0。
 	WindowDays int
 	Scorers    []Scorer
+	// EffortBudget は effort-aware 評価で読む LOC の割合(0 で DefaultEffortBudget)。
+	EffortBudget float64
 }
 
 // FoldInfo は 1 fold の窓の素性(順序保存の検証に使えるよう外に出す)。
@@ -101,17 +111,26 @@ type ScorerResult struct {
 	MeanPrecision float64 `json:"mean_precision_at_k"`
 	MeanBaseline  float64 `json:"mean_baseline"`
 	MeanLift      float64 `json:"mean_lift"`
-	ScoredFolds   int     `json:"scored_folds"`
+	// MeanRecallAtEffort は「全 LOC の EffortBudget 割を読むまで」に見つかった
+	// 欠陥ファイルの割合。precision@K と違い **サイズを支払わせる** ので、
+	// 大きいファイルを先に読ませるランキングは予算を食い潰して損をする。
+	MeanRecallAtEffort float64 `json:"mean_recall_at_effort"`
+	// MeanEffortLift = MeanRecallAtEffort / EffortBudget。ランダムな順で読めば
+	// 期待 recall は予算割合そのものになるので、1 がランダム相当。
+	MeanEffortLift float64 `json:"mean_effort_lift"`
+	ScoredFolds    int     `json:"scored_folds"`
 }
 
 // Report は walk-forward 全体の結果。
 type Report struct {
-	Valid        bool                    `json:"valid"`
-	GapDays      int                     `json:"gap_days"`
-	WindowMode   string                  `json:"window_mode"` // "expanding" | "sliding"
-	WindowDays   int                     `json:"window_days"`
-	Folds        []FoldInfo              `json:"folds"`
-	SkippedFolds int                     `json:"skipped_folds"`
+	Valid        bool       `json:"valid"`
+	GapDays      int        `json:"gap_days"`
+	WindowMode   string     `json:"window_mode"` // "expanding" | "sliding"
+	WindowDays   int        `json:"window_days"`
+	Folds        []FoldInfo `json:"folds"`
+	SkippedFolds int        `json:"skipped_folds"`
+	// EffortBudget は effort-aware 評価で読んだ LOC の割合(実際に使った値)。
+	EffortBudget float64                 `json:"effort_budget"`
 	PerScorer    map[string]ScorerResult `json:"per_scorer"`
 	Best         string                  `json:"best,omitempty"`
 	Note         string                  `json:"note"`
@@ -122,6 +141,20 @@ const validNote = "Walk-forward validation: each fold's features come strictly f
 	"an EXPANDING feature window (every fold trains on all history up to its cut). " +
 	"Metric is precision@K against files touched by fix commits (SZZ stage 1), with the fold's " +
 	"own positive rate as baseline; lift > 1 beats random ranking. " +
+	"Reported ALONGSIDE it is an EFFORT-AWARE metric: recall of defective files within a budget of " +
+	"20% of the total LOC, read in ranked order (Arisholm, Briand & Johannessen, JSS 2010; " +
+	"Mende & Koschke, CSMR 2010). Both are given because they disagree by construction: precision@K " +
+	"counts a 4,000-line file and a 50-line file as one pick each, while the label (files touched by " +
+	"fix commits) is itself easier to hit on large files — so a ranking can win on precision@K purely " +
+	"by preferring big files. effort_lift > 1 beats reading in random order. The size_loc_asc scorer " +
+	"is the ManualUp control from that literature: smallest-file-first is a strong effort-aware " +
+	"baseline, and a comparison without it is not a fair fight. MEASURED RESULT YOU SHOULD KNOW " +
+	"BEFORE TRUSTING A RANKING FROM THIS TOOL: across the eight repositories this project has " +
+	"measured (groupcache, gorilla/mux, logrus, prometheus, hugo, etcd, moby, kubernetes), " +
+	"size_loc_asc had the best effort-aware lift in 8 of 8 (1.35-2.29) while size_loc was BELOW " +
+	"random in 8 of 8 — the exact reverse of the precision@K ranking. Reading the smallest files " +
+	"first beat every signal shipped here. Treat a high precision@K with suspicion until the " +
+	"effort-aware number agrees with it. " +
 	"Label windows are equal-sized across folds so no fold carries extra weight in the mean."
 
 // windowNoteExpanding / windowNoteSliding は使った窓の種類を必ず言明する。
@@ -152,7 +185,11 @@ const gapNoteOff = " NO GAP was applied (gap_days=0): a fix landing immediately 
 // Run は commits を時系列で Folds+1 区間に切り、fold ごとに
 // 「先頭〜区間 i」で特徴を作り「区間 i+1」でラベルを作って scorer を評価する。
 func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options) Report {
-	rep := Report{Folds: []FoldInfo{}, PerScorer: map[string]ScorerResult{}, Note: validNote}
+	if opts.EffortBudget <= 0 || opts.EffortBudget >= 1 {
+		opts.EffortBudget = DefaultEffortBudget
+	}
+	rep := Report{Folds: []FoldInfo{}, PerScorer: map[string]ScorerResult{},
+		EffortBudget: opts.EffortBudget, Note: validNote}
 	if len(commits) < 2 {
 		rep.Note = "not enough commit history for walk-forward validation (need at least 2 commits)"
 		return rep
@@ -176,6 +213,7 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 	// 集計器
 	type acc struct {
 		precision, baseline, lift float64
+		recallEffort              float64
 		n                         int
 	}
 	accs := map[string]*acc{}
@@ -291,6 +329,7 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 		}
 		info.K = k
 		baseline := ds.Meta.PositiveRate
+		budget := effortBudgetLOC(ds.Rows, opts.EffortBudget)
 		for _, s := range scorers {
 			rows := append([]defectdataset.Row(nil), ds.Rows...)
 			sort.SliceStable(rows, func(a, b int) bool {
@@ -313,6 +352,7 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 			if baseline > 0 {
 				a.lift += p / baseline
 			}
+			a.recallEffort += recallAtEffort(rows, budget)
 			a.n++
 		}
 		rep.Folds = append(rep.Folds, info)
@@ -330,11 +370,13 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 			continue
 		}
 		res := ScorerResult{
-			Name:          name,
-			MeanPrecision: a.precision / float64(a.n),
-			MeanBaseline:  a.baseline / float64(a.n),
-			MeanLift:      a.lift / float64(a.n),
-			ScoredFolds:   a.n,
+			Name:               name,
+			MeanPrecision:      a.precision / float64(a.n),
+			MeanBaseline:       a.baseline / float64(a.n),
+			MeanLift:           a.lift / float64(a.n),
+			MeanRecallAtEffort: a.recallEffort / float64(a.n),
+			MeanEffortLift:     a.recallEffort / float64(a.n) / opts.EffortBudget,
+			ScoredFolds:        a.n,
 		}
 		rep.PerScorer[name] = res
 		if res.MeanLift > bestLift {
@@ -349,4 +391,58 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 			"walk-forward validation is unavailable for this history", rep.SkippedFolds)
 	}
 	return rep
+}
+
+// effortBudgetLOC は「読む」と仮定する LOC 数を返す。最低 1 行(0 予算では
+// どの scorer も recall 0 になり比較が無意味になる)。
+func effortBudgetLOC(rows []defectdataset.Row, fraction float64) int {
+	total := 0
+	for _, r := range rows {
+		total += r.SizeLOC
+	}
+	b := int(float64(total) * fraction)
+	if b < 1 {
+		b = 1
+	}
+	return b
+}
+
+// recallAtEffort は「上から予算 LOC 分だけ読む」までに見つかった欠陥ファイルの割合。
+//
+// これが precision@K と違うのは **サイズを支払わせる** 点にある。上位 K 件では
+// 4,000 行のファイルも 50 行のファイルも 1 件と数えられるが、実際に読むのは人間で、
+// 予算は行数で尽きる。Arisholm/Briand/Johannessen(JSS 2010)と Mende & Koschke
+// (CSMR 2010)が effort-aware 評価を要求したのはこの乖離のためである。
+//
+// rows は既に scorer の降順に並んでいることを前提とする(呼出側の責務)。
+func recallAtEffort(rows []defectdataset.Row, budgetLOC int) float64 {
+	positives := 0
+	for _, r := range rows {
+		if r.Fixed {
+			positives++
+		}
+	}
+	if positives == 0 {
+		return 0
+	}
+	spent, found := 0, 0
+	for _, r := range rows {
+		// 予算に収まらないファイルが来たら **そこで止める**。
+		//
+		// 最初の 1 件だけは無条件に読ませる救済を一度書いたが、それは間違いだった:
+		// 巨大ファイルを先頭に置くランキング——まさにこの指標が罰するはずの
+		// 相手——にだけ無料の当たりを配ってしまう。予算 880 行で 4,000 行の
+		// ファイルは読めない。読めないものを読めたことにしない。
+		//
+		// 飛ばして次を読む(skip)のではなく止める(break)のは、skip が
+		// **利用者が実際に辿る順序と違う順序**を評価してしまうため。
+		if spent+r.SizeLOC > budgetLOC {
+			break
+		}
+		spent += r.SizeLOC
+		if r.Fixed {
+			found++
+		}
+	}
+	return float64(found) / float64(positives)
 }

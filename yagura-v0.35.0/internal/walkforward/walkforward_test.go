@@ -1,6 +1,7 @@
 package walkforward
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -336,4 +337,109 @@ func TestRun_SlidingWindowEmptyIsSkipped(t *testing.T) {
 			t.Errorf("a skipped fold must state why: %+v", f)
 		}
 	}
+}
+
+// --- effort-aware evaluation (v1.84.0) ---
+
+// TestRun_EffortAwarePenalisesRankingBySize は precision@K の交絡を解く。
+//
+// 問題: ラベルは「次窓で fix commit に触れられたファイル」で、**大きいファイルほど
+// 触れられやすい**。v1.83.0 の大規模 5 件で size_loc が 4/5 勝ち、サイズで正規化した
+// relative_churn が 5/5 で最弱だったが、これは「size が良い予測子」とも
+// 「ラベルがサイズを報酬している」とも読め、precision@K では分離できなかった。
+//
+// 研究の答えは effort-aware 評価(Arisholm/Briand/Johannessen JSS 2010、
+// Mende & Koschke CSMR 2010)。「上位 K ファイル」ではなく「読む LOC の予算」で
+// 打ち切るので、**大きいファイルを先に読ませるランキングは予算を食い潰して損をする**。
+//
+// この fixture では巨大な 1 ファイルだけが fix され、小さいファイルは fix されない。
+// precision@K なら size 順が満点になるが、effort-aware では予算のほぼ全部を
+// その 1 ファイルに使うので recall は上がらない。
+func TestRun_EffortAwarePenalisesRankingBySize(t *testing.T) {
+	rep := Run(effortCommits(t), effortSizes(), nil, Options{Folds: 2})
+	if !rep.Valid {
+		t.Fatalf("fixture must produce a valid report: %+v", rep.Folds)
+	}
+	if rep.EffortBudget <= 0 || rep.EffortBudget >= 1 {
+		t.Fatalf("effort budget must be a fraction of total LOC, got %v", rep.EffortBudget)
+	}
+	size, ok := rep.PerScorer["size_loc"]
+	if !ok {
+		t.Fatal("size_loc must be scored")
+	}
+	// precision@K では size 順が強いのに、effort-aware では平凡になる——
+	// この 2 つが乖離すること自体がラベル交絡の存在証明である。
+	if size.MeanRecallAtEffort >= size.MeanPrecision {
+		t.Errorf("ranking by size must lose ground under an effort budget: "+
+			"precision %.3f vs recall@effort %.3f", size.MeanPrecision, size.MeanRecallAtEffort)
+	}
+}
+
+// ManualUp(小さいファイルから読む)は effort-aware 文献で知られた強い対照群。
+// 置いていない比較は「都合の良い相手としか戦っていない」ことになる。
+func TestRun_DefaultScorersIncludeTheManualUpControl(t *testing.T) {
+	rep := Run(effortCommits(t), effortSizes(), nil, Options{Folds: 2})
+	up, ok := rep.PerScorer["size_loc_asc"]
+	if !ok {
+		t.Fatal("the ManualUp control (smallest-file-first) must be scored by default")
+	}
+	// 対照群が必ず負けるなら対照群ではない。この fixture では安い当たりが在るので
+	// ManualUp が size_loc を effort-aware で上回らなければ、指標が効いていない。
+	if down := rep.PerScorer["size_loc"]; up.MeanRecallAtEffort <= down.MeanRecallAtEffort {
+		t.Errorf("under an effort budget ManualUp should beat largest-first: %.3f vs %.3f",
+			up.MeanRecallAtEffort, down.MeanRecallAtEffort)
+	}
+}
+
+// 予算内の recall は [0,1]、lift は recall/budget。定義どおりであることを固定する。
+func TestRun_EffortMetricsAreWellFormed(t *testing.T) {
+	rep := Run(effortCommits(t), effortSizes(), nil, Options{Folds: 2})
+	for name, s := range rep.PerScorer {
+		if s.MeanRecallAtEffort < 0 || s.MeanRecallAtEffort > 1 {
+			t.Errorf("%s: recall@effort out of range: %v", name, s.MeanRecallAtEffort)
+		}
+		want := s.MeanRecallAtEffort / rep.EffortBudget
+		if diff := s.MeanEffortLift - want; diff > 1e-9 || diff < -1e-9 {
+			t.Errorf("%s: effort lift must be recall/budget: %v vs %v", name, s.MeanEffortLift, want)
+		}
+	}
+}
+
+// effortCommits: fix は巨大な big.go と小さな small01/small02 の両方に来る。
+// 「大きいファイルを先に読む」ランキングは予算を使い切って何も見つけられず、
+// 「小さいファイルから読む」ランキングは安い当たりを拾える——この差が
+// precision@K には現れず effort-aware にだけ現れることを見るための fixture。
+func effortCommits(t *testing.T) []churn.Commit {
+	t.Helper()
+	var out []churn.Commit
+	for i := 1; i <= 24; i++ {
+		subject, paths := "feat: routine work", []string{fmt.Sprintf("small%02d.go", i%8)}
+		switch {
+		case i%4 == 0:
+			subject, paths = "fix: crash in big", []string{"big.go"}
+		case i%4 == 2:
+			subject, paths = "fix: off-by-one", []string{"small01.go", "small02.go"}
+		}
+		var fcs []churn.FileChange
+		for _, p := range paths {
+			fcs = append(fcs, churn.FileChange{Path: p, Added: 3, Deleted: 1})
+		}
+		out = append(out, churn.Commit{
+			Hash:    fmt.Sprintf("c%02d", i),
+			When:    time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i),
+			Author:  "dev",
+			Subject: subject,
+			Files:   fcs,
+		})
+	}
+	return out
+}
+
+// effortSizes: big.go が全 LOC の大半を占める。
+func effortSizes() map[string]int {
+	m := map[string]int{"big.go": 4000}
+	for i := 0; i < 8; i++ {
+		m[fmt.Sprintf("small%02d.go", i)] = 50
+	}
+	return m
 }
