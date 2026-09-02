@@ -417,8 +417,12 @@ func effortCommits(t *testing.T) []churn.Commit {
 		switch {
 		case i%4 == 0:
 			subject, paths = "fix: crash in big", []string{"big.go"}
+		// 修正される小さいファイルは **名前順で後ろ** に置く。前に置くと、
+		// 予算が縮んでも同点タイブレーク(パス昇順)で先に読まれてしまい、
+		// 「予算が効いている」ことを検出できない fixture になる(最初にそう書いて
+		// 実際にテストが素通りした)。
 		case i%4 == 2:
-			subject, paths = "fix: off-by-one", []string{"small01.go", "small02.go"}
+			subject, paths = "fix: off-by-one", []string{"small06.go", "small07.go"}
 		}
 		var fcs []churn.FileChange
 		for _, p := range paths {
@@ -442,4 +446,34 @@ func effortSizes() map[string]int {
 		m[fmt.Sprintf("small%02d.go", i)] = 50
 	}
 	return m
+}
+
+// TestRun_FileCostChangesWhoWins は費用モデルが結論を左右することを固定する。
+//
+// v1.84.0 は「ManualUp(小さい順)が 8/8 で最良」と報告し、v1.85.0 は
+// 「density は ManualUp に勝てない(1.61 対 1.68)」と書いた。**どちらも
+// FileCostLOC=0、つまり「ファイルを開くのは無料」という費用観での話だった。**
+// 純粋な LOC 予算は「50 行 × 20 ファイル」と「1000 行 × 1 ファイル」を同じ労力と
+// 見なすので、小さいファイルを大量に開く戦略が構造的に有利になる。
+//
+// 開く費用を入れると ManualUp は単調に劣化する。これは指標の欠陥ではなく、
+// **費用モデルが結論の一部だった** ということ——「新しいデータが要る」と
+// 書いたのは誤りで、要ったのは新しい費用関数だった。
+func TestRun_FileCostChangesWhoWins(t *testing.T) {
+	commits, sizes := effortCommits(t), effortSizes()
+	free := Run(commits, sizes, nil, Options{Folds: 2, FileCostLOC: 0})
+	costly := Run(commits, sizes, nil, Options{Folds: 2, FileCostLOC: 400})
+	if !free.Valid || !costly.Valid {
+		t.Fatal("both runs must be valid")
+	}
+	if free.FileCostLOC != 0 || costly.FileCostLOC != 400 {
+		t.Errorf("the cost model must be reported back: %d / %d", free.FileCostLOC, costly.FileCostLOC)
+	}
+	// 開く費用が高いほど「小さいファイルを大量に読む」戦略は不利になる。
+	// これが成り立たないなら FileCostLOC は効いていない。
+	if costly.PerScorer["size_loc_asc"].MeanRecallAtEffort >= free.PerScorer["size_loc_asc"].MeanRecallAtEffort {
+		t.Errorf("ManualUp must degrade as opening a file gets expensive: %.3f (free) vs %.3f (costly)",
+			free.PerScorer["size_loc_asc"].MeanRecallAtEffort,
+			costly.PerScorer["size_loc_asc"].MeanRecallAtEffort)
+	}
 }

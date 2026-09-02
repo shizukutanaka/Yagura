@@ -97,6 +97,41 @@ func TestLargeApp(t *testing.T) {
 	}
 	t.Logf("  path overlap: %d/%d scanned files appear in the log", overlap, len(sizes))
 
+	// 費用モデルの掃引。YAGURA_LARGE_COST に LOC 換算のファイル開設費用を
+	// カンマ区切りで渡すと、同じデータを費用観だけ変えて測り直す。
+	costs := []int{0}
+	if cs := os.Getenv("YAGURA_LARGE_COST"); cs != "" {
+		costs = nil
+		for _, c := range strings.Split(cs, ",") {
+			v, err := strconv.Atoi(strings.TrimSpace(c))
+			if err != nil {
+				t.Fatalf("bad YAGURA_LARGE_COST %q: %v", c, err)
+			}
+			costs = append(costs, v)
+		}
+	}
+	for _, fc := range costs {
+		r := walkforward.Run(commits, sizes, cx, walkforward.Options{FileCostLOC: fc})
+		if !r.Valid {
+			t.Logf("  cost=%-4d INVALID", fc)
+			continue
+		}
+		best, bestLift := "", -1.0
+		for _, n := range []string{"size_loc", "size_loc_asc", "churn_count", "complexity", "relative_churn"} {
+			if l := r.PerScorer[n].MeanEffortLift; l > bestLift {
+				best, bestLift = n, l
+			}
+		}
+		t.Logf("  cost=%-4d up=%.2f churn=%.2f cx=%.2f rel=%.2f size=%.2f | best=%s",
+			fc,
+			r.PerScorer["size_loc_asc"].MeanEffortLift,
+			r.PerScorer["churn_count"].MeanEffortLift,
+			r.PerScorer["complexity"].MeanEffortLift,
+			r.PerScorer["relative_churn"].MeanEffortLift,
+			r.PerScorer["size_loc"].MeanEffortLift,
+			best)
+	}
+
 	wf := walkforward.Run(commits, sizes, cx, walkforward.Options{})
 	if !wf.Valid {
 		t.Logf("  walkforward INVALID (no fold had positives)")

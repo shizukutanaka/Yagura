@@ -4,6 +4,151 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.86.0] - 2026-09-02
+
+**Theme: the repository could not build, and CI had never run once.**
+
+This release did not start as an infrastructure release. It started as the assessment's
+last open item — the cost model — and while establishing where the work actually stood,
+the repository itself turned out to be the defect.
+
+### CI has never run. The release pipeline did not exist.
+
+Every previous statement about publication in this project — the assessment, the PR body,
+the release notes, my own status reports — said the same thing: releases are blocked by a
+**403 on `git push <tag>`** from the organization's egress policy. The 403 is real. **It was
+never the binding constraint.**
+
+- `git ls-tree origin/main -- .github` returns exactly one file: `dependabot.yml`.
+- The GitHub Actions API returns **`total_count: 0`** workflows for this repository.
+- `ci.yml`, `codeql.yml`, `release.yml` and `scorecard.yml` existed only inside
+  `yagura-v0.35.0/.github/workflows/` — a **gitignored** directory. They had never been
+  committed, never registered, and never run.
+
+Two consequences, both worse than the 403:
+
+1. **CI has never executed.** "Promises are kept by tests, enforced by machine" was true
+   only for someone who unpacked the tarball and ran them by hand. Every gate this project
+   claims was, in practice, me running it locally.
+2. **Pushing a tag would have done nothing.** With no registered `release.yml`, there is no
+   SBOM, no Sigstore signature, no SLSA-3 provenance and no GitHub Release — with or
+   without the 403.
+
+The four workflows now live at the repository root, where GitHub actually reads them, with
+a `working-directory` default pointing at the module — **but they could not be committed**.
+This session's GitHub App lacks the `workflows` permission, and the remote rejects the push:
+`refusing to allow a GitHub App to create or update workflow .github/workflows/ci.yml`.
+
+**So CI still does not exist.** The files are prepared and in the right place; registering
+them needs one push from a principal holding that permission. Rather than ship a test that
+is permanently red or quietly weaken it to green, `repotracked_test.go` pins only what is
+actually deliverable — that the workflows sit at the root and that no second copy exists
+beside the module, which was the original bug — and the missing permission is named as an
+open blocker in the assessment. `release.yml` sets it **per job**
+rather than workflow-wide: `prepare`, `sign` and `release` never check the repository out,
+so a workflow-level default would point them at a directory that does not exist.
+
+### A clone of this repository could not build
+
+`.gitignore` excluded the entire source tree. Of 428 files, **237 were tracked and 191 were
+not**, including:
+
+- **`go.mod`** — so `go build` fails on a fresh clone;
+- **100 `_test.go` files** — the tests that supposedly enforce every promise;
+- **36 production `.go` files** — parts of the program itself;
+- `LICENSE`, `NOTICE`, `CONTRIBUTING.md`, `SECURITY.md`.
+
+The exclusion's stated justification, written in `.gitignore` itself, was that committing
+the tree "trips the project's own fake-secret test fixtures under GitHub push protection".
+Checking it rather than inheriting it produced a split verdict, and the half I got wrong is
+the more useful half.
+
+**The claim was right that push protection blocks.** The first push of this release was
+rejected with GH013, on a **Slack Incoming Webhook URL** in two `secretscan` fixtures. They
+are now split string concatenations: no committed byte sequence matches, and the tests keep
+the exact shape they need at runtime, which matters because they are the fixtures of a secret
+scanner.
+
+**The claim was wrong about the scale of the remedy.** Two files needed a one-line change
+each. Excluding 191 files — `go.mod`, the CI, the whole test suite — to avoid editing two was
+never proportionate, and nobody had measured either side of that trade. The sharpest evidence
+is in `secretscan_test.go` itself: the Stripe, OpenAI-project and HuggingFace fixtures were
+*already* written as split literals, with a comment saying it is done so push-protection
+scanners do not flag them. The cheap fix was already in use, three cases above the one that
+was missed.
+
+I got it wrong in a way worth recording: before pushing, I grepped for five token shapes
+(`ghp_`, `github_pat_`, `sk-ant-`, `AKIA…`, PEM headers), found 7 files, and concluded the
+hazard was undemonstrated. The grep missed Slack webhooks entirely. Running this project's
+**own** scanner over the tree afterwards reports **36 high/critical findings across 8 files**,
+while GitHub's push protection blocked on exactly **one** pattern. Three checkers, three
+different answers. An ad-hoc grep for the shapes you happen to think of is not an audit, and
+no checker's silence is evidence — a lesson that belongs to a project shipping a secret
+scanner rather more than to most.
+
+`TestRepoTracked_EverythingNeededToBuildIsInGit` and
+`TestRepoTracked_WorkflowsAreAtTheRepositoryRoot` now make both a falsifiable promise. The
+second was confirmed red before it was made green.
+
+**CI's gates were run locally before pushing**, since they have never run anywhere else:
+`go vet` clean, `go test -race` green, coverage **85.7%** against the 75% gate, `go.sum`
+empty, zero `require` directives. `release.yml` is the exception and is stated as such: tag
+push returns 403 from here, so it is registered but **has never executed and is unverified**.
+
+### The cost model — the assessment's last open item, closed
+
+v1.84.0 reported that ManualUp (smallest-file-first) had the best effort-aware lift in 8 of
+8 repositories, and v1.85.0 that the shipped density signals still could not beat it (1.61
+vs 1.68). The assessment filed the gap under "cost model" with a caveat that a LOC budget
+ignores context switching.
+
+The caveat was the answer, unexamined. What was needed was not new data but a new **cost
+function**, measurable on the data already collected: `cost(f) = file_cost_loc + SizeLOC(f)`.
+
+Effort lift (1.0 = random order), sweeping the cost of opening one file:
+
+| repo | ManualUp @0 | best @0 | ManualUp @400 | best @400 |
+|---|---|---|---|---|
+| groupcache | 1.50 | ManualUp | 0.33 | `size_loc` (1.78) |
+| gorilla/mux | 2.01 | ManualUp | **1.02** | ManualUp |
+| logrus | 2.29 | ManualUp | 0.97 | `relative_churn` (1.08) |
+| prometheus | 2.06 | ManualUp | 0.81 | `relative_churn` (1.14) |
+| hugo | 1.35 | ManualUp | 0.39 | `churn_count` (1.38) |
+| etcd | 2.02 | ManualUp | 0.78 | `churn_count` (1.26) |
+| moby | 1.06 | `relative_churn` | 0.20 | `churn_count` (1.89) |
+| kubernetes | 2.08 | ManualUp | 0.43 | `complexity` (1.29) |
+
+ManualUp's lift decays monotonically with cost in **8 of 8**. It is the best scorer in 7 of
+8 when a file is free to open, and in **1 of 8** when opening one costs 400 lines.
+
+**So v1.84.0's headline was conditional and did not say so.** "Reading the smallest files
+first beats every signal we ship" holds only under `file_cost_loc = 0`.
+
+What this does *not* license is flipping the default the other way. `file_cost_loc = 400`
+asserts that opening a file costs as much as reading 400 lines, and this project has no
+measurement supporting that either — **0 and 400 are equally unfounded**. So the cost is not
+buried in a default: it is a parameter (`file_cost_loc` on `yagura_process_risk`), and the
+tool's note explains that the answer depends on it. Don't hide an unmeasured quantity inside
+a default value.
+
+The method lesson is the transferable one: an open item diagnosed as "we need more data" was
+actually "we need a better definition of the quantity we measure". Re-examining the
+definition was far cheaper than collecting anything — same repositories, same folds, one new
+parameter, and the conclusion reversed.
+
+### What's not yet
+
+- **No workflow is registered yet.** `.github/workflows/*` cannot be pushed by this
+  session's GitHub App (missing `workflows` permission), so CI and the release pipeline
+  remain non-existent until someone with that permission commits the four prepared files.
+  Tag push is separately still 403.
+- The real cost of opening a file is still unmeasured, so "which scorer is best" still has
+  no answer — but it now has a known shape.
+- The remote tags `ｖ1.78.0` and `ｖ1.79.0` use a full-width `ｖ` (U+FF56) and cannot match
+  `release.yml`'s `v*` filter. Recorded, deliberately not deleted: removing published tags
+  is destructive and others may have fetched them.
+- Eight repositories, all open-source Go.
+
 ## [v1.85.0] - 2026-09-02
 
 **Theme: the problem was never the blend. It was the normalization — and three lines fix it.**

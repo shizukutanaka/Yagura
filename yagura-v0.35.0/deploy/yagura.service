@@ -1,0 +1,84 @@
+# systemd unit for Yagura.
+#
+# Install:
+#   sudo cp deploy/yagura.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now yagura
+#
+# The unit drops privileges to a dedicated 'yagura' user.
+# Create the user first:
+#   sudo useradd --system --home /var/lib/yagura --shell /usr/sbin/nologin yagura
+#
+# Config goes in /etc/yagura/yagura.env (mode 0600, owned by yagura user):
+#   YAGURA_GITHUB_TOKEN=ghp_...
+#   YAGURA_MCP_TOKEN=...
+#   YAGURA_ADDR=127.0.0.1:8090
+[Unit]
+Description=Yagura portfolio orchestrator daemon
+Documentation=https://github.com/shizukutanaka/yagura
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yagura
+Group=yagura
+
+# Configuration via environment file (mode 0600 recommended)
+EnvironmentFile=-/etc/yagura/yagura.env
+
+# Default values; overridden by EnvironmentFile when set
+Environment=YAGURA_STATE_DIR=/var/lib/yagura/state
+Environment=YAGURA_ADDR=127.0.0.1:8090
+Environment=YAGURA_LOG_LEVEL=info
+
+ExecStart=/usr/local/bin/yagura
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+
+# Hardening (systemd security directives)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug @cpu-emulation @raw-io @reboot @swap @obsolete
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateUsers=true
+
+# State dir is the only writable location
+ReadWritePaths=/var/lib/yagura
+
+# Network egress: only HTTPS to GitHub API (enforce via firewall, not systemd)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# Resource limits
+LimitNOFILE=4096
+TasksMax=64
+MemoryMax=256M
+CPUQuota=50%
+
+# Standard out / err to journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=yagura
+
+[Install]
+WantedBy=multi-user.target

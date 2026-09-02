@@ -1,0 +1,148 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/shizukutanaka/yagura/internal/hookreceiver"
+)
+
+// fakeHookLookup maps a cwd prefix → slug (implements hookreceiver.ProjectLookup).
+type fakeHookLookup struct{ m map[string]string }
+
+func (f *fakeHookLookup) ResolveByPath(cwd string) (string, bool) {
+	for prefix, slug := range f.m {
+		if strings.HasPrefix(cwd, prefix) {
+			return slug, true
+		}
+	}
+	return "", false
+}
+
+// feedHook posts one hook event into the receiver via its HTTP handler.
+func feedHook(t *testing.T, r *hookreceiver.Receiver, payload string) {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/hooks/claude-code", strings.NewReader(payload))
+	w := httptest.NewRecorder()
+	r.Handle(w, req)
+	if w.Code != 200 {
+		t.Fatalf("hook post failed: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// serverWithHooks returns a Server wired to an in-memory receiver pre-loaded
+// with a small deterministic event set across two projects.
+func serverWithHooks(t *testing.T) *Server {
+	t.Helper()
+	lookup := &fakeHookLookup{m: map[string]string{
+		"/repo/breeze":  "breeze",
+		"/repo/tessera": "tessera",
+	}}
+	r, err := hookreceiver.NewReceiver("", lookup, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// breeze: 2× Bash PreToolUse, 1× Read PreToolUse
+	feedHook(t, r, `{"hook_event_name":"PreToolUse","cwd":"/repo/breeze","tool_name":"Bash"}`)
+	feedHook(t, r, `{"hook_event_name":"PreToolUse","cwd":"/repo/breeze","tool_name":"Bash"}`)
+	feedHook(t, r, `{"hook_event_name":"PreToolUse","cwd":"/repo/breeze","tool_name":"Read"}`)
+	// tessera: 1× Stop event (no tool)
+	feedHook(t, r, `{"hook_event_name":"Stop","cwd":"/repo/tessera"}`)
+
+	s := New("", nil)
+	s.SetHookReceiver(r)
+	return s
+}
+
+// ─── yagura_hook_stats ───────────────────────────────────────
+
+func TestHookStats_Unavailable(t *testing.T) {
+	tool := buildHookStatsTool(New("", nil)) // no receiver set
+	if _, err := tool.Handler(context.Background(), json.RawMessage(`{}`)); !IsCode(err, "unavailable") {
+		t.Errorf("expected unavailable without receiver, got %v", err)
+	}
+}
+
+func TestHookStats_PerProject(t *testing.T) {
+	tool := buildHookStatsTool(serverWithHooks(t))
+	out := mustCall(t, tool, map[string]any{"slug": "breeze"}).(map[string]any)
+
+	if out["slug"] != "breeze" {
+		t.Errorf("slug = %v", out["slug"])
+	}
+	st := out["stats"].(hookreceiver.Stats)
+	if st.Total != 3 {
+		t.Errorf("breeze total = %d, want 3", st.Total)
+	}
+	if st.ByTool["Bash"] != 2 || st.ByTool["Read"] != 1 {
+		t.Errorf("breeze ByTool = %v", st.ByTool)
+	}
+	// top_tools: Bash (2) ranks before Read (1).
+	top := out["top_tools"].([]hookreceiver.ToolUsage)
+	if len(top) != 2 || top[0].Tool != "Bash" || top[0].Count != 2 {
+		t.Errorf("top_tools = %+v, want Bash first", top)
+	}
+}
+
+func TestHookStats_AllProjects(t *testing.T) {
+	tool := buildHookStatsTool(serverWithHooks(t))
+	out := mustCall(t, tool, map[string]any{}).(map[string]any)
+
+	all := out["all_projects"].(map[string]hookreceiver.Stats)
+	if all["breeze"].Total != 3 {
+		t.Errorf("breeze total = %d, want 3", all["breeze"].Total)
+	}
+	if all["tessera"].Total != 1 {
+		t.Errorf("tessera total = %d, want 1", all["tessera"].Total)
+	}
+	if _, ok := out["top_tools"]; !ok {
+		t.Error("all-projects view should include top_tools")
+	}
+}
+
+// ─── yagura_hook_timeline ────────────────────────────────────
+
+func TestHookTimeline_Unavailable(t *testing.T) {
+	tool := buildHookTimelineTool(New("", nil))
+	if _, err := tool.Handler(context.Background(), json.RawMessage(`{}`)); !IsCode(err, "unavailable") {
+		t.Errorf("expected unavailable without receiver, got %v", err)
+	}
+}
+
+func TestHookTimeline_ReturnsEvents(t *testing.T) {
+	tool := buildHookTimelineTool(serverWithHooks(t))
+	out := mustCall(t, tool, map[string]any{"slug": "breeze"}).(map[string]any)
+
+	if out["count"].(int) != 3 {
+		t.Errorf("breeze count = %v, want 3", out["count"])
+	}
+	if out["hours"].(int) != 24 {
+		t.Errorf("default hours = %v, want 24", out["hours"])
+	}
+	events := out["events"].([]hookreceiver.Event)
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want 3", len(events))
+	}
+}
+
+func TestHookTimeline_EventTypeFilter(t *testing.T) {
+	tool := buildHookTimelineTool(serverWithHooks(t))
+	// Only the tessera Stop event matches event_type=Stop.
+	out := mustCall(t, tool, map[string]any{"event_type": "Stop"}).(map[string]any)
+	if out["count"].(int) != 1 {
+		t.Errorf("Stop-filtered count = %v, want 1", out["count"])
+	}
+}
+
+func TestHookTimeline_LimitCappedAt500(t *testing.T) {
+	// The handler should clamp an over-large limit to 500 (echoed indirectly:
+	// no panic, and count never exceeds available events).
+	tool := buildHookTimelineTool(serverWithHooks(t))
+	out := mustCall(t, tool, map[string]any{"limit": 99999}).(map[string]any)
+	if out["count"].(int) != 4 { // all 4 events across projects
+		t.Errorf("count = %v, want 4", out["count"])
+	}
+}

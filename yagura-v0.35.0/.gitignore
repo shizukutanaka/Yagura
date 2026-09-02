@@ -1,0 +1,28 @@
+# Build outputs
+/bin/
+/yagura
+/yagura-*
+*.exe
+
+# Coverage
+coverage.out
+coverage.html
+
+# Local config — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Fuzz corpora (keep failure cases, exclude generated coverage)
+internal/*/testdata/fuzz/*/.fuzz-cache/
+
+# Go specific
+*.test
+*.prof

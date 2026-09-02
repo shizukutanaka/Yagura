@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+launchd unit for macOS.
+
+Install (per-user):
+  cp deploy/yagura.plist ~/Library/LaunchAgents/local.yagura.plist
+  launchctl load ~/Library/LaunchAgents/local.yagura.plist
+
+Stop:
+  launchctl unload ~/Library/LaunchAgents/local.yagura.plist
+
+Logs:
+  tail -F ~/Library/Logs/yagura.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.yagura</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/yagura</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>YAGURA_ADDR</key>
+        <string>127.0.0.1:8090</string>
+        <key>YAGURA_LOG_LEVEL</key>
+        <string>info</string>
+        <!--
+          Sensitive variables (YAGURA_GITHUB_TOKEN, YAGURA_MCP_TOKEN) should
+          be set via the macOS Keychain or a separate /usr/local/etc/yagura.env
+          loaded via a wrapper script. Do not commit secrets in plist files.
+        -->
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/yagura.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/yagura.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!--
+      macOS sandbox profile is not directly applied here; consider running
+      under sandbox-exec for finer egress control.
+    -->
+</dict>
+</plist>

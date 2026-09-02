@@ -104,6 +104,15 @@ type Options struct {
 	Scorers    []Scorer
 	// EffortBudget は effort-aware 評価で読む LOC の割合(0 で DefaultEffortBudget)。
 	EffortBudget float64
+	// FileCostLOC は **1 ファイルを開くこと自体の費用** を LOC 換算で表す(既定 0)。
+	//
+	// なぜ要るか: 純粋な LOC 予算は「50 行 × 20 ファイル」と「1000 行 × 1 ファイル」を
+	// 同じ労力と見なす。実際には開くたびに文脈切り替えの費用がかかるので、
+	// 小さいファイルを大量に読む戦略(ManualUp)が不当に有利になる。
+	// 費用を cost(f) = FileCostLOC + SizeLOC(f) と置いて掃引すれば、
+	// **「どの費用観なら density が ManualUp を上回るか」** を既存データだけで測れる。
+	// 新しいデータが要ると書いたのは誤りで、要るのは新しい費用モデルだった。
+	FileCostLOC int
 }
 
 // FoldInfo は 1 fold の窓の素性(順序保存の検証に使えるよう外に出す)。
@@ -148,10 +157,12 @@ type Report struct {
 	Folds        []FoldInfo `json:"folds"`
 	SkippedFolds int        `json:"skipped_folds"`
 	// EffortBudget は effort-aware 評価で読んだ LOC の割合(実際に使った値)。
-	EffortBudget float64                 `json:"effort_budget"`
-	PerScorer    map[string]ScorerResult `json:"per_scorer"`
-	Best         string                  `json:"best,omitempty"`
-	Note         string                  `json:"note"`
+	EffortBudget float64 `json:"effort_budget"`
+	// FileCostLOC は 1 ファイルを開く費用(LOC 換算)。0 なら純粋な LOC 予算。
+	FileCostLOC int                     `json:"file_cost_loc"`
+	PerScorer   map[string]ScorerResult `json:"per_scorer"`
+	Best        string                  `json:"best,omitempty"`
+	Note        string                  `json:"note"`
 }
 
 const validNote = "Walk-forward validation: each fold's features come strictly from commits " +
@@ -169,10 +180,17 @@ const validNote = "Walk-forward validation: each fold's features come strictly f
 	"baseline, and a comparison without it is not a fair fight. MEASURED RESULT YOU SHOULD KNOW " +
 	"BEFORE TRUSTING A RANKING FROM THIS TOOL: across the eight repositories this project has " +
 	"measured (groupcache, gorilla/mux, logrus, prometheus, hugo, etcd, moby, kubernetes), " +
-	"size_loc_asc had the best effort-aware lift in 8 of 8 (1.35-2.29) while size_loc was BELOW " +
-	"random in 8 of 8 — the exact reverse of the precision@K ranking. Reading the smallest files " +
-	"first beat every signal shipped here. Treat a high precision@K with suspicion until the " +
-	"effort-aware number agrees with it. " +
+	"size_loc_asc had the best effort-aware lift in 7 of 8 while size_loc was below random in " +
+	"8 of 8 — the exact reverse of the precision@K ranking. BUT THAT RESULT IS AN ARTIFACT OF " +
+	"file_cost_loc=0, i.e. of assuming a file is free to open. A pure LOC budget calls twenty " +
+	"50-line files equal in effort to one 1,000-line file. Raising file_cost_loc decays " +
+	"size_loc_asc monotonically in 8 of 8 repositories, and at 400 it wins in only 1 of 8; the " +
+	"winner becomes churn_count, relative_churn, complexity or size_loc depending on the " +
+	"repository. So the honest statement is NOT 'reading the smallest files first beats " +
+	"everything' — it is that the ranking you should prefer depends on a cost parameter nobody " +
+	"has measured empirically. Set file_cost_loc to what opening a file actually costs your " +
+	"team, and read the answer for THAT value. Treat a high precision@K with suspicion until " +
+	"the effort-aware number agrees with it. " +
 	"Label windows are equal-sized across folds so no fold carries extra weight in the mean."
 
 // windowNoteExpanding / windowNoteSliding は使った窓の種類を必ず言明する。
@@ -207,7 +225,7 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 		opts.EffortBudget = DefaultEffortBudget
 	}
 	rep := Report{Folds: []FoldInfo{}, PerScorer: map[string]ScorerResult{},
-		EffortBudget: opts.EffortBudget, Note: validNote}
+		EffortBudget: opts.EffortBudget, FileCostLOC: opts.FileCostLOC, Note: validNote}
 	if len(commits) < 2 {
 		rep.Note = "not enough commit history for walk-forward validation (need at least 2 commits)"
 		return rep
@@ -347,7 +365,7 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 		}
 		info.K = k
 		baseline := ds.Meta.PositiveRate
-		budget := effortBudgetLOC(ds.Rows, opts.EffortBudget)
+		budget := effortBudgetLOC(ds.Rows, opts.EffortBudget, opts.FileCostLOC)
 		for _, s := range scorers {
 			rows := append([]defectdataset.Row(nil), ds.Rows...)
 			sort.SliceStable(rows, func(a, b int) bool {
@@ -370,7 +388,7 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 			if baseline > 0 {
 				a.lift += p / baseline
 			}
-			a.recallEffort += recallAtEffort(rows, budget)
+			a.recallEffort += recallAtEffort(rows, budget, opts.FileCostLOC)
 			a.n++
 		}
 		rep.Folds = append(rep.Folds, info)
@@ -413,10 +431,10 @@ func Run(commits []churn.Commit, sizes, complexity map[string]int, opts Options)
 
 // effortBudgetLOC は「読む」と仮定する LOC 数を返す。最低 1 行(0 予算では
 // どの scorer も recall 0 になり比較が無意味になる)。
-func effortBudgetLOC(rows []defectdataset.Row, fraction float64) int {
+func effortBudgetLOC(rows []defectdataset.Row, fraction float64, fileCost int) int {
 	total := 0
 	for _, r := range rows {
-		total += r.SizeLOC
+		total += r.SizeLOC + fileCost
 	}
 	b := int(float64(total) * fraction)
 	if b < 1 {
@@ -433,7 +451,7 @@ func effortBudgetLOC(rows []defectdataset.Row, fraction float64) int {
 // (CSMR 2010)が effort-aware 評価を要求したのはこの乖離のためである。
 //
 // rows は既に scorer の降順に並んでいることを前提とする(呼出側の責務)。
-func recallAtEffort(rows []defectdataset.Row, budgetLOC int) float64 {
+func recallAtEffort(rows []defectdataset.Row, budgetLOC, fileCost int) float64 {
 	positives := 0
 	for _, r := range rows {
 		if r.Fixed {
@@ -454,10 +472,10 @@ func recallAtEffort(rows []defectdataset.Row, budgetLOC int) float64 {
 		//
 		// 飛ばして次を読む(skip)のではなく止める(break)のは、skip が
 		// **利用者が実際に辿る順序と違う順序**を評価してしまうため。
-		if spent+r.SizeLOC > budgetLOC {
+		if spent+r.SizeLOC+fileCost > budgetLOC {
 			break
 		}
-		spent += r.SizeLOC
+		spent += r.SizeLOC + fileCost
 		if r.Fixed {
 			found++
 		}

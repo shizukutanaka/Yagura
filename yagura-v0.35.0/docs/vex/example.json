@@ -1,0 +1,42 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/shizukutanaka/yagura/security/vex/2026-05-13-go-net-http",
+  "author": "Sovereign Computing Stack maintainers",
+  "role": "yagura maintainers",
+  "timestamp": "2026-05-13T04:00:00Z",
+  "version": 1,
+  "tooling": "openvex-cli (hand-edited reference)",
+  "statements": [
+    {
+      "vulnerability": {
+        "@id": "https://nvd.nist.gov/vuln/detail/CVE-2024-EXAMPLE",
+        "name": "CVE-2024-EXAMPLE",
+        "description": "Example: hypothetical net/http buffer overflow when handling chunked encoding"
+      },
+      "products": [
+        {
+          "@id": "pkg:github/shizukutanaka/yagura@v0.5.0",
+          "subcomponents": [
+            { "@id": "pkg:golang/net/http" }
+          ]
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Yagura is a single-tenant daemon listening on loopback by default; it does not accept arbitrary HTTP from untrusted clients. The vulnerable chunked-encoding code path requires hostile client-controlled headers, which Yagura's HTTP server never processes — all clients (Claude Code, curl, browser) send normal short request bodies. Yagura's own outbound HTTP calls to api.github.com, api.osv.dev, and api.scorecard.dev use Go's stdlib HTTP client which is on the consumer side and not impacted by the server-side parsing flaw."
+    },
+    {
+      "vulnerability": {
+        "@id": "https://nvd.nist.gov/vuln/detail/CVE-2024-EXAMPLE-2",
+        "name": "GO-2024-EXAMPLE-2"
+      },
+      "products": [
+        {
+          "@id": "pkg:github/shizukutanaka/yagura@v0.5.0"
+        }
+      ],
+      "status": "fixed",
+      "action_statement": "Fixed in v0.5.0 by upgrading the embedded Go toolchain to 1.22.4. Verified via `make verify` reproducible build matching the SLSA L3 provenance attestation."
+    }
+  ]
+}

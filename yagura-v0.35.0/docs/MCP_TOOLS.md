@@ -635,6 +635,7 @@ Tools are tagged `[G]` (guide / feedforward) or `[S]` (sensor / feedback) per th
 
 | Name | Required | Description |
 |---|---|---|
+| `file_cost_loc` (integer) |  | LOC-equivalent cost of OPENING one file in the effort-aware metric (default 0 = free). Which scorer wins depends on this; at 0 smallest-file-first wins 7/8 repositories, at 400 only 1/8. |
 | `gap_days` (integer) |  | days to leave between feature and label windows in validation (verification latency; default 0) |
 | `limit` (integer) |  | max files to return |
 | `max_commits` (integer) |  | commits to walk back (default 500) |

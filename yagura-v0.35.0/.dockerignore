@@ -1,0 +1,12 @@
+bin/
+coverage*
+*.log
+.git/
+.github/
+docs/
+README.md
+CHANGELOG.md
+*.tar.gz
+testdata/
+**/*_test.go
+**/testdata/

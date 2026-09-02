@@ -747,11 +747,12 @@ func buildProcessRiskTool(d Deps) *Tool {
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"slug":        map[string]any{"type": "string", "description": "registered project slug"},
-				"max_commits": map[string]any{"type": "integer", "description": "commits to walk back (default 500)"},
-				"limit":       map[string]any{"type": "integer", "description": "max files to return"},
-				"gap_days":    map[string]any{"type": "integer", "description": "days to leave between feature and label windows in validation (verification latency; default 0)"},
-				"window_days": map[string]any{"type": "integer", "description": "sliding feature-window size in days for validation (0 = expanding, the default)"},
+				"slug":          map[string]any{"type": "string", "description": "registered project slug"},
+				"max_commits":   map[string]any{"type": "integer", "description": "commits to walk back (default 500)"},
+				"limit":         map[string]any{"type": "integer", "description": "max files to return"},
+				"gap_days":      map[string]any{"type": "integer", "description": "days to leave between feature and label windows in validation (verification latency; default 0)"},
+				"window_days":   map[string]any{"type": "integer", "description": "sliding feature-window size in days for validation (0 = expanding, the default)"},
+				"file_cost_loc": map[string]any{"type": "integer", "description": "LOC-equivalent cost of OPENING one file in the effort-aware metric (default 0 = free). Which scorer wins depends on this; at 0 smallest-file-first wins 7/8 repositories, at 400 only 1/8."},
 			},
 			"required": []string{"slug"},
 		},
@@ -760,11 +761,12 @@ func buildProcessRiskTool(d Deps) *Tool {
 				return nil, &ToolError{Code: "unavailable", Message: "registry not configured"}
 			}
 			var in struct {
-				Slug       string `json:"slug"`
-				MaxCommits int    `json:"max_commits"`
-				Limit      int    `json:"limit"`
-				GapDays    int    `json:"gap_days"`
-				WindowDays int    `json:"window_days"`
+				Slug        string `json:"slug"`
+				MaxCommits  int    `json:"max_commits"`
+				Limit       int    `json:"limit"`
+				GapDays     int    `json:"gap_days"`
+				WindowDays  int    `json:"window_days"`
+				FileCostLOC int    `json:"file_cost_loc"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return nil, &ToolError{Code: "invalid_input", Cause: err}
@@ -816,7 +818,7 @@ func buildProcessRiskTool(d Deps) *Tool {
 			inWindow := fixhistory.Validate(ranking, fixRep.FixesByFile, 10)
 			// v0.125.0: 時系列順を保つ walk-forward を headline にする。
 			// Falessi et al. (EMSE 2020) — 順序を無視した検証は誤った数字を出す。
-			wf := walkforward.Run(commits, sizes, cx, walkforward.Options{GapDays: in.GapDays, WindowDays: in.WindowDays})
+			wf := walkforward.Run(commits, sizes, cx, walkforward.Options{GapDays: in.GapDays, WindowDays: in.WindowDays, FileCostLOC: in.FileCostLOC})
 			// v0.122.0: 上位リスクを alert 化して注意配分レイヤへ供給する。
 			// 件数は alertfix 側で Sadowski et al. の知見に基づき厳しく絞られる
 			// (全件出すと「起票された bug の 84% が未修正」の失敗を再現する)。

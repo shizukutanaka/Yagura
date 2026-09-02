@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace-manifest.json",
+  "name": "yagura",
+  "owner": {
+    "name": "shizukutanaka"
+  },
+  "description": "Yagura — a zero-dependency Go MCP server for orchestrating a solo-dev project portfolio, installable as a Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "yagura",
+      "source": "./",
+      "description": "Portfolio orchestrator MCP server + the yagura skill and reviewer agent.",
+      "category": "productivity",
+      "keywords": ["mcp", "portfolio", "security", "orchestrator"]
+    }
+  ]
+}

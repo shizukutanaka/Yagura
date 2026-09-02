@@ -315,6 +315,60 @@ recall で勝つことではなく、**どのファイルかを名指しでき�
 
 ---
 
+## 発見 10 — **ManualUp の勝利は「ファイルを開くのは無料」という仮定の産物だった**
+
+v1.84.0 は「ManualUp(小さい順)が effort-aware で 8/8 最良」と報告し、
+v1.85.0 は「density は ManualUp に勝てない(1.61 対 1.68)」と書いた。
+assessment はこれを **費用モデル**の未解決項目として残し、
+「LOC 予算は文脈切り替えを数えない」と但し書きした。
+
+**但し書きで済ませたのが誤りだった。** 必要だったのは新しいデータではなく
+**新しい費用関数**で、それは既存データだけで測れる。
+費用を `cost(f) = file_cost_loc + SizeLOC(f)` と置いて `file_cost_loc` を掃引した
+(`walkforward.Options.FileCostLOC`、MCP は `file_cost_loc`)。
+
+effort lift(1.0 = ランダム順)、8 リポジトリ:
+
+| repo | up@0 | best@0 | up@400 | best@400(値) |
+|---|---|---|---|---|
+| groupcache | 1.50 | ManualUp | 0.33 | `size_loc` (1.78) |
+| gorilla/mux | 2.01 | ManualUp | **1.02** | ManualUp |
+| logrus | 2.29 | ManualUp | 0.97 | `relative_churn` (1.08) |
+| prometheus | 2.06 | ManualUp | 0.81 | `relative_churn` (1.14) |
+| hugo | 1.35 | ManualUp | 0.39 | `churn_count` (1.38) |
+| etcd | 2.02 | ManualUp | 0.78 | `churn_count` (1.26) |
+| moby | 1.06 | `relative_churn` | 0.20 | `churn_count` (1.89) |
+| kubernetes | 2.08 | ManualUp | 0.43 | `complexity` (1.29) |
+
+- **ManualUp の lift は費用に対し 8/8 で単調に低下する。**
+- **最良 scorer が入れ替わる**: 費用 0 では ManualUp が 7/8、費用 400 では **1/8**。
+- 交差点はリポジトリ依存(moby は 0 の時点で `relative_churn` に負け、hugo は ~25、
+  etcd は ~200、groupcache/logrus/prometheus は 200-400、mux は 400 でもまだ ManualUp)。
+
+### これが意味すること
+
+**v1.84.0 の「出荷中の全信号が ManualUp に 8/8 で負けた」は、条件つきの主張だった。**
+条件は `file_cost_loc = 0`——つまり **ファイルを開くのはタダ**。
+その仮定の下でのみ「小さいファイルを大量に読む」戦略が有利になる。
+
+だが **どちらの費用観が正しいかは、この測定では決まらない。**
+`file_cost_loc = 400` は「1 ファイル開く = 400 行読むのと同じ労力」という主張で、
+それを支持する実測をこのプロジェクトは持っていない。**0 も 400 も等しく根拠がない。**
+
+したがって正しい出荷判断は「ManualUp を既定にする」でも
+「density を既定にする」でもなく、**費用をパラメータとして利用者に渡すこと**。
+`walkforward` の note と `yagura_process_risk` の `file_cost_loc` がそれを行う。
+**測っていない量を既定値の中に隠さない。**
+
+### 方法論としての教訓
+
+「新しいデータが要る」と書いた未解決項目が、実は
+**「新しい費用関数が要る」だった**。データを増やす前に、
+**測っている量の定義を疑うほうが安い**——同じ 8 リポジトリ、同じ fold、
+同じ walk-forward で、パラメータを 1 つ足しただけで結論が反転した。
+
+---
+
 ## この再計測が変えたこと
 
 1. **CHANGELOG の lift 値は「yagura 固有の値」と読むべき**(発見 1)。

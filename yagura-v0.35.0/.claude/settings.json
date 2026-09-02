@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf*)",
+      "Bash(git push --force*)",
+      "Bash(go clean -modcache)",
+      "Bash(go install*)",
+      "Bash(sudo*)",
+      "Bash(aws*)",
+      "Bash(gcloud*)",
+      "Bash(az*)",
+      "Bash(kubectl*)",
+      "Bash(docker push*)"
+    ],
+    "ask": ["Write", "Edit", "Bash"]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {"type": "command", "command": "test \"${CLAUDE_TOOL_INPUT_FILE_PATH##*.}\" = go && gofmt -w \"$CLAUDE_TOOL_INPUT_FILE_PATH\" || true"}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "cd \"$CLAUDE_PROJECT_DIR\" && go vet ./... 2>&1 | head -20"}
+        ]
+      }
+    ]
+  }
+}

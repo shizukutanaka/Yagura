@@ -1,0 +1,35 @@
+Yagura — Portfolio Orchestrator
+Copyright (c) 2026 shizukutanaka
+
+This product is released under the MIT License. See LICENSE for the full text.
+
+================================================================================
+Third-party software
+================================================================================
+
+yagura ships as a single statically-linked binary built from the Go standard
+library only — no external Go module dependencies (see docs/adr/0001-zero-dependencies.md).
+
+The Go standard library is licensed by The Go Authors under the BSD-3-Clause
+license. See https://go.googlesource.com/go/+/refs/heads/master/LICENSE for the
+full text.
+
+================================================================================
+Build & toolchain
+================================================================================
+
+Reproducible builds of yagura are produced with:
+
+  - The Go compiler (BSD-3-Clause), version pinned per release.
+  - GNU Make (GPL-3.0-or-later), used as a build front-end only; not redistributed.
+
+These tools are used at build time and are not part of the distributed binary.
+
+================================================================================
+Inspiration & external references
+================================================================================
+
+Yagura draws design ideas from public engineering writing by Anthropic, OpenAI,
+Martin Fowler / Thoughtworks, LangChain, and Mitchell Hashimoto. None of that
+code is bundled here, but the work is gratefully acknowledged in README.md and
+in individual ADRs under docs/adr/.

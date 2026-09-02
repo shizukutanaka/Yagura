@@ -1,0 +1,10 @@
+{
+  "default": "allow",
+  "rules": [
+    { "path": "go.mod", "action": "deny", "reason": "ADR-0001: zero external Go dependencies — go.mod must stay module-only" },
+    { "path": "go.sum", "action": "deny", "reason": "ADR-0001: go.sum must remain empty" },
+    { "path": "internal/audit/**", "action": "review", "reason": "trust base: append-only audit hash chain — human review required" },
+    { "path": "docs/adr/**", "action": "review", "reason": "Architecture Decision Records are immutable history — review before editing" },
+    { "path": ".github/workflows/**", "action": "review", "reason": "CI/release supply chain — review SHA pins and publish gates" }
+  ]
+}

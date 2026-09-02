@@ -1,0 +1,63 @@
+{
+  "_note": "Generic harness governance defaults. Monetization/personal settings are intentionally excluded. Pair with docs/harness-mandate.md.",
+  "communication": {
+    "thinking_language": "en",
+    "output_language": "ja",
+    "style": "terse"
+  },
+  "pipeline": {
+    "spec_first": true,
+    "plan_required": true,
+    "pr_max_diff_lines": 500,
+    "completion_signal": "<promise>COMPLETE</promise>"
+  },
+  "quality": {
+    "code": { "max_args": 3, "max_func_lines": 40, "max_nesting": 3, "dry_threshold": 3 },
+    "coverage_targets_pct": { "mvp": 50, "v1": 70, "production": 80 },
+    "static_analysis": {
+      "go": ["staticcheck", "go vet"],
+      "python": ["ruff", "mypy --strict"],
+      "typescript": ["eslint", "prettier", "tsc --noEmit"],
+      "rust": ["cargo clippy -- -D warnings"],
+      "cpp": ["clang-tidy", "cpplint"]
+    },
+    "perf": { "p99_ms": 500 }
+  },
+  "context_capacity": [
+    { "max_pct": 50, "action": "full" },
+    { "max_pct": 70, "action": "trim" },
+    { "max_pct": 90, "action": "compact" },
+    { "max_pct": 100, "action": "handoff_and_reset" }
+  ],
+  "licenses": {
+    "allow": ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "CC0-1.0"],
+    "review": ["LGPL-3.0", "MPL-2.0"],
+    "deny": ["GPL-2.0-only", "GPL-3.0-only", "AGPL-3.0", "SSPL-1.0"]
+  },
+  "incident_sla": {
+    "sev1": { "ack_minutes": 15, "resolve_hours": 4 },
+    "sev2": { "ack_minutes": 60, "resolve_hours": 24 },
+    "sev3": { "ack_minutes": 240, "resolve_hours": 72 },
+    "sev4": { "ack": "next_business_day", "resolve": "next_sprint" }
+  },
+  "model_routing": {
+    "complex_reasoning": "opus",
+    "standard_dev": "sonnet",
+    "ci_classification": "haiku"
+  },
+  "audit": {
+    "append_only": true,
+    "hash_chain": true,
+    "ai_delete_forbidden": true,
+    "retention_days": { "execution": 365, "security": 1095, "error": 180 }
+  },
+  "pii": {
+    "collect": false,
+    "denied_fields": ["name", "address", "phone", "ip", "cookie", "email", "device_id"],
+    "on_detect": "stop_and_purge"
+  },
+  "references": {
+    "path_policy": ".yagura/paths.json",
+    "mandate": "docs/harness-mandate.md"
+  }
+}

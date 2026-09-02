@@ -1,6 +1,42 @@
-# Local working extract of the source. The source is delivered as
-# yagura-v0.35.0-source.tar.gz + cli-direct-mode.patch (reviewable diff),
-# NOT as committed plaintext — committing the raw tree trips the project's
-# own fake-secret test fixtures under GitHub push protection.
-/yagura-v*/
+# The source tree IS the repository (v1.86.0).
+#
+# It used to be excluded. The rule below read:
+#
+#     # The source is delivered as yagura-v0.35.0-source.tar.gz + a patch,
+#     # NOT as committed plaintext — committing the raw tree trips the
+#     # project's own fake-secret test fixtures under GitHub push protection.
+#     /yagura-v*/
+#
+# That excluded 191 of 428 files, and nobody had measured what it cost:
+#
+#   - go.mod was not tracked, so **a clone of this repository could not build**;
+#   - 100 _test.go files were not tracked — the very tests this project claims
+#     mechanically enforce its promises;
+#   - 36 production .go files were not tracked;
+#   - LICENSE, NOTICE, CONTRIBUTING.md, SECURITY.md were not tracked;
+#   - .github/workflows/*.yml were not tracked, so GitHub had **zero registered
+#     workflows**: CI had never run once, and release.yml — the SBOM / Sigstore /
+#     SLSA-3 pipeline — could never fire. The published claim that publication was
+#     blocked by a 403 on tag push was wrong: there was nothing to trigger.
+#
+# The stated cause was worth checking rather than inheriting — and checking it
+# produced a mixed verdict worth recording.
+#
+#   - The claim was RIGHT that push protection blocks: the first push of v1.86.0
+#     was rejected (GH013). It blocked on a **Slack Incoming Webhook URL** in two
+#     secretscan fixtures, now written as split string concatenations so no
+#     committed byte sequence matches while the tests keep their real shape.
+#   - The claim was WRONG about the scale of the remedy. Exactly 2 files needed a
+#     one-line change. Excluding 191 files — go.mod, the CI, the test suite —
+#     to avoid editing 2 was never proportionate, and its cost was never measured.
+#
+# A caution for whoever revisits this: an ad-hoc grep for the token shapes you
+# happen to think of is not an audit. Mine checked five patterns and missed the
+# Slack webhook entirely. This project's own scanner (internal/secretscan) reports
+# 36 high/critical findings across 8 files here, while GitHub's push protection
+# blocked on exactly one pattern — the two tools disagree by a wide margin, so
+# neither one's silence is evidence.
+#
+# Build output only, from here on.
+/yagura-v*/bin/
 /.claude/
