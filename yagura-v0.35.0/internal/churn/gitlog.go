@@ -67,6 +67,17 @@ func ReadGitLogPaths(ctx context.Context, dir string, maxCommits int, pathspec [
 		// stderr が空の ExitError になる。そのまま流すと "git log failed: " という
 		// 情報ゼロのメッセージになるので、先に ctx を見て原因を名指しする。
 		if ctxErr := ctx.Err(); ctxErr != nil {
+			// 診断は **効く対処** を指していなければ意味が無い。partial clone
+			// (--filter=blob:none)では --numstat が差分のたびに blob を 1 つずつ
+			// ネットワークから取りに行くため、max_commits をいくら下げても
+			// 上限を超え続ける。この場合に「履歴が大きすぎる」と言うのは誤診で、
+			// 利用者を効かない対処に誘導する(prometheus で実際に踏んだ)。
+			if isPartialClone(dir) {
+				return "", fmt.Errorf("git log timed out after %s: this is a PARTIAL (blobless) "+
+					"clone, so --numstat fetches every blob over the network — lowering "+
+					"max_commits will not help. Re-clone without --filter, or run "+
+					"`git fetch --refetch`: %w", gitTimeout, ctxErr)
+			}
 			return "", fmt.Errorf("git log timed out after %s (repository history too large; "+
 				"lower max_commits): %w", gitTimeout, ctxErr)
 		}
@@ -85,4 +96,18 @@ func ReadGitLogPaths(ctx context.Context, dir string, maxCommits int, pathspec [
 		return "", err
 	}
 	return string(out), nil
+}
+
+// isPartialClone は dir が blob を遅延取得するクローン(promisor remote あり)かを返す。
+// 判定できない場合は false ——誤った助言をするくらいなら黙る。
+func isPartialClone(dir string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// promisor remote は `git clone --filter=...` が必ず書く印。
+	out, err := exec.CommandContext(ctx, "git", "-C", dir, "config", "--get-regexp",
+		`^remote\..*\.promisor$`).Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "true")
 }

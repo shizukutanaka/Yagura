@@ -1,8 +1,10 @@
 package srcfiles
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -115,4 +117,58 @@ func keys(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestReadLimited_ReportsHowIncompleteTheScanWas は「不完全である」だけでなく
+// **どれだけ不完全か** を報告することを要求する。
+//
+// 発見の経緯: kubernetes(17,878 Go ファイル)を測ったとき、MCP の応答は
+// `incomplete: true` の 1 語だった。実際に読めていたのは 1,000 件 = 5.6% だが、
+// 利用者にはそれが 99% なのか 5% なのか判別する手段が無い。真偽値は
+// 「クリーンだと結論するな」とは言えても「どれだけ信用してよいか」を言えない。
+func TestReadLimited_ReportsHowIncompleteTheScanWas(t *testing.T) {
+	dir := t.TempDir()
+	const total = 25
+	for i := 0; i < total; i++ {
+		p := filepath.Join(dir, fmt.Sprintf("f%02d.go", i))
+		if err := os.WriteFile(p, []byte("package p\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 対象外の拡張子は Matched に数えない(accept を通った母数であること)。
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const cap = 10
+	res, err := ReadLimited(dir, cap, DefaultMaxBytes, func(n string) bool {
+		return strings.HasSuffix(n, ".go")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Files) != cap {
+		t.Fatalf("cap should bound what is read: got %d want %d", len(res.Files), cap)
+	}
+	if !res.Truncated {
+		t.Error("hitting the cap must set Truncated")
+	}
+	if res.Matched != total {
+		t.Errorf("Matched must count every accepted file, read or not: got %d want %d", res.Matched, total)
+	}
+	// 完全スキャンでは母数と読了数が一致する——ここが崩れると
+	// files_total は「上限そのもの」を返すだけの飾りになる。
+	full, err := ReadLimited(dir, 1000, DefaultMaxBytes, func(n string) bool {
+		return strings.HasSuffix(n, ".go")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.Matched != len(full.Files) || full.Matched != total {
+		t.Errorf("a complete scan must report Matched == len(Files) == %d, got %d/%d",
+			total, full.Matched, len(full.Files))
+	}
+	if full.Incomplete() {
+		t.Error("a complete scan must not report Incomplete")
+	}
 }

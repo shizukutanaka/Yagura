@@ -4,6 +4,109 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.83.0] - 2026-09-02
+
+**Theme: the large-application re-measurement — and the two defects it exposed in us.**
+
+The assessment's #1 open item was "re-measure on a large application": every repository
+measured so far was a 16-353 file Go library, and v1.82.0 had shown `precision@K`
+saturates at that size, so the scorer comparison was still unresolved. Measured five:
+prometheus, hugo, etcd, moby, kubernetes (731 to 13,424 Go files, n=2000 commits each).
+
+**Research basis.** Same protocol as v1.82.0 — walk-forward validation per Falessi et al.
+(EMSE 2020) and temporal coupling evaluation in the shape of Zimmermann et al.
+(ICSE 2004 / TSE 2005). Nothing new was invented to get these numbers; the point was to
+run the existing code paths on inputs an order of magnitude larger.
+
+**What the measurement found.**
+
+| repo | files (read/total) | size_loc | churn_count | complexity | relative_churn | baseline |
+|---|---|---|---|---|---|---|
+| prometheus | 731 / 731 | **2.74** | 2.74 | 2.56 | 1.06 | 0.281 |
+| hugo | 907 / 907 | **2.37** | 2.24 | 1.98 | 1.31 | 0.288 |
+| etcd | 1000 / 1100 | **2.77** | 2.55 | 1.97 | 1.42 | 0.274 |
+| moby | 1000 / 2242 | 2.32 | 2.30 | **2.38** | 1.35 | 0.066 |
+| kubernetes | 1000 / 13424 | **4.60** | 3.73 | 3.94 | **0.00** | 0.030 |
+
+- **Saturation broke, exactly where v1.82.0 predicted it would.** All five separate the
+  scorers. `precision@K` is not a broken metric; it has a size range.
+- **Change coupling wins decisively at scale** — lift 6.0-19.6× at k=1, and
+  confidence-ranking beats lift-ranking in 4 of 5. v0.128.0's "barely beats the frequency
+  baseline" was an artifact of small repositories. Coverage stays low (0.04-0.47), so the
+  honest summary is "strong when it can suggest anything, often it cannot".
+- **`relative_churn` is the weakest scorer in all five**, and below random on kubernetes.
+  With v0.124.0's class ratios that is nine repositories agreeing.
+
+**What we did NOT do with that last result.** `internal/processrisk` weights five signals
+equally, and the obvious move is to down-weight `relative_churn`. We did not, because the
+measurement is confounded: the label is "files touched by a fix commit in the next window",
+and bigger files are likelier to be touched. `relative_churn` is the one signal normalized
+by size, so the result reads equally well as "this signal is weak" or "this label rewards
+file size". Bending the product to a confounded measurement is the same error as bending
+the measurement to the product. Filed as the assessment's new #1: a size-independent label.
+
+### Fixed — a tool that went silent, and a test that let it
+
+`yagura_change_coupling` returned `math.Inf(1)` for lift when the frequency baseline scored
+zero hits. `+Inf` is not a JSON number, so `encoding/json` fails on the **whole struct** —
+the entire tool response disappears, not just the field. It fires on hugo at k=1.
+
+The comment above that line argued, correctly, that fabricating a large finite value would
+be dishonest. Nobody measured what the honest choice cost. An undefined quantity is `null`,
+not infinity: `Evaluation.Lift` is now `*float64`, and the note says so.
+
+Why it survived five releases is the more useful half. The test guarding it failed on
+`lift <= 1` — and `+Inf` is greater than 1, so it passed. Worse, that fixture deliberately
+starves the baseline, so the value the test was waving through was *undefined by
+construction*. A check that cannot fail is not a check. Three tests now split the cases:
+undefined lift must be `nil`, must be explained in the note, and must still marshal; a
+separate fixture where the baseline does score proves a finite lift above 1.
+
+### Fixed — "incomplete" that would not say how incomplete
+
+`internal/srcfiles` stops at 1,000 files. On kubernetes that is 1,000 of 13,424 — **7.4%** —
+reported to the caller as the single word `incomplete: true`. True, and useless: a reader
+cannot tell 99% from 7%. `Result.Matched` now counts every accepted file whether or not it
+was read, and all four MCP producers return `files_read` / `files_total` beside the boolean.
+
+The cap itself is unchanged. Making a limit visible and raising it are different decisions,
+and there is no measurement yet that says what the right number is.
+
+### Fixed — a diagnostic that pointed at the wrong fix
+
+The first attempt at this measurement used `--filter=blob:none` clones. `git log --numstat`
+blew through the 60s timeout, and the product said:
+
+> git log timed out after 1m0s (repository history too large; lower max_commits)
+
+So we lowered `max_commits` to 800. It did not help, and we nearly shipped the finding
+"large applications are unanalyzable at default settings, and max_commits does not mitigate
+it". **That was wrong.** In a blobless clone `--numstat` fetches every blob over the network
+(16s for 50 commits). With an ordinary clone the same 2,000 commits take **2.9 seconds**.
+
+The product's fault was the misdiagnosis: it sent the user to a remedy that cannot work.
+`ReadGitLogPaths` now detects a promisor remote and names it. The measurement's fault was
+ours, and it is recorded as finding 7 rather than quietly deleted — when you hit a limit,
+suspect the input before the limit.
+
+### Changed
+
+- `internal/walkforward/largeapp_test.go` replaces the throwaway harness v1.82.0 used. It
+  skips without `YAGURA_LARGE_DIR`, so `go test ./...` pays nothing, and the tables in
+  `docs/MULTIREPO_FINDINGS.md` are literally its output. Numbers nobody else can re-run are
+  claims, not evidence.
+
+### What's not yet
+
+- All nine repositories are open-source Go. No business applications, no other languages.
+- Three of the five large repositories hit the 1,000-file cap; kubernetes was measured on
+  7.4% of its tree. The separation result is robust across five repositories, but the
+  kubernetes row specifically describes a sample.
+- Inf/NaN safety is now correct in `cochange`, and verified by reading in `fixhistory` and
+  `walkforward`. It is **not** enforced mechanically anywhere — the recurrence of weakness 6
+  is still guarded by human attention.
+- Publication is still blocked: tag push returns 403 from the organization egress policy.
+
 ## [v1.82.0] - 2026-08-26
 
 ### Theme — "The multi-repository re-measurement, and the three conclusions it overturns"

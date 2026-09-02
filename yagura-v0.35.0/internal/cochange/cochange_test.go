@@ -1,6 +1,7 @@
 package cochange
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -355,8 +356,56 @@ func TestEvaluate_CouplingBeatsFrequencyBaselineWhenStructureExists(t *testing.T
 	if ev.Precision <= ev.BaselinePrecision {
 		t.Errorf("coupling should beat the frequency baseline: %v vs %v", ev.Precision, ev.BaselinePrecision)
 	}
-	if ev.Lift <= 1 {
-		t.Errorf("lift should exceed 1, got %v", ev.Lift)
+	// この fixture は **意図的にベースラインを飢えさせている**(noise.go は最頻だが
+	// 誰とも組まないので 1 件も当たらない)。よって lift は比として定義できない。
+	//
+	// 以前ここは `ev.Lift <= 1` を落第条件にしていた。+Inf は 1 より大きいので
+	// テストは通り続けたが、通していたのは「定義できない値」だった——
+	// 落ちない検証は何も検証しない。定義できないことを名指しで要求する。
+	if ev.Lift != nil {
+		t.Errorf("this fixture starves the baseline; lift must be undefined, got %v", *ev.Lift)
+	}
+	if ev.BaselineHits != 0 {
+		t.Errorf("fixture drifted: the baseline scored %d hits", ev.BaselineHits)
+	}
+	if _, err := json.Marshal(ev); err != nil {
+		t.Fatalf("an undefined lift must still encode; got %v", err)
+	}
+}
+
+// 定義できる側。ベースラインが実際に当てる履歴では lift は有限で 1 を超える。
+// 上のテストと対にして初めて「lift == nil は飢餓、lift > 1 は優越」が区別できる。
+func TestEvaluate_LiftIsFiniteWhenTheBaselineScores(t *testing.T) {
+	var train []churn.Commit
+	// hot.go は最頻(=ベースラインの推薦先)であり、かつ実際に相手を持つ。
+	for i := 1; i <= 20; i++ {
+		train = append(train, commit(t, i, "hot", "hot.go", fmt.Sprintf("f%02d.go", i)))
+	}
+	// x.go-y.go は hot.go より疎だが固く結合。
+	for i := 21; i <= 28; i++ {
+		train = append(train, commit(t, i, "pair", "x.go", "y.go"))
+	}
+	test := []churn.Commit{
+		commit(t, 40, "pair again", "x.go", "y.go"),
+		commit(t, 41, "hot again", "hot.go", "f01.go"),
+	}
+	opts := DefaultOptions()
+	opts.MinRevs, opts.MinSharedRevs, opts.MinDegree = 1, 1, 0
+	ev := Evaluate(train, test, opts, 1)
+	if !ev.Valid {
+		t.Fatalf("evaluation should be valid: %s", ev.Note)
+	}
+	if ev.BaselineHits == 0 {
+		t.Fatalf("fixture must let the baseline score at least once, else lift is undefined")
+	}
+	if ev.Lift == nil {
+		t.Fatalf("lift must be defined when the baseline scores")
+	}
+	if *ev.Lift <= 1 {
+		t.Errorf("mined coupling should beat the frequency baseline, got lift %v", *ev.Lift)
+	}
+	if _, err := json.Marshal(ev); err != nil {
+		t.Fatalf("evaluation must encode; got %v", err)
 	}
 }
 
@@ -368,10 +417,17 @@ func TestEvaluate_MisleadingCouplingScoresBelowBaseline(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		train = append(train, commit(t, i, "old pair", "a.go", "b.go"))
 	}
-	// 検証期には a.go は b.go ではなく z.go と組むようになった(結合が古い)。
+	// hot.go は訓練で最も頻繁に変わる = 頻度ベースラインの推薦先。
+	// これが無いとベースラインが 1 件も当てられず lift が定義できなくなり、
+	// 「lift < 1」という主張自体が測れない(この fixture は以前そうなっていて、
+	// テストは lift 0 のまま通り続けていた)。
+	for i := 11; i <= 25; i++ {
+		train = append(train, commit(t, i, "hot", "hot.go", fmt.Sprintf("g%02d.go", i)))
+	}
+	// 検証期には a.go は b.go ではなく hot.go と組むようになった(結合が古い)。
 	var test []churn.Commit
-	for i := 20; i <= 24; i++ {
-		test = append(test, commit(t, i, "new pair", "a.go", "z.go"))
+	for i := 30; i <= 34; i++ {
+		test = append(test, commit(t, i, "new pair", "a.go", "hot.go"))
 	}
 	opts := DefaultOptions()
 	opts.MinRevs, opts.MinSharedRevs, opts.MinDegree = 1, 1, 0
@@ -379,7 +435,10 @@ func TestEvaluate_MisleadingCouplingScoresBelowBaseline(t *testing.T) {
 	if ev.Precision != 0 {
 		t.Errorf("stale coupling must not score: precision %v", ev.Precision)
 	}
-	if ev.Lift >= 1 {
+	if ev.BaselinePrecision == 0 {
+		t.Fatalf("fixture must let the baseline score, else lift is undefined and nothing is proven")
+	}
+	if ev.Lift == nil || *ev.Lift >= 1 {
 		t.Errorf("stale coupling must fall below the baseline, got lift %v", ev.Lift)
 	}
 }
@@ -469,5 +528,27 @@ func TestEvaluate_LimitDoesNotChangeTheMeasurement(t *testing.T) {
 	if got.Precision != full.Precision || got.BaselinePrecision != full.BaselinePrecision {
 		t.Errorf("limit changed the measurement: precision %v/%v baseline %v/%v",
 			got.Precision, full.Precision, got.BaselinePrecision, full.BaselinePrecision)
+	}
+}
+
+// 「lift が定義できないとき note がそれを述べる」ことを固定する。
+// 数値が消えたことを利用者が知る唯一の手がかりなので、文言も約束のうち。
+func TestEvaluation_UndefinedLiftIsExplainedInTheNote(t *testing.T) {
+	var train []churn.Commit
+	for i := 1; i <= 8; i++ {
+		train = append(train, commit(t, i, "pair", "x.go", "y.go"))
+	}
+	for i := 9; i <= 30; i++ {
+		train = append(train, commit(t, i, "noise", "noise.go"))
+	}
+	test := []churn.Commit{commit(t, 40, "pair again", "x.go", "y.go")}
+	opts := DefaultOptions()
+	opts.MinRevs, opts.MinSharedRevs, opts.MinDegree = 1, 1, 0
+	ev := Evaluate(train, test, opts, 1)
+	if ev.Lift != nil {
+		t.Fatalf("precondition: lift should be undefined here, got %v", *ev.Lift)
+	}
+	if !strings.Contains(ev.Note, "undefined (null)") {
+		t.Errorf("an undefined lift must say so in the note; got %q", ev.Note)
 	}
 }

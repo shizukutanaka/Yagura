@@ -33,9 +33,17 @@ const (
 
 // Result は 1 回の走査結果。
 type Result struct {
-	Files      map[string]string // relpath → content
-	Truncated  bool              // 上限に達して打ち切った
-	Unreadable []string          // ツリー内に在るが読めなかったソース
+	Files     map[string]string // relpath → content
+	Truncated bool              // 上限に達して打ち切った
+	// Matched は accept を通ったファイルの **総数**。上限で打ち切った後も
+	// 数え続けるので、len(Files)/Matched が「どれだけ読めたか」を与える。
+	//
+	// なぜ真偽値では足りないか: kubernetes(17,878 Go ファイル)を測ったとき、
+	// 応答は `incomplete: true` の 1 語だった。実際に読めたのは 5.6% だが、
+	// 利用者には 99% なのか 5% なのか判別できない。「不完全である」は
+	// 「どれだけ信用してよいか」を答えない。
+	Matched    int
+	Unreadable []string // ツリー内に在るが読めなかったソース
 }
 
 // Incomplete はスキャンが完全でなかったか(cap 到達 or 読取失敗)を返す。
@@ -93,6 +101,7 @@ func ReadLimited(dir string, maxFiles int, maxTotalBytes int64, accept func(name
 		if !accept(name) {
 			return nil
 		}
+		res.Matched++
 		if len(res.Files) >= maxFiles {
 			res.Truncated = true
 			return nil

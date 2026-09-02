@@ -310,8 +310,13 @@ type Evaluation struct {
 	Precision         float64 `json:"precision_at_k"`
 	BaselineHits      int     `json:"baseline_hits"`
 	BaselinePrecision float64 `json:"baseline_precision_at_k"`
-	Lift              float64 `json:"lift"`
-	Note              string  `json:"note"`
+	// Lift = Precision / BaselinePrecision。ベースラインが 1 件も当てられなかった
+	// 場合、比は **定義できない**。以前はここに +Inf を入れていたが、+Inf は JSON の
+	// 数値ではないため encoding/json が構造体ごと落ち、`yagura_change_coupling` の
+	// 応答が丸ごと消えていた(hugo を k=1 で測って発見)。定義できない量は
+	// nil = null で表し、理由は Note に書く。捏造した有限値も、黙った 0 も置かない。
+	Lift *float64 `json:"lift"`
+	Note string   `json:"note"`
 }
 
 const evalNote = "Temporal evaluation in the shape of Zimmermann et al. (ICSE 2004 / TSE 2005): " +
@@ -395,17 +400,14 @@ func Evaluate(train, test []churn.Commit, opts Options, k int) Evaluation {
 	ev.Precision = float64(ev.Hits) / float64(ev.Suggestions)
 	ev.BaselinePrecision = float64(ev.BaselineHits) / float64(ev.Suggestions)
 	if ev.BaselinePrecision > 0 {
-		ev.Lift = ev.Precision / ev.BaselinePrecision
-	} else if ev.Precision > 0 {
-		// ベースラインが 1 件も当てられなかった場合、lift は定義できない。
-		// 大きな有限値を捏造せず、無限を表す 0 ではなく明示的に note で述べる。
-		ev.Lift = math.Inf(1)
+		lift := ev.Precision / ev.BaselinePrecision
+		ev.Lift = &lift
 	}
 	ev.Valid = true
 	ev.Note = evalNote
-	if math.IsInf(ev.Lift, 1) {
-		ev.Note += " The frequency baseline scored zero hits, so lift is infinite rather than a " +
-			"finite ratio; read the precision and baseline values directly."
+	if ev.Lift == nil {
+		ev.Note += " The frequency baseline scored zero hits, so lift is undefined (null) rather " +
+			"than a finite ratio; read the precision and baseline values directly."
 	}
 	return ev
 }

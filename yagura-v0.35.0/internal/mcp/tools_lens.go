@@ -100,6 +100,7 @@ func buildLensTool(d Deps) *Tool {
 			out := map[string]any{
 				"dir":          dir,
 				"files_read":   len(sr.Files),
+				"files_total":  sr.Matched,
 				"incomplete":   sr.Incomplete(),
 				"lenses_total": len(lens.Names()),
 			}

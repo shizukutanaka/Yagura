@@ -643,9 +643,11 @@ func buildChurnRiskTool(d Deps) *Tool {
 				rep.Files = rep.Files[:in.Limit]
 			}
 			return map[string]any{
-				"slug":       in.Slug,
-				"report":     rep,
-				"incomplete": sr.Incomplete(),
+				"slug":        in.Slug,
+				"report":      rep,
+				"files_read":  len(sr.Files),
+				"files_total": sr.Matched,
+				"incomplete":  sr.Incomplete(),
 			}, nil
 		},
 	}
@@ -830,10 +832,12 @@ func buildProcessRiskTool(d Deps) *Tool {
 				rep.Files = rep.Files[:in.Limit]
 			}
 			return map[string]any{
-				"slug":       in.Slug,
-				"report":     rep,
-				"alerts":     alerts,
-				"incomplete": sr.Incomplete(),
+				"slug":        in.Slug,
+				"report":      rep,
+				"alerts":      alerts,
+				"files_read":  len(sr.Files),
+				"files_total": sr.Matched,
+				"incomplete":  sr.Incomplete(),
 				// v0.123.0: 自己較正(SZZ 第 1 段)。fix 履歴が無ければ valid=false。
 				"fix_history": map[string]any{
 					"fix_commits":   fixRep.FixCommits,
@@ -930,9 +934,11 @@ func buildDefectDatasetTool(d Deps) *Tool {
 			}
 			ds := defectdataset.Build(commits, sizes, cx, defectdataset.Options{SplitRatio: ratio})
 			out := map[string]any{
-				"slug":       in.Slug,
-				"meta":       ds.Meta,
-				"incomplete": sr.Incomplete(),
+				"slug":        in.Slug,
+				"meta":        ds.Meta,
+				"files_read":  len(sr.Files),
+				"files_total": sr.Matched,
+				"incomplete":  sr.Incomplete(),
 			}
 			if strings.EqualFold(in.Format, "csv") {
 				out["csv"] = ds.CSV()
