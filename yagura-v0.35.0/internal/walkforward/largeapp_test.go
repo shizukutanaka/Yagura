@@ -101,7 +101,7 @@ func TestLargeApp(t *testing.T) {
 	if !wf.Valid {
 		t.Logf("  walkforward INVALID (no fold had positives)")
 	} else {
-		for _, name := range []string{"size_loc", "size_loc_asc", "churn_count", "complexity", "relative_churn"} {
+		for _, name := range []string{"size_loc", "size_loc_asc", "churn_count", "complexity", "relative_churn", "churn_count_per_loc", "complexity_per_loc", "contributors_per_loc"} {
 			s := wf.PerScorer[name]
 			t.Logf("  wf %-14s prec=%.3f lift=%.3f | effort recall=%.3f lift=%.3f",
 				name, s.MeanPrecision, s.MeanLift, s.MeanRecallAtEffort, s.MeanEffortLift)

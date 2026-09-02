@@ -66,7 +66,25 @@ func DefaultScorers() []Scorer {
 		// **強い対照群** で、これを置かない比較は都合の良い相手としか戦っていない
 		// (Menzies らが繰り返し指摘する落とし穴)。降順ソートなので符号を反転する。
 		{"size_loc_asc", func(r defectdataset.Row) float64 { return -float64(r.SizeLOC) }},
+		// --- effort-aware 用の density 候補(v1.85.0)---
+		//
+		// effort-aware 文献の定石は「予測欠陥数 / 費用」で並べること
+		// (Mende & Koschke, CSMR 2010)。費用を LOC とするなら、信号を LOC で
+		// 割った密度が正しい順序になるはず——という **反証可能な予測** を置く。
+		// ManualUp に勝てなければ、この製品の順位付けは正当化できない。
+		{"churn_count_per_loc", func(r defectdataset.Row) float64 { return perLOC(float64(r.ChurnCount), r.SizeLOC) }},
+		{"complexity_per_loc", func(r defectdataset.Row) float64 { return perLOC(float64(r.Complexity), r.SizeLOC) }},
+		{"contributors_per_loc", func(r defectdataset.Row) float64 { return perLOC(float64(r.Contributors), r.SizeLOC) }},
 	}
+}
+
+// perLOC は「1 行あたり」に直す。SizeLOC 0(走査で見つからなかったファイル)は
+// 0 を返す——未知を最良と見なして上位に置くと、測っていないものを推薦してしまう。
+func perLOC(v float64, loc int) float64 {
+	if loc <= 0 {
+		return 0
+	}
+	return v / float64(loc)
 }
 
 // DefaultEffortBudget は effort-aware 評価で読むと仮定する LOC の割合。

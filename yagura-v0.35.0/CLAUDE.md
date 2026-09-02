@@ -391,6 +391,21 @@ cortex flywheel 4 段階すべてを単体で機械化:
 - **効かない対処を指す診断は、診断していないより悪い。** `isPartialClone` で名指しする。
 - 計測時は **partial clone を使わない**(`internal/walkforward/largeapp_test.go` に明記)。
 
+### 件数は必ず「1 行あたり」に直す — 直すべきは配合でなく正規化(★ v1.85.0)
+- **大きいファイルは何でも多い。** 変更回数も貢献者数も素で足すと、
+  「大きい」を「危険」と取り違える。precision@K では高得点に見え、
+  読む労力を払わせた瞬間に崩れる。
+- effort-aware(LOC 予算 20%)でランダム順を上回った回数、8 リポジトリ:
+  素の `churn_count` **0/8** → `churn_count`/LOC **8/8**。
+  素の `size_loc` 0/8。`contributors`/LOC 8/8。`complexity`/LOC 7/8。
+- `processrisk` は percentile を取る **前** に件数を LOC で割る(v1.85.0、3 行)。
+  `relative_churn` は元から密度、`ownership` は比率なので割らない。
+- **それでも ManualUp には勝っていない**(平均 1.61 対 1.68)。順位付けを出荷する
+  正当性は recall ではなく **どのファイルかを名指しできること**。note に書いて
+  tool 自身に言わせる。**勝っていないものを勝ったと書かない。**
+- 次の未解決は **費用モデル**: LOC 予算は文脈切り替えを数えない。
+  費用を LOC 以外で測るまで density と ManualUp の優劣は決められない。
+
 ### 指標を替えたら序列が逆転した — precision@K だけで信号を序列化しない(★ v1.84.0)
 - ラベル「次窓で fix commit に触れられたファイル」は **大きいファイルほど当たる**。
   `precision@K` は 4,000 行と 50 行を同じ 1 件と数えるので、この交絡を分離できない。

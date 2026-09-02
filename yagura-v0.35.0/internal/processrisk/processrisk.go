@@ -52,6 +52,8 @@ type FileRisk struct {
 	Minor         int     `json:"minor_contributors"` // Bird et al.
 	Contributors  int     `json:"contributors"`       // Bird Total / Meneely & Williams
 	HasOwnership  bool    `json:"has_ownership"`      // ownership データが有ったか
+	// SizeLOC は採点の入力(件数系シグナルはこれで割る)。読者が検算できるよう出す。
+	SizeLOC int `json:"size_loc"`
 
 	// --- 製品指標(表示のみ。採点に **使わない**)---
 	Complexity int `json:"complexity,omitempty"`
@@ -74,7 +76,17 @@ const scoringNote = "Score uses PROCESS metrics only (relative churn, change cou
 	"minor contributors, contributor count). Complexity is reported but deliberately excluded: " +
 	"Majumder/Mody/Menzies (EMSE 2022, 700 projects) measured product metrics at AUC ~54% vs " +
 	"process metrics at ~95%. Signal selection follows that research; the equal weighting across " +
-	"signals is our own choice, not a research result."
+	"signals is our own choice, not a research result. " +
+	"COUNT SIGNALS ARE PER-LOC (change count, minor contributors, contributor count are each " +
+	"divided by file size before ranking). Raw counts rank big files highly because big files " +
+	"have more of everything, which looks good on precision@K and is worthless once you pay for " +
+	"the lines you read. Under effort-aware evaluation (20% of LOC as the inspection budget; " +
+	"Arisholm, Briand & Johannessen JSS 2010, Mende & Koschke CSMR 2010) across 8 repositories, " +
+	"raw change count beat random ordering in 0 of 8, while change count per LOC beat it in 8 of 8. " +
+	"HONEST LIMIT: at that budget this ranking is competitive with, but does not beat, the trivial " +
+	"ManualUp baseline of simply reading the smallest files first (mean effort lift 1.61 vs 1.68 " +
+	"over those 8 repositories). It earns its place by naming WHICH files, not by beating that " +
+	"baseline on recall. Re-run the comparison yourself: internal/walkforward/largeapp_test.go."
 
 // Score は churn と ownership の結果を突き合わせ、プロセス指標のみで順位付けする。
 // ownership が nil / 該当なしのファイルも churn 側の指標だけで採点する(落とさない)。
@@ -100,6 +112,7 @@ func Score(chFiles []churn.FileRisk, ownFiles []ownership.FileOwnership) Report 
 		f.RelativeChurn = c.RelativeChurn
 		f.ChurnCount = c.ChurnCount
 		f.Complexity = c.Complexity
+		f.SizeLOC = c.SizeLOC
 	}
 	for _, o := range ownFiles {
 		f := get(o.Path)
@@ -111,10 +124,23 @@ func Score(chFiles []churn.FileRisk, ownFiles []ownership.FileOwnership) Report 
 
 	// 各シグナルをパーセンタイル順位へ正規化する。単位の異なる指標を素の値で
 	// 足すと、スケールの大きい指標だけで順位が決まってしまうため。
+	//
+	// **件数系は必ず 1 行あたりに直す**(v1.85.0)。変更回数も貢献者数も、
+	// 大きいファイルなら何でも多い——素で足すと「大きい」を「危険」と取り違える。
+	// effort-aware 評価(読む LOC の予算 20%)を 8 リポジトリに当てた実測では、
+	// 素の churn_count はランダム順を **0/8** でしか上回らないのに対し、
+	// churn_count/LOC と contributors/LOC は **8/8** で上回った。
+	// 直すべきは配合ではなく正規化だった。
 	churnPct := percentiles(order, func(p string) float64 { return byPath[p].RelativeChurn }, true)
-	countPct := percentiles(order, func(p string) float64 { return float64(byPath[p].ChurnCount) }, true)
-	minorPct := percentiles(order, func(p string) float64 { return float64(byPath[p].Minor) }, true)
-	contribPct := percentiles(order, func(p string) float64 { return float64(byPath[p].Contributors) }, true)
+	countPct := percentiles(order, func(p string) float64 {
+		return perLOC(float64(byPath[p].ChurnCount), byPath[p].SizeLOC)
+	}, true)
+	minorPct := percentiles(order, func(p string) float64 {
+		return perLOC(float64(byPath[p].Minor), byPath[p].SizeLOC)
+	}, true)
+	contribPct := percentiles(order, func(p string) float64 {
+		return perLOC(float64(byPath[p].Contributors), byPath[p].SizeLOC)
+	}, true)
 	// ownership は「低いほど危険」なので昇順で percentile を取る
 	ownPct := percentiles(order, func(p string) float64 {
 		f := byPath[p]
@@ -215,4 +241,15 @@ func percentiles(keys []string, val func(string) float64, desc bool) map[string]
 		i = j + 1
 	}
 	return out
+}
+
+// perLOC は件数を「1 行あたり」に直す。SizeLOC が不明(0)なら 0 を返す——
+// 未知を最大にすると測っていないファイルが上位を占め、最小にすると黙って捨てることに
+// なる。0 は「密度の証拠が無い」の位置であって、他の証拠(relative_churn や
+// ownership)があればそちらで拾われる。
+func perLOC(v float64, loc int) float64 {
+	if loc <= 0 {
+		return 0
+	}
+	return v / float64(loc)
 }

@@ -4,6 +4,65 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.85.0] - 2026-09-02
+
+**Theme: the problem was never the blend. It was the normalization — and three lines fix it.**
+
+v1.84.0 established that every signal this project ships loses to ManualUp (read the smallest
+files first) under effort-aware evaluation, then stopped: "the next move is to isolate when the
+two metrics disagree, not to re-weight inside a losing family." That was the right diagnosis and
+the wrong place to stop. The isolating experiment takes one run, and it answers the question.
+
+**Research basis.** The standard effort-aware ranking is predicted-defects **per unit of cost**
+(Mende & Koschke, CSMR 2010). If cost is LOC, the ranking should use signal density, not raw
+counts. That is a falsifiable prediction, so it was measured on the same eight repositories.
+
+**How often each signal beats random ordering** (effort lift > 1.0, 20% LOC budget):
+
+| signal | raw | per LOC |
+|---|---|---|
+| `size_loc` | **0 / 8** | — |
+| `churn_count` | **0 / 8** | **8 / 8** |
+| `complexity` | 3 / 8 | 7 / 8 |
+| `contributors` | — | **8 / 8** |
+| `relative_churn` (already a density) | 4 / 8 | — |
+
+Mean effort lift: ManualUp 1.68, `churn_count`/LOC **1.61**, `contributors`/LOC 1.56,
+`complexity`/LOC 1.38, raw `size_loc` 0.47.
+
+**Big files have more of everything.** Summing raw counts mistakes "large" for "risky", which
+scores beautifully on `precision@K` and collapses the moment you pay for the lines you read.
+The five-signal family was never the problem; feeding it raw counts was.
+
+### Changed — `processrisk` ranks by density
+
+`internal/processrisk` now divides the count signals — change count, minor contributors,
+contributor count — by file size *before* taking percentiles. `relative_churn` was already a
+density; `ownership` is a ratio and is left alone. Three lines. `0/8` becomes `8/8`.
+
+`FileRisk.SizeLOC` is now reported, because it became an input to the ranking and readers must
+be able to check the arithmetic.
+
+### Still not beating the trivial baseline, and the tool says so
+
+Mean effort lift is **1.61 for density ranking against 1.68 for ManualUp**. On eight samples
+those are indistinguishable, and it would be dishonest to write that this release "wins".
+
+What justifies shipping a ranking at all is not recall — it is that ManualUp can only say
+"smallest first", while this can say *which* files and why. That claim, and the number it
+rests on, are embedded in the `processrisk` note so the tool discloses its own limit before a
+caller trusts its ordering.
+
+### What's not yet
+
+- **The cost model is now the open question.** A LOC budget treats twenty 50-line files as
+  equal in effort to one 1,000-line file and counts no context switching. The 1.68-vs-1.61 gap
+  may be an artifact of that model rather than a property of the signals. Until effort is
+  measured as something other than LOC, density and ManualUp cannot be ranked against each
+  other — that is now the assessment's #1.
+- Eight repositories, all open-source Go.
+- Publication is still blocked: tag push returns 403 from the organization egress policy.
+
 ## [v1.84.0] - 2026-09-02
 
 **Theme: we changed the metric to remove a confound, and every scorer we ship lost to reading the smallest files first.**

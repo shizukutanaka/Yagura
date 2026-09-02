@@ -154,3 +154,68 @@ func paths(r Report) []string {
 }
 
 func closeTo(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+// TestScore_CountSignalsAreNormalisedByFileSize は「1 行あたり」で採点することを要求する。
+//
+// 測定の経緯(v1.85.0): effort-aware 評価(読む LOC の予算 20%、Arisholm ら JSS 2010 /
+// Mende & Koschke CSMR 2010)を 8 リポジトリに当てた結果、
+//
+//	素の信号        size_loc 0/8、churn_count 0/8、complexity 3/8、relative_churn 4/8
+//	密度(/LOC)     churn_count/LOC 8/8、contributors/LOC 8/8
+//
+// が「ランダム順を上回る」回数である(ランダム = effort lift 1.0)。
+// 配合の問題ではなく **正規化の問題** だった: 変更回数や貢献者数を素で足すと、
+// 「大きいファイルは何でも多い」という事実を危険度と取り違える。
+//
+// 読む労力を勘定に入れるなら、順位は「1 行あたりどれだけ荒れているか」で決まる。
+func TestScore_CountSignalsAreNormalisedByFileSize(t *testing.T) {
+	// 同じ 20 回変更・同じ 4 人の貢献者。違うのはサイズだけ。
+	ch := []churn.FileRisk{
+		{Path: "big.go", ChurnCount: 20, SizeLOC: 4000, RelativeChurn: 0.10},
+		{Path: "small.go", ChurnCount: 20, SizeLOC: 100, RelativeChurn: 0.10},
+	}
+	own := []ownership.FileOwnership{
+		{Path: "big.go", Ownership: 0.5, Minor: 2, Total: 4},
+		{Path: "small.go", Ownership: 0.5, Minor: 2, Total: 4},
+	}
+	rep := Score(ch, own)
+	if len(rep.Files) != 2 {
+		t.Fatalf("want 2 scored files, got %d", len(rep.Files))
+	}
+	if rep.Files[0].Path != "small.go" {
+		t.Errorf("per-LOC scoring must rank the small, equally-churned file first; got %q "+
+			"(scores: %v)", rep.Files[0].Path, rep.Files)
+	}
+	// サイズは採点の入力なので、応答に出して読者が検算できるようにする。
+	for _, f := range rep.Files {
+		if f.SizeLOC == 0 {
+			t.Errorf("%s: SizeLOC must be reported — it is now part of the ranking", f.Path)
+		}
+	}
+}
+
+// 正規化がサイズ以外を壊していないこと: 同サイズなら変更回数の多い方が上。
+func TestScore_WithinTheSameSizeMoreChurnStillWins(t *testing.T) {
+	ch := []churn.FileRisk{
+		{Path: "calm.go", ChurnCount: 2, SizeLOC: 500, RelativeChurn: 0.01},
+		{Path: "busy.go", ChurnCount: 40, SizeLOC: 500, RelativeChurn: 0.30},
+	}
+	rep := Score(ch, nil)
+	if rep.Files[0].Path != "busy.go" {
+		t.Errorf("at equal size the busier file must rank first, got %q", rep.Files[0].Path)
+	}
+}
+
+// サイズ不明(SizeLOC=0)を最良にも最悪にもしない——測っていないものを
+// 推薦するのも、黙って捨てるのも誤り。
+func TestScore_UnknownSizeDoesNotWinByDefault(t *testing.T) {
+	ch := []churn.FileRisk{
+		{Path: "unknown.go", ChurnCount: 5, SizeLOC: 0},
+		{Path: "dense.go", ChurnCount: 50, SizeLOC: 100},
+	}
+	rep := Score(ch, nil)
+	if rep.Files[0].Path != "dense.go" {
+		t.Errorf("a file with unknown size must not outrank a measured dense one, got %q",
+			rep.Files[0].Path)
+	}
+}
