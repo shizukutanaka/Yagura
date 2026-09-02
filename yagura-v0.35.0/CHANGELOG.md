@@ -4,6 +4,76 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.89.0] - 2026-09-02
+
+**Theme: read all 27 remaining findings, and a third lens turns out to be 100% noise.**
+
+### `api_doc` was wrong about Go
+
+The last measurement item was "false-positive rates for the lenses nobody has read". Eight
+lenses had never been examined, totalling **27 findings on this repository** — small enough to
+read every one.
+
+All eight `api_doc` findings were the same shape: the members of a `const ( … )` block that
+**has a doc comment** were reported as undocumented.
+
+```go
+// Limits は既定の上限。
+const (
+	MaxFiles = 1000   // ← reported as undocumented
+	MaxBytes = 50     // ← reported as undocumented
+)
+```
+
+`recordGenDecl` inherited the group's doc only when `len(d.Specs) == 1`. But `go doc` shows a
+group comment as the documentation of its members, and golint does not complain about a block
+that carries one. **The rule contradicted the language's own convention.** Fixed by inheriting
+the group doc whenever a spec has none; `documented_ratio` on this repository goes 0.99 → **1.00**
+and the 8 findings go to **0**. A spec with no doc anywhere is still reported, because a checker
+that never speaks is not a checker.
+
+That is the **third lens found to be 100% false-positive** — after `err_discard` (resolving
+callees by selector name and dropping the receiver) and `err_policy` (396 findings, all in test
+files). All three were found the same way: by reading findings instead of counting them.
+
+### The other 19 findings are real
+
+| lens | n | verdict |
+|---|---|---|
+| `type_assert` | 5 | true — `container/list` `Value.(*entry)` ×3, map-sort comparators ×2; structurally safe, reported to make the panic surface visible |
+| `global_check` | 5 | true — tray Win32 callback globals ×4, `serverVersion` injected at init |
+| `predeclared` | 3 | true — `max` shadowing the Go 1.21 builtin in `cli.go` |
+| `param_check` / `return_check` | 4 | true — threshold readings |
+| `err_wrap` / `assert_check` | 2 | true |
+
+**Limit worth stating**: this audit covers one repository. Per finding 1 of the multi-repo
+work, single-repository conclusions do not generalise — false-positive rates elsewhere remain
+unmeasured.
+
+### The two blockers, now verified rather than inferred
+
+Both had been reported from a single observation each. Both were re-checked through an
+independent mechanism, because this session has twice been wrong about a limit:
+
+- **CI registration.** `git push` is refused (`refusing to allow a GitHub App to create or
+  update workflow`), and the REST API refuses too:
+  `PUT /contents/.github/workflows/ci.yml` → **403 Resource not accessible by integration**.
+  Two independent paths, same answer: this App has no `workflows` permission. It is an
+  intended control and is not something to route around.
+- **Publication.** Re-enumerating the GitHub tool surface confirms there is **no write tool for
+  tags or releases** — `get_tag`, `list_tags`, `list_releases`, `get_release_by_tag` are all
+  read-only. Tag push is separately 403.
+
+Neither is a product defect and neither can be closed from here. They need one permission grant
+and one push from a principal that holds it.
+
+### What's not yet
+
+- CI does not exist. Workflows are committed inert at `ci-workflows-pending/` with the single
+  `git mv` that activates them.
+- Lens false-positive rates on repositories other than this one.
+- Which of the 79 tools actually get called.
+
 ## [v1.88.0] - 2026-09-02
 
 **Theme: a lens was not deterministic, and only a large repository could show it.**

@@ -287,7 +287,14 @@ v1.86.0 で全て追跡下に入れ、`TestRepoTracked_*` が
 
 ### C. 権限・方針でブロック(このセッションからは不可能)
 - **tag push(公開)**: 組織 egress ポリシーが 403。README の指示どおり報告済み。
-  GitHub MCP には tag/release 作成機能が存在しない(確認済み)。
+  GitHub MCP の tool 一覧を再走査しても **release / tag を作る write tool は存在しない**
+  (`get_tag` / `list_tags` / `list_releases` / `get_release_by_tag` はすべて読み取り専用)。
+- **CI の登録**: `.github/workflows/*` への書き込みが **2 つの独立した経路で拒否される**
+  ——git push は `refusing to allow a GitHub App to create or update workflow`、
+  REST API(`PUT /contents/.github/workflows/ci.yml`)は **403 Resource not accessible
+  by integration**。**1 回の観測ではなく 2 経路で検証済み**なので、
+  「別のやり方なら通るかもしれない」は消えた。この App には `workflows` 権限が無い。
+  意図された統制なので迂回しない。
   **ただし v1.86.0 以前は、403 が解けても何も起きなかった**——`release.yml` が
   リポジトリに存在せず、Actions の登録 workflow が 0 個だったため(短所 8)。
   現在は登録済みだが、タグを押せないので **一度も実行されていない**。
@@ -328,9 +335,28 @@ v1.86.0 で全て追跡下に入れ、`TestRepoTracked_*` が
    (4 コアで 10.1 秒 → 3.8 秒、2.7 倍)。パース共有は 29 レンズすべての署名に
    触れるので、**安い方を先に取る**(② の後に ④、の順序)。
    まだ足りなくなったらパース共有を検討する。
-5. **残り 26 レンズの偽陽性測定** — 2 レンズは読んだ結果 100%/100% ノイズだった。
-   件数を信じず finding を読む作業は 27 レンズ中 2 つしか終わっていない
-   (v1.3.1 で他の高件数レンズは検分済みだが、網羅ではない)。
+5. ~~残り 26 レンズの偽陽性測定~~ → **v1.89.0 で自リポジトリについては完了**。
+   未検分だった 8 レンズ・**27 件を全部読んだ**:
+
+   | レンズ | 件数 | 判定 |
+   |---|---|---|
+   | `api_doc` | 8 | **偽陽性 8/8 = 100%** → レンズを修正(下記) |
+   | `type_assert` | 5 | 真陽性(dedupe の container/list 3 + tools.go の comparator 2、構造上安全だが panic 面の可視化として意図的) |
+   | `global_check` | 5 | 真陽性(tray の Win32 callback globals 4 + serverVersion の init 注入) |
+   | `predeclared` | 3 | 真陽性(cli.go の `max` shadowing、Go 1.21 builtin) |
+   | `param_check` / `return_check` | 4 | 真陽性(しきい値超過の reading) |
+   | `err_wrap` / `assert_check` | 2 | 真陽性 |
+
+   **`api_doc` は 8 件すべてが同じ偽陽性**だった: doc コメントの付いた
+   `const ( … )` ブロックの中身を「未文書」と報告していた。原因は親 doc の継承を
+   **spec が 1 つのときだけ**に限っていたこと。`go doc` はグループの doc を
+   メンバーの説明として表示し、golint もブロックに doc があれば咎めない——
+   **Go の慣行に反する規則だった**。修正後、documented_ratio は 0.99 → **1.00**。
+   err_discard / err_policy に続く **3 例目の 100% 偽陽性レンズ**。
+
+   **残る限界**: この検分は自リポジトリ 1 つに対するもの。他リポジトリでの
+   偽陽性率は依然として未測定であり、発見 1 の教訓(単一リポジトリの結論は
+   一般化しない)がそのまま当てはまる。
 6. ~~Inf/NaN の網羅チェック~~ → **v1.87.0 で seam に機械化**。
    MCP の marshal 失敗時に反射で **非有限 float の JSON パスを名指し**し、
    「未定義の比は null にせよ」まで言う(`internal/mcp/nonfinite.go`)。

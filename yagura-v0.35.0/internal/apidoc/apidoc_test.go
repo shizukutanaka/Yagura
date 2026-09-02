@@ -205,3 +205,64 @@ func TestScan_Deterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestScan_GroupDocCountsForEveryMemberOfTheBlock は Go の慣行どおり
+// **宣言グループに付いた doc コメント** をそのグループ全員の文書として数える。
+//
+// 発見の経緯(v1.89.0): 未検分だった 8 レンズの finding を全部読んだところ、
+// `api_doc` の 8 件が **すべて同じ形** だった——doc コメントの付いた
+// `const ( ... )` ブロックの中身が「未文書」と報告されていた。
+//
+//	// DefaultMaxFiles / DefaultMaxBytes は既定の走査上限。
+//	const (
+//		DefaultMaxFiles = 1000
+//		DefaultMaxBytes = 50 * 1024 * 1024
+//	)
+//
+// 原因は `single := len(d.Specs) == 1` ——親 doc の継承を **spec が 1 つの
+// ときだけ** に限っていた。しかし `go doc` はグループの doc をメンバーの
+// 説明として表示し、golint もブロックに doc があれば中身を咎めない。
+// つまりこれは Go の慣行に反する **偽陽性** であり、自リポジトリでの
+// 偽陽性率は 8/8 = 100% だった(err_discard / err_policy に続く 3 例目)。
+func TestScan_GroupDocCountsForEveryMemberOfTheBlock(t *testing.T) {
+	files := map[string]string{
+		"p/p.go": `package p
+
+// Limits は既定の上限。
+const (
+	MaxFiles = 1000
+	MaxBytes = 50
+)
+
+// Solo は単独の定数。
+const Solo = 1
+
+const (
+	// Own は自分の doc を持つ。
+	Own = 2
+	// Bare には doc が無く、グループにも doc が無い。
+	Bare = 3
+)
+
+const (
+	Undocumented = 4
+)
+`,
+	}
+	r := apidoc.Scan(files)
+	flagged := map[string]bool{}
+	for _, f := range r.Findings {
+		flagged[f.Name] = true
+	}
+
+	// グループ doc はメンバー全員に効く。
+	for _, name := range []string{"MaxFiles", "MaxBytes", "Solo", "Own", "Bare"} {
+		if flagged[name] {
+			t.Errorf("%s is documented (own doc or group doc) but was reported as undocumented", name)
+		}
+	}
+	// doc がどこにも無いものは今までどおり報告する——**常に黙る検査器は何も検査しない**。
+	if !flagged["Undocumented"] {
+		t.Error("a const with neither its own doc nor a group doc must still be reported")
+	}
+}

@@ -174,32 +174,47 @@ func recordFuncDecl(d *ast.FuncDecl, record recordFunc) {
 
 // recordGenDecl は type/const/var 宣言群を走査し、公開シンボルを record する。
 func recordGenDecl(d *ast.GenDecl, record recordFunc) {
-	single := len(d.Specs) == 1
+	// **グループに付いた doc は、その中身 *全員* の文書である。**
+	//
+	// 以前は `len(d.Specs) == 1` のときだけ親 doc を継承していた。しかし Go では
+	//
+	//	// Limits は既定の上限。
+	//	const (
+	//		MaxFiles = 1000
+	//		MaxBytes = 50
+	//	)
+	//
+	// が普通の書き方で、`go doc` はこの doc をメンバーの説明として表示し、
+	// golint もブロックに doc があれば中身を咎めない。単一 spec に限る規則は
+	// **Go の慣行に反する偽陽性**で、自リポジトリの api_doc 指摘 8 件は
+	// 8 件ともこの形だった(偽陽性率 100%。err_discard / err_policy に続く 3 例目)。
+	//
+	// spec 自身の doc は引き続き優先する。doc がどこにも無いものは今までどおり報告する。
 	for _, spec := range d.Specs {
 		switch s := spec.(type) {
 		case *ast.TypeSpec:
-			recordTypeSpec(s, d, single, record)
+			recordTypeSpec(s, d, record)
 		case *ast.ValueSpec:
-			recordValueSpec(s, d, single, record)
+			recordValueSpec(s, d, record)
 		}
 	}
 }
 
 // recordTypeSpec は exported 型宣言を record する。
-// doc が無く単一 spec のときは親 GenDecl の doc を継承する。
-func recordTypeSpec(s *ast.TypeSpec, parent *ast.GenDecl, single bool, record recordFunc) {
+// spec 自身に doc が無ければ親 GenDecl の doc を継承する(グループ doc)。
+func recordTypeSpec(s *ast.TypeSpec, parent *ast.GenDecl, record recordFunc) {
 	if !isExported(s.Name.Name) {
 		return
 	}
 	doc := s.Doc
-	if doc == nil && single {
+	if doc == nil {
 		doc = parent.Doc
 	}
 	record("type", s.Name.Name, s.Pos(), doc)
 }
 
 // recordValueSpec は exported な const/var 名を record する (1 spec に複数名がありうる)。
-func recordValueSpec(s *ast.ValueSpec, parent *ast.GenDecl, single bool, record recordFunc) {
+func recordValueSpec(s *ast.ValueSpec, parent *ast.GenDecl, record recordFunc) {
 	kind := "var"
 	if parent.Tok == token.CONST {
 		kind = "const"
@@ -209,7 +224,7 @@ func recordValueSpec(s *ast.ValueSpec, parent *ast.GenDecl, single bool, record 
 			continue
 		}
 		doc := s.Doc
-		if doc == nil && single {
+		if doc == nil {
 			doc = parent.Doc
 		}
 		record(kind, nm.Name, nm.Pos(), doc)
