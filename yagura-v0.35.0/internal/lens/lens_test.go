@@ -1,6 +1,7 @@
 package lens
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -175,6 +176,71 @@ func TestRun_IsDeterministic(t *testing.T) {
 		for j := range first {
 			if again[j].Lens != first[j].Lens || again[j].Findings != first[j].Findings {
 				t.Fatalf("unstable at %d: %+v vs %+v", j, again[j], first[j])
+			}
+		}
+	}
+}
+
+// TestRunAll_IsDeterministicUnderConcurrency は並列化しても出力が
+// **バイト単位で同一** であることを固定する。
+//
+// v1.88.0 で RunAll をレンズ単位で並列化した。理由は v1.87.0 の実測:
+// RunAll は 1,000 ファイルで 10 秒、3,843 ファイルで 40 秒かかる
+// (自リポジトリ 352 ファイルの「約 4 秒」は小さすぎる標本だった)。
+// discovery call としては実害の水準に達している。
+//
+// レンズは純関数(files map を受け取り、互いに結合しない)なので
+// 並列化は安全なはずだが、**「はず」を出荷しない**のがこのリポジトリの規約。
+// 順序・件数・要約のすべてが逐次実行と一致することを要求する。
+func TestRunAll_IsDeterministicUnderConcurrency(t *testing.T) {
+	files := map[string]string{}
+	for i := 0; i < 40; i++ {
+		files[fmt.Sprintf("pkg%02d/file.go", i)] = fmt.Sprintf(`package pkg%02d
+
+import "fmt"
+
+func Do%02d(a, b, c, d, e, f int, flag bool) (int, int, int, int) {
+	if a > 0 {
+		for i := 0; i < b; i++ {
+			if c > i {
+				switch d {
+				case 1:
+					fmt.Println(i)
+				}
+			}
+		}
+	}
+	var xs []int
+	for i := range []int{1, 2, 3} {
+		xs = append(xs, i)
+	}
+	_ = xs
+	return a, b, c, d
+}
+`, i, i)
+	}
+
+	first := RunAll(files, Options{})
+	if len(first) != len(Names()) {
+		t.Fatalf("expected one result per lens: got %d want %d", len(first), len(Names()))
+	}
+	// 何も指摘しない入力では並列性のバグが隠れる。実際に findings が出ること。
+	total := 0
+	for _, r := range first {
+		total += r.Findings
+	}
+	if total == 0 {
+		t.Fatal("fixture produced no findings at all; concurrency bugs would be invisible")
+	}
+
+	for run := 0; run < 8; run++ {
+		got := RunAll(files, Options{})
+		if len(got) != len(first) {
+			t.Fatalf("run %d: length changed: %d vs %d", run, len(got), len(first))
+		}
+		for i := range got {
+			if got[i] != first[i] {
+				t.Errorf("run %d: result %d differs: %+v vs %+v", run, i, got[i], first[i])
 			}
 		}
 	}

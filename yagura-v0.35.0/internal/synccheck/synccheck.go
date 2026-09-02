@@ -166,11 +166,26 @@ func collectStructFields(parsed map[string]*ast.File) map[string][]ast.Expr {
 				if !ok || st.Fields == nil {
 					continue
 				}
-				fields := make([]ast.Expr, 0, len(st.Fields.List))
+				// **上書きせず追記する。**
+				//
+				// 型は パッケージ修飾なしの名前 で index している。リポジトリ全体を
+				// 一度に渡されると `Config` / `Options` のようなありふれた名前は
+				// 複数パッケージで衝突し、代入(=)にすると **どの定義が勝つかが
+				// `parsed` map の反復順で決まる**——同じ入力で結果が変わる。
+				// kubernetes 2,500 ファイルで実際に 1 件 ⇄ 26 件と揺れていた
+				// (v1.88.0 で発見。自リポジトリでは同名衝突が無く現れなかった)。
+				//
+				// 和を取れば反復順に依存しない。方向も正しい: いずれかの定義が
+				// ロックを持つならその名前は lock-bearing とみなす——**見逃し
+				// (実際のロックコピーが出荷される)の方が、過検出より害が大きい**。
+				//
+				// 既知の限界: 同名の別型を同一視するので、パッケージをまたぐ衝突は
+				// 過検出になりうる。正しい解決はパッケージ単位の解析だが、それは
+				// 本レンズの入力契約(files map 1 つ)を変える。ここでは
+				// **非決定性を消すことだけ**を行い、限界は明示して残す。
 				for _, fld := range st.Fields.List {
-					fields = append(fields, fld.Type)
+					structFields[ts.Name.Name] = append(structFields[ts.Name.Name], fld.Type)
 				}
-				structFields[ts.Name.Name] = fields
 			}
 		}
 	}

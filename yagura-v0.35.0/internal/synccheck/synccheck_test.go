@@ -252,3 +252,60 @@ func (s Server) Do() {}
 		t.Errorf("cross-file type detection failed, got: %+v", r.Findings)
 	}
 }
+
+// TestScan_IsDeterministicWhenTypeNamesCollide は「同名の型が複数パッケージに
+// 在っても結果が揺れない」ことを要求する。
+//
+// 発見の経緯(v1.88.0): kubernetes(2,500 ファイル)に対して同じ入力で
+// RunAll を繰り返したところ、sync_check だけが **1 件 → 26 件** と揺れた。
+// 原因は collectStructFields が型を **パッケージ修飾なしの名前** で index し、
+// `parsed`(map)を走査していたこと——`Config` や `Options` のような
+// ありふれた名前は上書き合戦になり、**どの定義が勝つかが map の反復順で決まる**。
+//
+// このレンズの Scan は doc comment で「出力は決定論的」と明言していた。
+// findings の並びは確かに sort していたが、**並べる前の集合が非決定的**だった。
+// 小さなリポジトリでは同名衝突が起きないので、自リポジトリでは一度も現れなかった。
+func TestScan_IsDeterministicWhenTypeNamesCollide(t *testing.T) {
+	// 同じ型名 Config が 2 パッケージに在り、**片方だけ** がロックを持つ。
+	files := map[string]string{
+		"a/config.go": `package a
+
+import "sync"
+
+type Config struct {
+	mu sync.Mutex
+	N  int
+}
+
+func Copy(c Config) int { return c.N }
+`,
+		"b/config.go": `package b
+
+type Config struct {
+	N int
+}
+
+func Copy(c Config) int { return c.N }
+`,
+	}
+
+	first := Scan(files)
+	for i := 0; i < 20; i++ {
+		got := Scan(files)
+		if len(got.Findings) != len(first.Findings) {
+			t.Fatalf("run %d: finding count is unstable: %d vs %d — the lock-bearing type set "+
+				"depends on map iteration order", i, len(got.Findings), len(first.Findings))
+		}
+		for j := range got.Findings {
+			if got.Findings[j] != first.Findings[j] {
+				t.Fatalf("run %d: finding %d differs: %+v vs %+v", i, j, got.Findings[j], first.Findings[j])
+			}
+		}
+	}
+
+	// 保守側に倒す: いずれかの定義がロックを持つなら、その名前は lock-bearing。
+	// 見逃し(実際のロックコピーが出荷される)より過検出の方が害が小さい。
+	if len(first.Findings) == 0 {
+		t.Error("a lock-bearing Config copied by value must be reported at least once")
+	}
+}

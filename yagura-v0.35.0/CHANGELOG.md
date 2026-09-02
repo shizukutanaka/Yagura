@@ -4,6 +4,70 @@ All notable changes to Yagura are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com); versions follow
 [SemVer](https://semver.org).
 
+## [v1.88.0] - 2026-09-02
+
+**Theme: a lens was not deterministic, and only a large repository could show it.**
+
+### RunAll is 2.7× faster, and the deferral that justified not doing it had expired
+
+The assessment deferred parse-sharing with "pay it when 4 seconds becomes real harm". The
+4-second figure is this repository's 352 files. v1.87.0 measured it properly for the first
+time: **10.1 s at 1,000 files, 39.6 s at 3,843**. A discovery call at that cost is real harm,
+so the deferral's own condition had been met — by a measurement taken one release earlier and
+not noticed.
+
+What was paid is not parse-sharing. Lenses are pure functions over a shared read-only map, so
+running them concurrently changes **no lens signature and no input contract**:
+
+| files | v1.87.0 sequential | v1.88.0 parallel (4 cores) |
+|---|---|---|
+| 1,000 | 10.1 s | **3.8 s** |
+| 2,500 | 28.5 s | **10.0 s** |
+| 3,843 | 39.6 s | **14.0 s** |
+
+Parse-sharing would touch all 29 lens signatures. Take the cheap acceleration first and
+reconsider the expensive one only if it is still not enough — delete and simplify before
+accelerating, and accelerate before rewriting a contract.
+
+### A lens was returning different answers to the same question
+
+Reviewing the v1.87.0 sweep, the total findings on an identical 3,843-file input read
+21,936 / 21,973 / 21,975 across runs. This project's rules state **"Deterministic output"**.
+
+`sync_check` was the cause: **1 finding on one run, 26 on the next**, same input, same process.
+`collectStructFields` indexed types by **unqualified name** and walked `parsed` — a **map** —
+assigning `structFields[name] = fields`. At kubernetes scale, names like `Config` and
+`Options` collide across many packages, so which definition won depended on map iteration
+order, the lock-bearing type set moved, and the findings moved with it.
+
+`Scan`'s own doc comment promised deterministic output. It sorted the **findings**; the
+**set** they were computed from was order-dependent. The promise was about ordering and the
+breakage was in content.
+
+It survived 20+ releases because it **cannot occur at small scale**: this repository's 352
+files have almost no cross-package name collisions, and synthetic fixtures have none at all.
+Same character as the `precision@K` saturation in v1.83.0 — a defect only a larger input can
+express.
+
+Assignment became **union**: order-independent by construction, and pointed the right way — if
+any definition of a name carries a lock, treat the name as lock-bearing, because a missed lock
+copy ships a concurrency bug while an extra report only costs attention. The remaining limit
+is stated rather than papered over: same-named types in different packages are conflated, and
+fixing that properly means per-package analysis, which changes the lens input contract.
+**This release removed the non-determinism and left the limitation documented.**
+
+`internal/lens/determinism_test.go` re-runs every lens against a real repository (skipped
+without `YAGURA_CAP_DIR`) and sits **beside** the synthetic determinism test, because neither
+alone would have caught this.
+
+### What's not yet
+
+- CI still does not exist: workflows are committed inert under `ci-workflows-pending/`, this
+  session's GitHub App lacks `workflows` permission, tag push is separately 403.
+- Parse-sharing remains undone; 14 s at 3,843 files may yet make it worth the contract change.
+- `sync_check` still conflates same-named types across packages.
+- Which of the 79 tools actually get called is still unknown.
+
 ## [v1.87.0] - 2026-09-02
 
 **Theme: the same defect, a third time — a diagnostic pointing at a remedy that cannot work.**

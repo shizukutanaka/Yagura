@@ -29,8 +29,11 @@ package lens
 
 import (
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/shizukutanaka/yagura/internal/apidoc"
 	"github.com/shizukutanaka/yagura/internal/assertcheck"
@@ -261,11 +264,51 @@ func Run(name string, files map[string]string, o Options) (Result, error) {
 // 「まずどこを見るべきか」を 1 往復で決めるための入口。
 func RunAll(files map[string]string, o Options) []Result {
 	names := Names()
-	out := make([]Result, 0, len(names))
-	for _, n := range names {
-		s := byName[n]
-		_, cnt := s.run(files, o)
-		out = append(out, Result{Lens: s.name, Summary: s.summary, Findings: cnt})
+	out := make([]Result, len(names))
+
+	// レンズは **純関数** (files map を受け取り、互いに結合しない) なので
+	// レンズ単位で並列に走らせられる。files は読み取り専用で共有する。
+	//
+	// なぜ v1.88.0 で払うことにしたか: v1.87.0 で初めて実測した結果、
+	// RunAll は 1,000 ファイルで **10 秒**、3,843 ファイルで **40 秒** だった。
+	// 長らく引用してきた「約 4 秒」は自リポジトリ 352 ファイルの値で、標本が
+	// 小さすぎた。discovery call の 10-40 秒は実害の水準であり、
+	// 「4 秒が実害になるまで払わない」という保留の条件は自分の測定で満了した。
+	//
+	// 支配項は再パース(29 レンズ + meta 2 で延べ ~18,000 回)。本当の修正は
+	// パース結果の共有だが、それはレンズが files map を受け取るという純関数
+	// 契約を壊す——29 レンズすべての署名に触れる。並列化は **その契約を
+	// 1 バイトも変えずに** コア数ぶんの短縮を取る。まず安い方を取り、
+	// それでも足りなくなったらパース共有を検討する(② の後に ④、の順序)。
+	//
+	// 出力は names の順に固定する。**並列化は速度の話であって、
+	// 決定論的出力という約束は動かない**(TestRunAll_IsDeterministicUnderConcurrency)。
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(names) {
+		workers = len(names)
 	}
+	if workers < 1 {
+		workers = 1
+	}
+
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(names) {
+					return
+				}
+				s := byName[names[i]]
+				_, cnt := s.run(files, o)
+				// 各 goroutine は自分の添字にだけ書く(競合しない)。
+				out[i] = Result{Lens: s.name, Summary: s.summary, Findings: cnt}
+			}
+		}()
+	}
+	wg.Wait()
 	return out
 }
