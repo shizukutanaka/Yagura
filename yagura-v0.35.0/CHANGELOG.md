@@ -39,12 +39,17 @@ a `working-directory` default pointing at the module — **but they could not be
 This session's GitHub App lacks the `workflows` permission, and the remote rejects the push:
 `refusing to allow a GitHub App to create or update workflow .github/workflows/ci.yml`.
 
-**So CI still does not exist.** The files are prepared and in the right place; registering
-them needs one push from a principal holding that permission. Rather than ship a test that
-is permanently red or quietly weaken it to green, `repotracked_test.go` pins only what is
-actually deliverable — that the workflows sit at the root and that no second copy exists
-beside the module, which was the original bug — and the missing permission is named as an
-open blocker in the assessment. `release.yml` sets it **per job**
+**So CI still does not exist.** The four files are committed at `ci-workflows-pending/`,
+where GitHub does not execute them, with `ci-workflows-pending/README.md` giving the one
+`git mv` that activates them. Parking inert copies at a non-executing path is not an
+activation and not a way around the control; it keeps reviewable work from being lost with
+an ephemeral container.
+
+Rather than ship a test that is permanently red or quietly weaken it to green,
+`repotracked_test.go` pins the invariant that survives activation: the definitions have
+**exactly one home** — activated or pending, never both (that is the original bug in a
+quieter form) and never neither (that is how CI was lost the first time). Moving them keeps
+the suite green and the guard switches to protecting the live location. `release.yml` sets it **per job**
 rather than workflow-wide: `prepare`, `sign` and `release` never check the repository out,
 so a workflow-level default would point them at a directory that does not exist.
 
@@ -140,8 +145,8 @@ parameter, and the conclusion reversed.
 
 - **No workflow is registered yet.** `.github/workflows/*` cannot be pushed by this
   session's GitHub App (missing `workflows` permission), so CI and the release pipeline
-  remain non-existent until someone with that permission commits the four prepared files.
-  Tag push is separately still 403.
+  remain non-existent until someone with that permission runs the `git mv` in
+  `ci-workflows-pending/README.md`. Tag push is separately still 403.
 - The real cost of opening a file is still unmeasured, so "which scorer is best" still has
   no answer — but it now has a known shape.
 - The remote tags `ｖ1.78.0` and `ｖ1.79.0` use a full-width `ｖ` (U+FF56) and cannot match

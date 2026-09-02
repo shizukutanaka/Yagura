@@ -1,8 +1,11 @@
 # Where the workflows live
 
-GitHub registers workflows **only** from `.github/workflows/` at the **repository root**,
-so that is where this project's `ci.yml`, `codeql.yml`, `release.yml` and `scorecard.yml`
-are — not here, beside the Go module.
+GitHub registers workflows **only** from `.github/workflows/` at the **repository root** —
+never here, beside the Go module. This project's `ci.yml`, `codeql.yml`, `release.yml` and
+`scorecard.yml` are currently parked at `ci-workflows-pending/` in the repository root,
+committed but inert, because the automation that prepared them authenticates as a GitHub App
+without `workflows` permission and cannot write to `.github/workflows/`. See
+`ci-workflows-pending/README.md` for the one command that activates them.
 
 They used to be here. Because this directory sat inside a gitignored tree, they were never
 committed and GitHub reported **zero registered workflows**: CI had never run, and

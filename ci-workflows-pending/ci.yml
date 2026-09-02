@@ -1,0 +1,157 @@
+# yagura's own CI — v0.31.0
+#
+# Motivation: yagura provides `yagura_gha_audit` MCP tool to audit OTHER
+# projects' GitHub Actions workflows, but until v0.31 yagura itself had no
+# CI. This was a dogfood gap (CLAUDE.md "self-improving harness").
+#
+# This workflow enforces yagura's own harness rules:
+#   - All tests pass with -race
+#   - Reproducible build (byte-for-byte identical)
+#   - Coverage ≥ 75% overall
+#   - go vet clean
+#   - No new external dependencies (ADR-0001)
+
+name: yagura CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# NOTE (v1.86.0): this workflow lives at the REPOSITORY ROOT because that is the
+# only place GitHub registers workflows from. It used to sit in
+# yagura-v0.35.0/.github/workflows/, inside a gitignored directory — so it was
+# never committed, never registered, and never ran. `list_workflows` returned
+# total_count: 0 for the whole repository. The Go module is still under
+# yagura-v0.35.0/, hence the working-directory default below.
+defaults:
+  run:
+    working-directory: yagura-v0.35.0
+
+jobs:
+  test:
+    name: Test (race + coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed  # v5.1.0
+        with:
+          go-version-file: yagura-v0.35.0/go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Run tests with race detector
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Coverage threshold (≥ 75%)
+        run: |
+          COV=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d %)
+          echo "Coverage: ${COV}%"
+          awk -v c="$COV" 'BEGIN { if (c < 75.0) exit 1 }'
+
+  reproducible-build:
+    name: Reproducible build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed  # v5.1.0
+        with:
+          go-version-file: yagura-v0.35.0/go.mod
+          cache: true
+
+      - name: Verify byte-for-byte identical build
+        run: |
+          VERSION=$(grep '^\tversion\s*=' cmd/yagura/main.go | sed 's/.*"\(.*\)"/\1/')
+          VERSION="$VERSION" make verify
+
+  zero-deps:
+    name: Zero external dependencies (ADR-0001)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: go.sum should be empty
+        run: |
+          # ADR-0001: yagura has no external dependencies beyond stdlib.
+          # If this fails, a dependency was added — review whether ADR-0001 needs an exception.
+          if [ -s go.sum ]; then
+            echo "ERROR: go.sum is not empty. External dependency added?"
+            cat go.sum
+            exit 1
+          fi
+          echo "✓ go.sum is empty — zero external deps maintained"
+
+      - name: go.mod has only one module
+        run: |
+          REQUIRES=$(grep -c '^require' go.mod || echo 0)
+          if [ "$REQUIRES" != "0" ]; then
+            echo "ERROR: go.mod has $REQUIRES require statements (expected 0)"
+            exit 1
+          fi
+          echo "✓ go.mod has no require statements"
+
+  fuzz-smoke:
+    name: Fuzz smoke (10s each)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed  # v5.1.0
+        with:
+          go-version-file: yagura-v0.35.0/go.mod
+          cache: true
+
+      - name: Fuzz plantracker.Parse
+        run: go test -fuzz=FuzzParse -fuzztime=10s ./internal/plantracker/
+
+      - name: Fuzz aiverify.Scan
+        run: go test -fuzz=FuzzScan -fuzztime=10s ./internal/aiverify/
+
+  publish-gate:
+    name: Publish gate (dogfood yagura's own audits)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed  # v5.1.0
+        with:
+          go-version-file: yagura-v0.35.0/go.mod
+          cache: true
+
+      - name: Build yagura
+        run: go build -o yagura ./cmd/yagura
+
+      # Pre-publish leak gate: no home paths / internal hosts / private IPs / emails
+      # in the artifacts we publish. --strict makes a finding fail the job.
+      - name: Publicity scan (.claude, docs, README, CHANGELOG)
+        run: |
+          ./yagura publicity-scan --strict --dir .claude
+          ./yagura publicity-scan --strict --dir docs
+          ./yagura publicity-scan --strict README.md
+          ./yagura publicity-scan --strict CHANGELOG.md
+
+      # Dogfood the .claude/ artifact audits on yagura's own config — as real
+      # gates (--min-score): a regression that drops a score fails the job.
+      - name: Self-audit .claude artifacts
+        run: |
+          ./yagura skill-audit --dir .claude/skills --min-score 90
+          ./yagura settings-audit --dir .claude --min-score 90
+          ./yagura plugin-audit .claude-plugin/plugin.json --min-score 90
+          ./yagura plugin-audit .claude-plugin/marketplace.json --min-score 90
+
+      # Published VEX statements (docs/vex/*.json) must stay structurally
+      # conformant per docs/vex-spec.md. --strict fails on any bad file.
+      - name: VEX validation (docs/vex)
+        run: ./yagura vex-audit --dir docs/vex --strict

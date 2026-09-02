@@ -1,0 +1,214 @@
+# Release: build cross-platform binaries, generate SBOM, sign with Sigstore,
+# attach SLSA Level 3 provenance, create GitHub release.
+#
+# Triggered by tagging a version like v0.2.0. The tag must be signed.
+#
+# Outputs (per architecture):
+#   - yagura-vX.Y.Z-<os>-<arch>(.exe)        binary
+#   - yagura-vX.Y.Z-<os>-<arch>.sbom.json    CycloneDX SBOM
+#   - yagura-vX.Y.Z-<os>-<arch>.sig          Sigstore signature (keyless)
+#   - yagura-vX.Y.Z-<os>-<arch>.crt          Sigstore certificate
+#   - yagura-vX.Y.Z.intoto.jsonl             SLSA L3 provenance (single file for all artifacts)
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.2.0)'
+        required: true
+
+permissions:
+  contents: read
+
+# NOTE (v1.86.0): this workflow lives at the REPOSITORY ROOT because that is the
+# only place GitHub registers workflows from. It previously sat inside the
+# gitignored yagura-v0.35.0/ tree, so it was never committed and never registered:
+# `list_workflows` returned total_count 0 for this repository. Every published
+# claim that releases were blocked only by a 403 on `git push <tag>` was therefore
+# wrong — there was no registered workflow for a tag to trigger.
+#
+# working-directory is set PER JOB, not workflow-wide: prepare/sign/release never
+# check the repository out, so a workflow-level default would point them at a
+# directory that does not exist and fail every one of them.
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.value }}
+    steps:
+      - id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: yagura-v0.35.0
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed  # v5.1.0
+        with:
+          go-version: '1.22'
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          out="yagura-${TAG}-${GOOS}-${GOARCH}${ext}"
+          go build \
+            -ldflags="-s -w -X main.version=${TAG#v}" \
+            -trimpath \
+            -o "$out" \
+            ./cmd/yagura
+          ls -la "$out"
+      - name: hash
+        id: hash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          ext=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          out="yagura-${TAG}-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
+          sha=$(sha256sum "$out" | base64 -w 0)
+          echo "hashes=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: yagura-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: yagura-v0.35.0/yagura-*
+
+  sbom:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: yagura-v0.35.0
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed  # v5.1.0
+        with:
+          go-version: '1.22'
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: install cyclonedx-gomod
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.8.0
+      - name: generate SBOM
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          cyclonedx-gomod mod -json -licenses -output sbom.json
+          cp sbom.json "yagura-${TAG}.sbom.json"
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: sbom
+          path: yagura-v0.35.0/yagura-*.sbom.json
+          retention-days: 90
+
+  provenance:
+    # SLSA Level 3 provenance via the OpenSSF slsa-github-generator project.
+    # The generator runs in an isolated reusable workflow that satisfies all
+    # SLSA L3 requirements (isolated build, hermetic, signed, non-falsifiable).
+    needs: [prepare, build]
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    # NOTE: the SLSA generator MUST be referenced by a semantic version tag, NOT a
+    # commit SHA — it verifies its own provenance by tag, so SHA-pinning breaks SLSA
+    # L3. This is the one intentional exception to our SHA-pinning policy (gha-audit
+    # will report it as `unpinned-uses`; that finding is expected here).
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    with:
+      base64-subjects: ${{ needs.build.outputs.hashes }}
+      provenance-name: 'yagura-${{ needs.prepare.outputs.tag }}.intoto.jsonl'
+      upload-assets: false
+
+  sign:
+    needs: [prepare, build, sbom, provenance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da  # v3.7.0
+        with:
+          cosign-release: 'v2.4.1'
+      - name: sign each artifact (keyless via OIDC)
+        run: |
+          cd artifacts
+          for f in yagura-*; do
+            # Skip already-signed assets
+            case "$f" in
+              *.sig|*.crt|*.intoto.jsonl) continue ;;
+            esac
+            echo "Signing $f"
+            COSIGN_EXPERIMENTAL=1 cosign sign-blob \
+              --yes \
+              --output-signature "$f.sig" \
+              --output-certificate "$f.crt" \
+              "$f"
+          done
+          ls -la
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  # v4.4.3
+        with:
+          name: signatures
+          path: |
+            artifacts/*.sig
+            artifacts/*.crt
+          retention-days: 90
+
+  release:
+    needs: [prepare, build, sbom, provenance, sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: list artifacts
+        run: ls -la artifacts/
+      - uses: softprops/action-gh-release@01570a1f39cb168c169c802c3bceb9e93fb10974  # v2.1.0
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/yagura-*

@@ -173,17 +173,22 @@ ManualUp は「小さい順」としか言えない。この但し書きは `pro
 2. **タグを push しても何も起きなかった。** `release.yml` が登録されていない以上、
    403 が解けても SBOM も SLSA provenance も GitHub Release も生成されない。
 
-v1.86.0 で workflow 4 本をリポジトリのルートへ移した(モジュール側の複製は削除)。
-**ただし追跡下に入れることはできなかった**: このセッションの GitHub App には
+v1.86.0 で workflow 4 本をモジュール側から取り出した。**ただし
+`.github/workflows/` へは置けなかった**: このセッションの GitHub App には
 `workflows` 権限が無く、push が remote に拒否される
 (`refusing to allow a GitHub App to create or update workflow .github/workflows/ci.yml`)。
-**つまり CI は今も存在しない。** ファイルは正しい場所に用意されているが、
-登録されるには `workflows` 権限を持つ主体からの push が 1 回要る。
+これは意図された統制であり、迂回すべきものではない。
 
-`cmd/yagura/repotracked_test.go` は **配置だけ**を固定する
-(ルートに在ること・モジュール側に複製が無いこと)。追跡状態を要求すると
-権限が付くまで恒久的に赤いテストになるため、**赤いまま出荷することも、
-静かに緑にすることもせず、守れない部分をここに未解決として名指しする**。
+**つまり CI は今も存在しない。** 4 本は `ci-workflows-pending/` に
+**追跡下で**置いてある(実行はされない。GitHub は `.github/workflows/` しか読まない)。
+`workflows` 権限を持つ主体が `git mv` すれば有効になる——手順は
+`ci-workflows-pending/README.md`。
+
+`cmd/yagura/repotracked_test.go` が固定するのは **「定義の家はちょうど 1 つ」**:
+有効化済み(`.github/workflows/`)か有効化待ち(`ci-workflows-pending/`)か、
+**両方は drift、どちらも無いは消失**。有効化しても緑が壊れず、
+その瞬間からテストは有効な側を守り始める。追跡状態そのものを要求すると
+権限が付くまで恒久的に赤くなるので、**赤いまま出荷することも、静かに緑にすることもしない**。
 
 
 `ci.yml` のゲート(vet / race / coverage ≥ 75% / go.sum 空 / require 0)は

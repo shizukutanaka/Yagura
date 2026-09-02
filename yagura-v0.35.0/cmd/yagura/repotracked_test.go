@@ -87,12 +87,35 @@ func TestRepoTracked_EverythingNeededToBuildIsInGit(t *testing.T) {
 func TestRepoTracked_WorkflowsAreAtTheRepositoryRoot(t *testing.T) {
 	repo := repoRoot(t)
 
-	// ① ルートに実在すること。ここに無ければ GitHub は永久に登録しない。
+	// ① 定義の家は **ちょうど 1 つ**。有効化済み(.github/workflows/)か、
+	//    有効化待ち(ci-workflows-pending/)か。両方は drift、どちらも無いは消失。
+	//
+	//    「有効化待ち」という状態が要るのは、この作業をしている GitHub App に
+	//    `workflows` 権限が無く、`.github/workflows/` へ push できないため。
+	//    権限を持つ主体が git mv すれば、このテストは自動的に
+	//    有効化済みの側を守り始める(活性化で緑が壊れない形にしてある)。
+	live := filepath.Join(repo, ".github", "workflows")
+	pending := filepath.Join(repo, "ci-workflows-pending")
+	_, liveErr := os.Stat(live)
+	_, pendErr := os.Stat(pending)
+	switch {
+	case liveErr == nil && pendErr == nil:
+		t.Errorf("workflow definitions exist BOTH at %s and %s: two files claiming to be the "+
+			"CI definition, one of which cannot run, is the original bug in a quieter form — "+
+			"delete ci-workflows-pending/ once the workflows are activated", live, pending)
+	case liveErr != nil && pendErr != nil:
+		t.Errorf("workflow definitions exist at NEITHER %s nor %s: this project's CI would "+
+			"silently not exist, which is exactly how it was lost the first time", live, pending)
+	}
+
+	// ② どちらの家にあっても 4 本そろっていること(欠けても何も赤くならない領域)。
+	home := live
+	if liveErr != nil {
+		home = pending
+	}
 	for _, w := range []string{"ci.yml", "codeql.yml", "release.yml", "scorecard.yml"} {
-		p := filepath.Join(repo, ".github", "workflows", w)
-		if _, err := os.Stat(p); err != nil {
-			t.Errorf(".github/workflows/%s is missing from the repository root: GitHub "+
-				"registers workflows only from the root, so CI would not exist", w)
+		if _, err := os.Stat(filepath.Join(home, w)); err != nil {
+			t.Errorf("%s is missing from %s", w, home)
 		}
 	}
 
